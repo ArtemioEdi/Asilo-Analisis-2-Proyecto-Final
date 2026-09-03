@@ -13,20 +13,79 @@ name: asilo-cabeza-de-algodon
 
 services:
 
+  # -------------------------------------------------------------------------
+  # Motor de base de datos. UNA instancia con TRES bases logicas separadas,
+  # cada una con su usuario y sus permisos (ver sql/01-bases-y-usuarios.sql).
+  # No publica el puerto 3306: solo se alcanza desde la red interna "asilo".
+  # -------------------------------------------------------------------------
+  bd-asilo:
+    image: mysql:8.4
+    container_name: bd-asilo
+    command:
+      # Los nombres de los internos llevan tildes. Con otra codificacion se
+      # guardan rotos y se ven rotos en la demostracion.
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      TZ: America/Guatemala
+      MYSQL_ROOT_PASSWORD: ${BD_CLAVE_ROOT:?falta BD_CLAVE_ROOT. Copie .env.ejemplo a .env}
+      # Las lee 01-bases-y-usuarios.sh para crear los tres usuarios. No estan
+      # escritas en ningun archivo versionado: salen del .env.
+      BD_CLAVE_VIGIA: ${BD_CLAVE_VIGIA:?falta BD_CLAVE_VIGIA. Copie .env.ejemplo a .env}
+      BD_CLAVE_PASTILLERO: ${BD_CLAVE_PASTILLERO:?falta BD_CLAVE_PASTILLERO. Copie .env.ejemplo a .env}
+      BD_CLAVE_CAJA: ${BD_CLAVE_CAJA:?falta BD_CLAVE_CAJA. Copie .env.ejemplo a .env}
+    volumes:
+      - bd-datos:/var/lib/mysql
+      # Se montan los cuatro archivos de inicializacion UNO POR UNO, y no el
+      # directorio sql/ completo, a proposito: sql/ contiene ademas
+      # 01-bases-y-usuarios.ejemplo.sql, que es documentacion y NO debe
+      # ejecutarse. Si se montara el directorio entero, MySQL correria ese
+      # archivo tambien —termina en .sql— y crearia los usuarios con las
+      # claves de marcador, antes de que el .sh alcanzara a crearlos bien.
+      #
+      # Se ejecutan en orden alfabetico la primera vez que arranca el
+      # contenedor, o sea cuando el volumen de datos esta vacio.
+      - ./sql/01-bases-y-usuarios.sh:/docker-entrypoint-initdb.d/01-bases-y-usuarios.sh:ro
+      - ./sql/02-esquema-vigia.sql:/docker-entrypoint-initdb.d/02-esquema-vigia.sql:ro
+      - ./sql/03-esquema-pastillero.sql:/docker-entrypoint-initdb.d/03-esquema-pastillero.sql:ro
+      - ./sql/04-esquema-caja.sql:/docker-entrypoint-initdb.d/04-esquema-caja.sql:ro
+    # Para inspeccionar la base con MySQL Workbench, descomente estas dos
+    # lineas y vuelva a levantar. Queda comentado a proposito: en la entrega
+    # la base no se expone al equipo anfitrion.
+    # ports:
+    #   - "3306:3306"
+    healthcheck:
+      # MySQL tarda entre 20 y 40 segundos en el primer arranque, mientras
+      # crea el directorio de datos y corre los scripts de inicializacion.
+      # CMD-SHELL y no CMD: la forma CMD no pasa por un shell, asi que la
+      # variable con la clave no se expandiria y el ping iria sin credencial.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+    networks: [asilo]
+
   ms-vigia:
     build: ./ms-vigia
     container_name: ms-vigia
     environment:
       TZ: America/Guatemala
-      VIGIA_BD: /datos/vigia.db
+      BD_HOST: bd-asilo
+      BD_PUERTO: "3306"
+      BD_NOMBRE: asilo_vigia
+      BD_USUARIO: usr_vigia
+      BD_CLAVE: ${BD_CLAVE_VIGIA:?falta BD_CLAVE_VIGIA. Copie .env.ejemplo a .env}
       # ms-vigia le pide a ms-pastillero la ficha del interno antes de
       # dictaminar. Es una llamada en tiempo de peticion, no de arranque, por
       # eso NO lleva depends_on: ms-pastillero ya depende de ms-vigia y se
       # armaria un ciclo. Si ms-pastillero no responde, ms-vigia devuelve 503.
       PASTILLERO_URL: http://ms-pastillero:8082
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
-    volumes:
-      - vigia-datos:/datos
+    depends_on:
+      bd-asilo:
+        condition: service_healthy
     restart: unless-stopped
     networks: [asilo]
 
@@ -35,14 +94,18 @@ services:
     container_name: ms-pastillero
     environment:
       TZ: America/Guatemala
-      PASTILLERO_BD: /datos/pastillero.db
+      BD_HOST: bd-asilo
+      BD_PUERTO: "3306"
+      BD_NOMBRE: asilo_pastillero
+      BD_USUARIO: usr_pastillero
+      BD_CLAVE: ${BD_CLAVE_PASTILLERO:?falta BD_CLAVE_PASTILLERO. Copie .env.ejemplo a .env}
       VIGIA_URL: http://ms-vigia:8081
       TOLERANCIA_MIN: "60"
       SEMBRAR: "1"
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
-    volumes:
-      - pastillero-datos:/datos
     depends_on:
+      bd-asilo:
+        condition: service_healthy
       ms-vigia:
         condition: service_healthy
     restart: unless-stopped
@@ -53,11 +116,16 @@ services:
     container_name: ms-caja
     environment:
       TZ: America/Guatemala
-      CAJA_BD: /datos/caja.db
+      BD_HOST: bd-asilo
+      BD_PUERTO: "3306"
+      BD_NOMBRE: asilo_caja
+      BD_USUARIO: usr_caja
+      BD_CLAVE: ${BD_CLAVE_CAJA:?falta BD_CLAVE_CAJA. Copie .env.ejemplo a .env}
       SEMBRAR: "1"
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
-    volumes:
-      - caja-datos:/datos
+    depends_on:
+      bd-asilo:
+        condition: service_healthy
     restart: unless-stopped
     networks: [asilo]
 
@@ -70,12 +138,17 @@ services:
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
       GATEWAY_DURACION_SESION: ${GATEWAY_DURACION_SESION:-8h}
       ORIGEN_PERMITIDO: ${ORIGEN_PERMITIDO:-http://localhost:8090}
+      # Apagada por defecto: las credenciales de demostracion NO se imprimen
+      # en la pantalla de acceso salvo que se pida expresamente en .env.
+      MOSTRAR_USUARIOS_DEMO: ${MOSTRAR_USUARIOS_DEMO:-0}
       VIGIA_URL: http://ms-vigia:8081
       PASTILLERO_URL: http://ms-pastillero:8082
       CAJA_URL: http://ms-caja:8083
     ports:
       - "8080:8080"
     depends_on:
+      bd-asilo:
+        condition: service_healthy
       ms-vigia:
         condition: service_healthy
       ms-pastillero:
@@ -97,9 +170,9 @@ services:
     networks: [asilo]
 
 volumes:
-  vigia-datos:
-  pastillero-datos:
-  caja-datos:
+  # Un solo volumen: el directorio de datos de MySQL. Los tres volumenes de
+  # SQLite desaparecieron con la migracion.
+  bd-datos:
 
 networks:
   asilo:

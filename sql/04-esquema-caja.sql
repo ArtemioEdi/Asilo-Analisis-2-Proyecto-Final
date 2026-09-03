@@ -1,0 +1,112 @@
+-- ===========================================================================
+--  04 · Esquema de asilo_caja  (ms-caja · entradas, salidas y caja)
+-- ---------------------------------------------------------------------------
+--  Cinco tablas: lo que se le cobra a la familia de cada interno, lo que la
+--  familia paga, lo que entra por donaciones, lo que sale por gastos, y lo
+--  que el asilo le paga a la fundacion.
+--
+--  TODO el dinero va en DECIMAL(10,2). Antes eran REAL, y sumar centavos en
+--  coma flotante produce diferencias que en un libro de caja no se pueden
+--  explicar: un total de Q 449.99 donde deberia decir Q 450.00.
+--
+--  El tarifario NO esta aqui: igual que el vademecum de ms-vigia, es la base
+--  de conocimiento del servicio y vive junto al codigo que la aplica.
+-- ===========================================================================
+
+USE asilo_caja;
+
+CREATE TABLE IF NOT EXISTS cargos (
+    id               VARCHAR(16)    NOT NULL,
+    paciente_id      VARCHAR(16)    NOT NULL,
+    paciente_nombre  VARCHAR(120),
+    categoria        VARCHAR(16)    NOT NULL,
+    concepto         VARCHAR(160)   NOT NULL,
+    -- Clave del tarifario con el que se calculo, si se uso uno.
+    referencia       VARCHAR(48),
+    monto_bruto      DECIMAL(10,2)  NOT NULL,
+    descuento_pct    DECIMAL(5,2)   NOT NULL DEFAULT 0.00,
+    monto_neto       DECIMAL(10,2)  NOT NULL,
+    monto_pagado     DECIMAL(10,2)  NOT NULL DEFAULT 0.00,
+    estado           VARCHAR(16)    NOT NULL DEFAULT 'PENDIENTE',
+    registrado_por   VARCHAR(120),
+    creado_en        DATETIME       NOT NULL,
+
+    CONSTRAINT pk_cargos PRIMARY KEY (id),
+    CONSTRAINT ck_cargos_categoria
+        CHECK (categoria IN ('CONSULTA', 'LABORATORIO', 'FARMACIA', 'CUOTA', 'OTRO')),
+    CONSTRAINT ck_cargos_estado
+        CHECK (estado IN ('PENDIENTE', 'ABONADO', 'PAGADO')),
+    CONSTRAINT ck_cargos_descuento CHECK (descuento_pct BETWEEN 0 AND 100),
+    CONSTRAINT ck_cargos_montos
+        CHECK (monto_bruto >= 0 AND monto_neto >= 0 AND monto_pagado >= 0),
+
+    INDEX idx_cargos_paciente (paciente_id, creado_en),
+    INDEX idx_cargos_categoria (categoria)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS pagos (
+    id              VARCHAR(16)    NOT NULL,
+    cargo_id        VARCHAR(16)    NOT NULL,
+    paciente_id     VARCHAR(16)    NOT NULL,
+    monto           DECIMAL(10,2)  NOT NULL,
+    metodo          VARCHAR(24)    NOT NULL,
+    registrado_por  VARCHAR(120),
+    creado_en       DATETIME       NOT NULL,
+
+    CONSTRAINT pk_pagos PRIMARY KEY (id),
+    CONSTRAINT fk_pagos_cargo FOREIGN KEY (cargo_id)
+        REFERENCES cargos (id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT ck_pagos_monto CHECK (monto > 0),
+
+    INDEX idx_pagos_paciente (paciente_id, creado_en)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS donaciones (
+    id              VARCHAR(16)    NOT NULL,
+    donante         VARCHAR(160)   NOT NULL,
+    tipo            VARCHAR(16)    NOT NULL,
+    monto           DECIMAL(10,2)  NOT NULL,
+    destino         VARCHAR(120),
+    registrado_por  VARCHAR(120),
+    creado_en       DATETIME       NOT NULL,
+
+    CONSTRAINT pk_donaciones PRIMARY KEY (id),
+    CONSTRAINT ck_donaciones_tipo
+        CHECK (tipo IN ('EMPRESA', 'GOBIERNO', 'PARTICULAR')),
+    CONSTRAINT ck_donaciones_monto CHECK (monto > 0),
+
+    INDEX idx_donaciones_fecha (creado_en)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS gastos (
+    id              VARCHAR(16)    NOT NULL,
+    concepto        VARCHAR(160)   NOT NULL,
+    categoria       VARCHAR(16)    NOT NULL,
+    monto           DECIMAL(10,2)  NOT NULL,
+    registrado_por  VARCHAR(120),
+    creado_en       DATETIME       NOT NULL,
+
+    CONSTRAINT pk_gastos PRIMARY KEY (id),
+    CONSTRAINT ck_gastos_categoria
+        CHECK (categoria IN ('SERVICIOS', 'PERSONAL', 'INSUMOS', 'MANTENIMIENTO', 'OTRO')),
+    CONSTRAINT ck_gastos_monto CHECK (monto > 0),
+
+    INDEX idx_gastos_fecha (creado_en)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS pagos_fundacion (
+    id              VARCHAR(16)    NOT NULL,
+    monto           DECIMAL(10,2)  NOT NULL,
+    referencia      VARCHAR(160),
+    registrado_por  VARCHAR(120),
+    creado_en       DATETIME       NOT NULL,
+
+    CONSTRAINT pk_pagos_fundacion PRIMARY KEY (id),
+    CONSTRAINT ck_pagos_fundacion_monto CHECK (monto > 0),
+
+    INDEX idx_pagos_fundacion_fecha (creado_en)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

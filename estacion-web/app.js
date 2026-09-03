@@ -5,6 +5,7 @@
 // =====================================================================
 
 const AUTH = "/api/auth";
+const CONFIG = "/api/config";
 const VIGIA = "/vigia";
 const PASTILLERO = "/pastillero";
 const CAJA = "/caja";
@@ -573,6 +574,15 @@ $("formulario-acceso").addEventListener("submit", async (evento) => {
 function aplicarPermisos() {
   $("abrir-cajon").hidden = SESION.rol !== "MEDICO";
   $("caja-admin").hidden = SESION.rol !== "ADMINISTRACION";
+
+  // La pestaña de caja no significa lo mismo para los dos roles que la ven.
+  // Administración entra al módulo completo; el médico entra únicamente al
+  // estado de cuenta del interno, que es la excepción de lectura que se le
+  // concedió. Se le nombra por lo que de verdad puede hacer, para que nadie
+  // pulse esperando un balance que su rol no puede leer.
+  const esAdmin = SESION.rol === "ADMINISTRACION";
+  $("pestana-caja-texto").textContent = esAdmin ? "Caja y donaciones" : "Cuenta del interno";
+  $("caja-titulo").textContent = esAdmin ? "Caja y donaciones" : "Cuenta del interno";
   // Solo se muestran las pestañas que el rol puede usar.
   $("pestana-jornada").hidden = !vistaPermitida("jornada");
   $("pestana-caja").hidden = !vistaPermitida("caja");
@@ -772,19 +782,23 @@ function listaMedicacion(oculto) {
     caja.textContent = "Sin tratamiento crónico registrado";
     return caja;
   }
+  caja.className = "medicacion";
   for (const m of estado.medicacion) {
     const linea = document.createElement("div");
+    linea.className = "medicacion__linea";
     const texto = document.createElement("span");
+    texto.className = "medicacion__pauta";
     texto.textContent = m.farmaco + " " + m.dosisMg + " mg cada " + m.cadaHoras + " h";
     linea.appendChild(texto);
-    // Suspender un tratamiento tambien es un acto clinico: solo el medico,
-    // y con confirmacion.
+    // Suspender un tratamiento es revocar una decision clinica: solo el
+    // medico, y con confirmacion. La misma regla la hacen cumplir el gateway
+    // y ms-pastillero, asi que la interfaz y la API dicen lo mismo.
     if (SESION.rol === "MEDICO" && m.planId) {
       const boton = document.createElement("button");
-      boton.className = "accion-sec accion-sec--suave";
+      boton.className = "accion-sec accion-sec--suave medicacion__accion";
       boton.type = "button";
-      boton.style.marginLeft = "8px";
       boton.textContent = "Suspender";
+      boton.setAttribute("aria-label", "Suspender el tratamiento de " + m.farmaco);
       boton.addEventListener("click", () => suspenderPlan(m));
       linea.appendChild(boton);
     }
@@ -996,7 +1010,7 @@ function dibujarRegistro(registro, tomas, resaltar) {
     const izquierda = document.createElement("span");
     izquierda.textContent = "turno " + turno;
     const derecha = document.createElement("span");
-    derecha.textContent = delTurno.length + " tomas";
+    derecha.textContent = delTurno.length + (delTurno.length === 1 ? " toma" : " tomas");
     titulo.append(izquierda, derecha);
     bloque.appendChild(titulo);
     delTurno.forEach((t) => bloque.appendChild(filaToma(t)));
@@ -1361,7 +1375,7 @@ async function pintarCaja() {
   $("caja-interno-nombre").textContent = interno.nombre;
   $("caja-meta").textContent = SESION.rol === "ADMINISTRACION"
     ? "Módulo de entradas, salidas y caja: cobros con el descuento de la fundación, donaciones y gastos del asilo."
-    : "Estado de cuenta del interno. Le sirve para saber si la familia puede costear un estudio antes de indicarlo.";
+    : "Cargos y saldo del interno seleccionado. Le sirve para saber si la familia puede costear un estudio antes de indicarlo.";
 
   const resumenNodo = $("caja-resumen");
   resumenNodo.textContent = "";
@@ -1598,6 +1612,20 @@ async function iniciarApp() {
   clearInterval(relojBarra);
   relojBarra = setInterval(refrescarBarra, 30000);
 }
+
+// Las credenciales de demostración solo se imprimen si el gateway dice que
+// la bandera MOSTRAR_USUARIOS_DEMO está encendida. Apagada por defecto: tener
+// las tres claves escritas en la pantalla de acceso contradice el resto del
+// trabajo de seguridad. El endpoint es público y no devuelve credenciales,
+// solo el sí o el no.
+(async function ajustarAyudaDeAcceso() {
+  try {
+    const config = await pedir(CONFIG);
+    $("acceso-ayuda").hidden = !config.mostrarUsuariosDemo;
+  } catch (_) {
+    // Si no se puede preguntar, se queda oculto: el valor seguro por defecto.
+  }
+})();
 
 // Si ya habia una sesion guardada en esta pestaña, se valida contra el
 // gateway antes de saltarse la pantalla de acceso.

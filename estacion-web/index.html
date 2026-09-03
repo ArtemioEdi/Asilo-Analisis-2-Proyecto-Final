@@ -37,7 +37,7 @@
 
     <button class="accion accion--ancha" id="acceso-enviar" type="submit">Ingresar</button>
 
-    <p class="acceso__ayuda">
+    <p class="acceso__ayuda" id="acceso-ayuda" hidden>
       Prototipo de demostración: <b>medico</b> / medico2026 ·
       <b>enfermeria</b> / enfermeria2026 · <b>administracion</b> / admin2026
     </p>
@@ -100,7 +100,7 @@
       </button>
       <button class="pestana" id="pestana-caja" data-vista="caja" type="button"
               role="tab" aria-selected="false" aria-controls="vista-caja">
-        Caja y donaciones
+        <span id="pestana-caja-texto">Caja y donaciones</span>
       </button>
     </nav>
 
@@ -142,7 +142,7 @@
 
       <header class="encabezado">
         <div>
-          <h2>Caja y donaciones</h2>
+          <h2 id="caja-titulo">Caja y donaciones</h2>
           <p class="encabezado__meta" id="caja-meta"></p>
         </div>
       </header>

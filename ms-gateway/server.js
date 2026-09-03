@@ -12,6 +12,19 @@ const DURACION_SESION = process.env.GATEWAY_DURACION_SESION || "8h";
 const ORIGEN_PERMITIDO = process.env.ORIGEN_PERMITIDO || "http://localhost:8090";
 
 // ---------------------------------------------------------------------------
+// Bandera para imprimir las credenciales de demostracion en la pantalla de
+// acceso. Apagada por defecto: tener las tres claves escritas en la pantalla
+// de login contradice todo lo demas que hace este gateway. Se enciende solo
+// para grabar el video de la entrega, poniendo MOSTRAR_USUARIOS_DEMO=1 en el
+// archivo .env.
+//
+// La estacion web es HTML estatico servido por nginx, asi que no puede leer
+// variables de entorno: las consulta en GET /api/config, que es publico y no
+// devuelve ninguna credencial, solo el si o el no.
+// ---------------------------------------------------------------------------
+const MOSTRAR_USUARIOS_DEMO = process.env.MOSTRAR_USUARIOS_DEMO === "1";
+
+// ---------------------------------------------------------------------------
 // El secreto no tiene valor por defecto. Un secreto de desarrollo escrito en
 // el codigo es un secreto publicado: cualquiera que lea el repositorio puede
 // firmarse un token de MEDICO. Si no viene por ambiente, el gateway no arranca.
@@ -74,6 +87,7 @@ app.get("/", (_req, res) => {
       publicas: {
         "GET /": "Este directorio de rutas.",
         "GET /salud": "Sonda de vida del gateway.",
+        "GET /api/config": "Ajustes que la estacion web necesita antes de iniciar sesion.",
         "POST /api/auth/login": "{ usuario, clave } devuelve { token, nombre, rol }.",
       },
       conSesion: {
@@ -91,8 +105,18 @@ app.get("/", (_req, res) => {
     },
     comoAutenticarse:
       "Envie el token en el encabezado: Authorization: Bearer <token>",
+    mostrarUsuariosDemo: MOSTRAR_USUARIOS_DEMO,
     hora: new Date().toISOString(),
   });
+});
+
+// Lo que la estacion web necesita saber ANTES de que alguien inicie sesion.
+// Es publico a proposito y no revela ninguna credencial: solo dice si las
+// credenciales de demostracion deben imprimirse en la pantalla de acceso.
+// Va bajo /api porque es el prefijo que nginx reenvia al gateway; la raiz del
+// 8090 la sirve la propia estacion web.
+app.get("/api/config", (_req, res) => {
+  res.json({ mostrarUsuariosDemo: MOSTRAR_USUARIOS_DEMO });
 });
 
 app.get("/salud", (_req, res) => {
@@ -267,6 +291,15 @@ const CUENTA_DE_PACIENTE = /^\/api\/v1\/pacientes\/[^/]+\/cuenta\/?$/;
 // tiene demencia mixta es clinico.
 const PADRON_DE_INTERNOS = /^\/api\/v1\/internos(\/[^/]+)?\/?$/;
 
+// Suspender un tratamiento queda reservado al MEDICO, aunque el resto del
+// pastillero lo escriban las dos manos. El criterio: suspender no es
+// registrar lo que paso, es cambiar la indicacion. Enfermeria puede consignar
+// que una toma no se dio y por que —para eso esta "omitir", que exige
+// motivo—, pero retirarle el medicamento a un interno de aqui en adelante es
+// revocar una decision clinica, y esa la toma quien la firmo. La misma regla
+// esta repetida dentro de ms-pastillero, igual que el resto de la matriz.
+const SUSPENDER_PLAN = /^\/api\/v1\/planes\/[^/]+\/suspender\/?$/;
+
 function autorizar(rolesLectura, rolesEscritura) {
   return (req, res, next) => {
     if (req.method === "OPTIONS") return next();
@@ -283,6 +316,9 @@ function autorizar(rolesLectura, rolesEscritura) {
     }
     if (!escribe && req.baseUrl === "/pastillero" && PADRON_DE_INTERNOS.test(req.path)) {
       permitidos = permitidos.concat("ADMINISTRACION");
+    }
+    if (escribe && req.baseUrl === "/pastillero" && SUSPENDER_PLAN.test(req.path)) {
+      permitidos = ["MEDICO"];
     }
 
     if (permitidos.includes(req.usuario.rol)) return next();

@@ -1,18 +1,43 @@
 import json
 import os
-import sqlite3
+import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 
 import jwt
+import pymysql
 import requests
 from flask import Flask, g, jsonify, request
+from flask.json.provider import DefaultJSONProvider
+from pymysql.cursors import DictCursor
 
 import vademecum as vd
 
 APP_NOMBRE = "ms-vigia"
-APP_VERSION = "1.2.0"
-BD = os.environ.get("VIGIA_BD", "/datos/vigia.db")
+APP_VERSION = "2.0.0"
+
+# ---------------------------------------------------------------------------
+# Conexion a MySQL. Todo por variables de entorno; si falta alguna, el
+# servicio no arranca, igual que con GATEWAY_SECRETO.
+# ---------------------------------------------------------------------------
+BD_HOST = os.environ.get("BD_HOST", "")
+BD_PUERTO = int(os.environ.get("BD_PUERTO", "3306"))
+BD_NOMBRE = os.environ.get("BD_NOMBRE", "")
+BD_USUARIO = os.environ.get("BD_USUARIO", "")
+BD_CLAVE = os.environ.get("BD_CLAVE", "")
+
+_faltantes = [
+    nombre for nombre, valor in (
+        ("BD_HOST", BD_HOST), ("BD_NOMBRE", BD_NOMBRE),
+        ("BD_USUARIO", BD_USUARIO), ("BD_CLAVE", BD_CLAVE),
+    ) if not valor.strip()
+]
+if _faltantes:
+    raise RuntimeError(
+        "ms-vigia no arranca: faltan las variables de conexion a MySQL (%s). "
+        "Copie .env.ejemplo a .env." % ", ".join(_faltantes)
+    )
 
 # ms-pastillero es el dueño del padron de internos. Este servicio le pregunta
 # la ficha clinica en vez de creerle al cliente: ver consultar_ficha().
@@ -44,14 +69,40 @@ RUTAS_LIBRES = ("/salud",)
 # ADVERTENCIA. Equivale a un solo hallazgo de severidad MEDIA. Ver dictaminar().
 UMBRAL_ADVERTENCIA = 8
 
+# MySQL devuelve DECIMAL como Decimal y DATETIME como datetime, y ninguno de
+# los dos sabe convertirse solo a JSON. Se traducen aqui, en un solo lugar,
+# para que ninguna respuesta cambie de forma respecto a la version con SQLite.
+class ProveedorJSON(DefaultJSONProvider):
+    @staticmethod
+    def default(objeto):
+        if isinstance(objeto, Decimal):
+            return float(objeto)
+        if isinstance(objeto, datetime):
+            return objeto.isoformat(timespec="seconds")
+        if isinstance(objeto, date):
+            return objeto.isoformat()
+        return DefaultJSONProvider.default(objeto)
+
+
 app = Flask(__name__)
+app.json = ProveedorJSON(app)
 app.json.ensure_ascii = False
 
+
+def abrir_conexion():
+    return pymysql.connect(
+        host=BD_HOST, port=BD_PUERTO, user=BD_USUARIO, password=BD_CLAVE,
+        database=BD_NOMBRE, charset="utf8mb4", cursorclass=DictCursor,
+        # Nada se da por escrito hasta que la peticion lo confirma con
+        # commit(). Con SQLite cada execute() se guardaba solo.
+        autocommit=False, connect_timeout=5,
+    )
+
+
 def conexion():
+    """Una conexion por peticion, guardada en g y cerrada en el teardown."""
     if "bd" not in g:
-        os.makedirs(os.path.dirname(BD) or ".", exist_ok=True)
-        g.bd = sqlite3.connect(BD, timeout=10)
-        g.bd.row_factory = sqlite3.Row
+        g.bd = abrir_conexion()
     return g.bd
 
 
@@ -62,29 +113,49 @@ def cerrar_conexion(_):
         bd.close()
 
 
-def preparar_bd():
-    os.makedirs(os.path.dirname(BD) or ".", exist_ok=True)
-    bd = sqlite3.connect(BD, timeout=10)
-    # WAL deja que las lecturas sigan corriendo mientras alguien escribe. Con
-    # gunicorn en --threads 4 y varias personas usando la estacion a la vez,
-    # sin esto aparece "database is locked" justo en la demostracion en vivo.
-    # El timeout=10 de la conexion es la otra mitad: si la base esta ocupada,
-    # se espera hasta 10 segundos en vez de fallar de inmediato.
-    bd.execute("PRAGMA journal_mode=WAL")
-    bd.execute(
-        """CREATE TABLE IF NOT EXISTS validaciones (
-               folio            TEXT PRIMARY KEY,
-               paciente_id      TEXT NOT NULL,
-               principio_activo TEXT NOT NULL,
-               veredicto        TEXT NOT NULL,
-               puntaje_riesgo   INTEGER NOT NULL,
-               solicitado_por   TEXT,
-               dictamen         TEXT NOT NULL,
-               creado_en        TEXT NOT NULL
-           )"""
+def consultar(sql, parametros=()):
+    with conexion().cursor() as cursor:
+        cursor.execute(sql, parametros)
+        return cursor.fetchall()
+
+
+def consultar_uno(sql, parametros=()):
+    with conexion().cursor() as cursor:
+        cursor.execute(sql, parametros)
+        return cursor.fetchone()
+
+
+def ejecutar(sql, parametros=()):
+    with conexion().cursor() as cursor:
+        cursor.execute(sql, parametros)
+        return cursor.rowcount
+
+
+def esperar_a_mysql(intentos=30, pausa=2):
+    """El healthcheck del compose ayuda, pero no alcanza.
+
+    Que MySQL responda al ping no garantiza que los scripts de inicializacion
+    ya hayan creado la base y el usuario de este servicio. Se reintenta hasta
+    conseguir una conexion de verdad, y si no se logra se sale con un mensaje
+    que dice exactamente contra que se estaba intentando.
+    """
+    for intento in range(1, intentos + 1):
+        try:
+            prueba = abrir_conexion()
+            prueba.close()
+            print("[%s] conectado a MySQL en %s:%s/%s" %
+                  (APP_NOMBRE, BD_HOST, BD_PUERTO, BD_NOMBRE), flush=True)
+            return
+        except pymysql.MySQLError as error:
+            print("[%s] MySQL todavia no acepta conexiones (intento %d de %d): %s" %
+                  (APP_NOMBRE, intento, intentos, error), flush=True)
+            time.sleep(pausa)
+    raise RuntimeError(
+        "%s no arranca: MySQL en %s:%s/%s no acepto conexiones despues de %d "
+        "intentos. Revise que el contenedor bd-asilo este arriba y que las "
+        "claves de .env coincidan con sql/01-bases-y-usuarios.sql."
+        % (APP_NOMBRE, BD_HOST, BD_PUERTO, BD_NOMBRE, intentos)
     )
-    bd.commit()
-    bd.close()
 
 
 def nuevo_folio():
@@ -406,6 +477,7 @@ def crear_validacion():
 
     bd = conexion()
     folio = nuevo_folio()
+    evaluado_en = datetime.now().replace(microsecond=0)
     dictamen = {
         "folio": folio,
         "pacienteId": cuerpo["pacienteId"],
@@ -428,15 +500,24 @@ def crear_validacion():
             ],
             "fuente": "ms-pastillero",
         },
-        "evaluadoEn": datetime.now().isoformat(timespec="seconds"),
+        "evaluadoEn": evaluado_en.isoformat(timespec="seconds"),
     }
-    bd.execute(
-        "INSERT INTO validaciones VALUES (?,?,?,?,?,?,?,?)",
-        (folio, cuerpo["pacienteId"], propuesta["principioActivo"], veredicto, puntaje,
-         dictamen["solicitadoPor"], json.dumps(dictamen, ensure_ascii=False),
-         dictamen["evaluadoEn"]),
-    )
-    bd.commit()
+    # Columnas explicitas y no VALUES posicional: con el esquema en un archivo
+    # aparte, el orden de las columnas se rompe en silencio.
+    try:
+        ejecutar(
+            """INSERT INTO validaciones
+                   (folio, paciente_id, principio_activo, veredicto, puntaje_riesgo,
+                    solicitado_por, dictamen, creado_en)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (folio, cuerpo["pacienteId"], propuesta["principioActivo"], veredicto, puntaje,
+             dictamen["solicitadoPor"], json.dumps(dictamen, ensure_ascii=False),
+             evaluado_en),
+        )
+        bd.commit()
+    except Exception:
+        bd.rollback()
+        raise
     return jsonify(dictamen), 201
 
 
@@ -450,9 +531,8 @@ def _resumen(veredicto, hallazgos):
 
 @app.get("/api/v1/validaciones/<folio>")
 def obtener_validacion(folio):
-    fila = conexion().execute(
-        "SELECT dictamen FROM validaciones WHERE folio = ?", (folio,)
-    ).fetchone()
+    fila = consultar_uno(
+        "SELECT dictamen FROM validaciones WHERE folio = %s", (folio,))
     if fila is None:
         return jsonify({"error": "No existe el folio %s." % folio}), 404
     return jsonify(json.loads(fila["dictamen"]))
@@ -465,10 +545,10 @@ def bitacora():
     sql = "SELECT folio, paciente_id, principio_activo, veredicto, puntaje_riesgo, creado_en FROM validaciones"
     params = ()
     if paciente:
-        sql += " WHERE paciente_id = ?"
+        sql += " WHERE paciente_id = %s"
         params = (paciente,)
     sql += " ORDER BY creado_en DESC LIMIT 100"
-    filas = conexion().execute(sql, params).fetchall()
+    filas = consultar(sql, params)
     return jsonify({
         "total": len(filas),
         "validaciones": [
@@ -490,7 +570,7 @@ def no_encontrado(_):
     return jsonify({"error": "Ruta no encontrada en ms-vigia."}), 404
 
 
-preparar_bd()
+esperar_a_mysql()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PUERTO", 8081)))

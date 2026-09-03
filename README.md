@@ -3,9 +3,10 @@
 **Eddinson Artemio Ovalle López — 3090-23-20497**
 Análisis y Diseño de Sistemas II · Universidad Mariano Gálvez de Guatemala · Centro Regional de Mazatenango
 
-Cinco contenedores: tres microservicios de dominio, un **gateway con inicio de
-sesión** que es la única puerta de entrada, y la aplicación base que los
-consume. Todo el conjunto se levanta con **un solo comando**.
+Seis contenedores: tres microservicios de dominio, un **gateway con inicio de
+sesión** que es la única puerta de entrada, la aplicación base que los consume
+y una instancia de **MySQL 8.4** con una base separada por servicio. Todo el
+conjunto se levanta con **un solo comando**.
 
 ---
 
@@ -74,44 +75,47 @@ reenvía la petición tal cual al servicio dueño de esos datos.
 ## 3. Arquitectura del conjunto
 
 ```
-                     navegador  ->  http://localhost:8090     (unico puerto
-                                         |                     que abre el
-                                         v                     navegador)
-                         +-----------------------------------+
-                         |   estacion-web  (nginx)           |  contenedor 1
-                         |   sirve la interfaz estatica y    |
-                         |   reenvia todo a ms-gateway       |
-                         +----------------+------------------+
-                                          |  /api  /vigia  /pastillero  /caja
-                                          v
-                         +-----------------------------------+
-                         |            ms-gateway             |  contenedor 2
-                         |  login + JWT + revocacion +       |  puerto 8080
-                         |  matriz de acceso por rol         |  (publicado)
-                         |         Node.js + Express         |
-                         +---+-------------+-------------+---+
-                            /vigia      /pastillero    /caja
-                             |             |             |
-        +--------------------v--+  +-------v----------+  +v-------------------+
-        |       ms-vigia         |  |  ms-pastillero   |  |      ms-caja       |
-        |   farmacovigilancia    |  | padron de inter- |  | caja y donaciones  |
-        |                        |  | nos + plan de    |  |                    |
-        |    Python + Flask      |  | tomas            |  |  Python + Flask    |
-        |     SQLite propia      |  | Python + Flask   |  |   SQLite propia    |
-        |                        |  |  SQLite propia   |  |                    |
-        +---+----------------^---+  +--^-----------+---+  +--------------------+
-            |                |         |           |
-            |                +---------+           |
-            |                 (1) el pastillero    |
-            |                 consulta el dictamen |
-            |                 antes de programar   |
-            +--------------------------------------+
-                     (2) vigia pide la ficha del interno
-                     antes de dictaminar: el cliente solo
-                     manda el pacienteId
-
-            contenedor 3         contenedor 4        contenedor 5
-       (sin puerto al host) (sin puerto al host) (sin puerto al host)
+                  navegador  ->  http://localhost:8090   (unico puerto que
+                                      |                   abre el navegador)
+                      +-----------------------------------+
+                      |   estacion-web  (nginx)           |  contenedor 1
+                      |   sirve la interfaz y reenvia     |
+                      |   todo a ms-gateway               |
+                      +----------------+------------------+
+                                       |  /api /vigia /pastillero /caja
+                                       v
+                      +-----------------------------------+
+                      |            ms-gateway             |  contenedor 2
+                      |  login + JWT + revocacion +       |  puerto 8080
+                      |  matriz de acceso por rol         |  (publicado)
+                      +---+-------------+-------------+---+
+                         /vigia      /pastillero    /caja
+                          |             |             |
+     +--------------------v--+  +-------v----------+  +v-------------------+
+     |       ms-vigia         |  |  ms-pastillero   |  |      ms-caja       |
+     |   farmacovigilancia    |  | padron + plan    |  | entradas, salidas  |
+     |    Python + Flask      |  | Python + Flask   |  |  Python + Flask    |
+     +---+----------------^---+  +--^-----------+---+  +--------+-----------+
+         |  |             |         |           |               |
+         |  |             +---------+           |               |
+         |  |              (1) el dictamen      |               |
+         |  +------------------------------------+              |
+         |          (2) la ficha del interno                    |
+         |                       |                              |
+         | usr_vigia             | usr_pastillero               | usr_caja
+         v                       v                              v
+     +------------------------------------------------------------------+
+     |                     bd-asilo   ·   MySQL 8.4                      |
+     |                                                                   |
+     |   asilo_vigia      asilo_pastillero        asilo_caja             |
+     |   validaciones     internos, planes,       cargos, pagos,         |
+     |                    tomas                   donaciones, gastos,    |
+     |                                            pagos_fundacion        |
+     |                                                                   |
+     |   Tres bases separadas, un usuario por servicio, y ningun usuario  |
+     |   con permiso sobre la base de otro.       sin puerto al host      |
+     +------------------------------------------------------------------+
+        contenedor 3, 4 y 5 arriba (sin puerto al host) · contenedor 6 aqui
 ```
 
 Los dos puntos de integracion entre microservicios estan numerados arriba:
@@ -149,7 +153,7 @@ importa tanto como quién puede modificarlos.
 | Ruta detrás del gateway | Quién puede leer (GET) | Quién puede escribir |
 |---|---|---|
 | `/vigia/*`      | `MEDICO`, `ENFERMERIA` | solo `MEDICO` (dictaminar una prescripción es un acto clínico) |
-| `/pastillero/*` | `MEDICO`, `ENFERMERIA` | `MEDICO` o `ENFERMERIA` (programar, administrar, omitir, suspender) |
+| `/pastillero/*` | `MEDICO`, `ENFERMERIA` | `MEDICO` o `ENFERMERIA` (programar, administrar, omitir) · **suspender: solo `MEDICO`** |
 | `/caja/*`       | `ADMINISTRACION` | solo `ADMINISTRACION` (cargos, pagos, donaciones, gastos) |
 
 **Dos excepciones, las dos documentadas y las dos solo de lectura:**
@@ -167,6 +171,15 @@ importa tanto como quién puede modificarlos.
    alergias y sin medicación. Saber que Rosalía está internada aquí es un dato
    administrativo; saber que tiene demencia mixta es un dato clínico. Y las
    tomas, los planes y la adherencia le siguen respondiendo `403`.
+
+**Por qué suspender un tratamiento es solo del médico.** Suspender no es
+registrar lo que pasó: es cambiar la indicación. Enfermería puede consignar
+que una toma no se dio y por qué —para eso está *omitir*, que exige motivo—,
+pero retirarle el medicamento a un interno de aquí en adelante revoca una
+decisión clínica, y esa la toma quien la firmó. Antes la interfaz solo le
+mostraba el botón al médico mientras la API se lo permitía a enfermería: las
+dos partes decían cosas distintas, y la que mandaba era la API. Ahora la regla
+está en el gateway, en `ms-pastillero` y en la interfaz, las tres iguales.
 
 ### Defensa en profundidad
 
@@ -337,37 +350,59 @@ fallido tarda lo mismo exista o no el usuario (siempre se compara contra un
 hash, incluso cuando no hay nadie con ese nombre), para que cronometrar la
 respuesta no revele qué usuarios están dados de alta.
 
-### Prueba de humo
+### Los dos guiones de comprobación
 
-`pruebas.sh` recorre los cinco contenedores **enteramente a través del
-gateway**, que es el único camino que existe. Cada comprobación imprime `OK` o
-`FALLA`, y el script termina con código distinto de cero si algo falla, así
-que sirve como prueba de humo de verdad:
+El proyecto trae dos, con propósitos distintos. Los dos corren en **Git Bash
+sobre Windows** (y en Linux y macOS), imprimen `OK` o `FALLA` en cada línea y
+salen con código distinto de cero si algo falla, así que sirven para
+encadenarlos. Los dos necesitan el stack levantado.
+
+| | `pruebas.sh` | `verificar.sh` |
+|---|---|---|
+| **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
+| **Comprobaciones** | **64**, en 15 bloques | **54**, en 17 bloques |
+| **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
+| **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre) | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
 ```bash
-bash pruebas.sh ; echo "código de salida: $?"
+bash pruebas.sh   ; echo "código de salida: $?"
+bash verificar.sh ; echo "código de salida: $?"
 ```
 
-Cubre, entre otras cosas: que los puertos 8081-8083 estén cerrados, petición
-sin token (`401`), token manipulado (`401`), token vencido (`401`), cada
-rechazo por rol de la matriz (`403`), las dos excepciones de lectura (`200`),
-que el token deje de servir después del `logout` (`401`), el límite de
-intentos (`429`), que `GET /` no sea un `404` y que el `404` diga qué ruta y
-qué método se pidieron, que diez validaciones simultáneas generen diez folios
-distintos, que un cliente que miente sobre las alergias no cambie el dictamen,
-y los dos casos clínicos de siempre: ibuprofeno sobre warfarina →
-`BLOQUEADO`, y `ms-pastillero` negándose a programar ese folio con `409`.
+**`verificar.sh` corre a `pruebas.sh` dentro de su bloque 14**, así que
+ejecutar el segundo cubre los dos. Correr `pruebas.sh` por separado es útil
+mientras se trabaja, porque tarda mucho menos.
 
-Son **64 comprobaciones** repartidas en 15 bloques. Requiere `curl` y, para
-leer las respuestas JSON, `python3` **o** `node` — usa el que encuentre, así
-que corre igual en Linux, en macOS y en Git Bash sobre Windows.
+**Qué cubre `pruebas.sh`** — el camino funcional completo: que los puertos
+8081-8083 estén cerrados, petición sin token (`401`), token manipulado
+(`401`), token vencido (`401`), cada rechazo por rol de la matriz (`403`), las
+dos excepciones de lectura (`200`), que el token deje de servir después del
+`logout` (`401`), el límite de intentos (`429`), que `GET /` no sea un `404` y
+que el `404` diga qué ruta y qué método se pidieron, que diez validaciones
+simultáneas generen diez folios distintos, que un cliente que miente sobre las
+alergias no cambie el dictamen, el registro y la omisión de tomas, el circuito
+completo de caja, y los dos casos clínicos de siempre: ibuprofeno sobre
+warfarina → `BLOQUEADO`, y `ms-pastillero` negándose a programar ese folio con
+`409`.
+
+**Qué cubre `verificar.sh`** — lo que no se ve desde la interfaz: la matriz de
+acceso rol por rol y ruta por ruta; la defensa en profundidad, comprobando que
+un microservicio rechace por su cuenta a quien se salte el gateway desde la red
+interna; que la bitácora se firme con el token y no con el cuerpo de la
+petición; **el aislamiento entre las bases**, verificando que `usr_caja` no
+pueda leer `asilo_vigia`; que los nombres con tilde sobrevivan el viaje a MySQL
+y de vuelta; y una **auditoría estática del repositorio**: sin claves en texto
+plano, sin rastros de SQLite, con `.env` ignorado, el dinero en `DECIMAL` y el
+puerto de MySQL sin publicar.
 
 Para partir de datos limpios (los internos y cargos de ejemplo recién
-sembrados), borre los volúmenes antes:
+sembrados), borre los volúmenes antes. **La primera vez tarda entre 60 y 90
+segundos**: MySQL crea su directorio de datos y ejecuta los archivos de `sql/`
+antes de aceptar conexiones, y los microservicios esperan a que eso termine.
 
 ```bash
 docker compose down -v && docker compose up -d --build
-bash pruebas.sh
+bash verificar.sh
 ```
 
 > El recorrido de la interfaz en un navegador de verdad —acceso, rutas,
@@ -598,7 +633,18 @@ Las vistas son **enlazables** y el botón de atrás del navegador funciona:
 El acceso ocupa la pantalla completa, sin nada detrás. Al entrar, la aplicación
 arranca arriba y en la vista que le toca al rol: medicina y enfermería en la
 jornada, administración en la caja. Y solo se muestran las pestañas que el rol
-puede usar. Si alguien pidió `#/caja` antes de iniciar sesión, se le guarda esa
+puede usar — **con el nombre de lo que ese rol de verdad puede hacer**:
+
+| Rol | Segunda pestaña | Qué ve dentro |
+|---|---|---|
+| `ADMINISTRACION` | «Caja y donaciones» | Módulo completo: balance de entradas y salidas, estado de cuenta y formularios de cargo, donación y gasto |
+| `MEDICO` | «Cuenta del interno» | Solo los cargos y el saldo del interno seleccionado, que es su excepción de lectura. Sin balance y sin formularios |
+| `ENFERMERIA` | no aparece | — |
+
+El médico veía antes una pestaña llamada «Caja y donaciones» que prometía más
+de lo que su rol puede leer. **La interfaz no pide lo que el rol no puede
+leer**: con sesión de médico no se llega a hacer ni una petición que el gateway
+vaya a responder con `403`. Si alguien pidió `#/caja` antes de iniciar sesión, se le guarda esa
 intención y se le lleva ahí después de entrar.
 
 **Al vencerse la sesión no se expulsa de golpe:** se avisa en la pantalla de
@@ -655,11 +701,148 @@ con el eje girado 90°, que es lo que funciona en pantalla angosta.
 
 ---
 
-## 8. Estructura de archivos
+## 8. La base de datos
+
+Motor: **MySQL 8.4**, en el contenedor `bd-asilo`. El enunciado exige MySQL,
+SQL Server u Oracle; el prototipo empezó con SQLite y se migró.
+
+### Una instancia, tres bases separadas
+
+Se conserva el patrón **database per service**: cada microservicio tiene su
+propia base, su propio usuario y sus propios permisos.
+
+| Base | Usuario | Servicio | Tablas |
+|---|---|---|---|
+| `asilo_vigia` | `usr_vigia` | ms-vigia | `validaciones` |
+| `asilo_pastillero` | `usr_pastillero` | ms-pastillero | `internos`, `planes`, `tomas` |
+| `asilo_caja` | `usr_caja` | ms-caja | `cargos`, `pagos`, `donaciones`, `gastos`, `pagos_fundacion` |
+
+Cada usuario recibe `SELECT, INSERT, UPDATE, DELETE` **solo sobre su propia
+base**, y nada más: ni `CREATE`, ni `DROP`, ni `ALTER`. Un servicio no puede
+leer ni escribir la base de otro, y eso se comprueba en `verificar.sh`:
+
+```bash
+docker compose exec bd-asilo mysql -u usr_caja -p"$BD_CLAVE_CAJA" \
+  -e "SELECT COUNT(*) FROM asilo_vigia.validaciones;"
+# ERROR 1142 (42000): SELECT command denied to user 'usr_caja'@'...'
+```
+
+### Por qué una sola instancia, y qué se sacrificó
+
+Tres microservicios con database per service «de libro» tendrían **tres
+instancias** de motor, una por servicio. Aquí hay una sola, y es una decisión
+consciente: el proyecto tiene que seguir levantando con un comando en la
+máquina de un estudiante, y tres contenedores de MySQL en un portátil son
+entre 1.2 y 1.5 GB de memoria y más de un minuto de arranque.
+
+**Lo que se conserva** con esta decisión: el aislamiento *lógico* de los datos,
+que es lo que sostiene el patrón. Ningún servicio conoce ni puede alcanzar el
+esquema de otro; si mañana `ms-caja` se lleva a su propio motor, no hay una
+sola consulta que reescribir, porque no existe ni un `JOIN` entre bases.
+
+**Lo que se sacrifica**, y hay que decirlo:
+
+- **Aislamiento de fallos.** Si el contenedor `bd-asilo` cae, caen los tres
+  servicios a la vez. Con instancias separadas, una caída de la base de caja
+  dejaría el pastillero funcionando: la enfermera podría seguir registrando
+  tomas aunque administración no pudiera cobrar.
+- **Aislamiento de recursos.** Una consulta pesada de reportes en `asilo_caja`
+  compite por CPU, memoria y buffer pool con las lecturas clínicas de
+  `asilo_pastillero`. No hay forma de ponerle un límite a una sola base.
+- **Escalar por separado.** No se puede darle más memoria, más réplicas o un
+  disco más rápido solo a la base que lo necesita.
+- **Mantenimiento independiente.** Una actualización de versión, un backup o
+  una restauración afectan a los tres servicios al mismo tiempo.
+
+Migrar a tres instancias no exige tocar el código: son tres bloques más en el
+`docker-compose.yml` y tres valores distintos en `BD_HOST`.
+
+### El esquema está en archivos SQL legibles
+
+No lo crea la aplicación al arrancar: vive en `sql/`, y MySQL lo ejecuta la
+primera vez que se levanta el volumen.
+
+| Archivo | Qué hace |
+|---|---|
+| `01-bases-y-usuarios.sh` | Crea las tres bases, los tres usuarios y sus permisos. **Es un `.sh` y no un `.sql` a propósito:** MySQL ejecuta los `.sql` literalmente, sin expandir variables, así que un `.sql` obligaría a escribir las tres claves dentro y versionarlas. El script las toma del entorno del contenedor, que el compose llena desde el `.env` |
+| `01-bases-y-usuarios.ejemplo.sql` | **No se ejecuta.** Las mismas sentencias `CREATE USER` y `GRANT`, con claves de marcador, para poder leer el modelo de permisos sin leer shell |
+| `02-esquema-vigia.sql` | Tabla de la bitácora de farmacovigilancia |
+| `03-esquema-pastillero.sql` | Padrón de internos, planes y tomas |
+| `04-esquema-caja.sql` | Cargos, pagos, donaciones, gastos y pagos a la fundación |
+
+**Estos archivos son la entrega del modelo de datos** que pide el enunciado:
+se leen de arriba abajo, con las claves, los tipos, las restricciones y los
+índices a la vista.
+
+Los cuatro que sí se ejecutan se montan **uno por uno** en el
+`docker-compose.yml`, y no montando el directorio `sql/` completo. Si se
+montara entero, MySQL ejecutaría también `01-bases-y-usuarios.ejemplo.sql`
+—termina en `.sql`— y crearía los usuarios con las claves de marcador antes
+de que el `.sh` alcanzara a crearlos bien.
+
+Los servicios sí conservan el **sembrado de datos de demostración**,
+condicionado a `SEMBRAR=1` y solo si la tabla está vacía.
+
+### Decisiones de tipos
+
+| Qué | Tipo | Por qué |
+|---|---|---|
+| Dinero | `DECIMAL(10,2)` | Antes era `REAL`. Sumar centavos en coma flotante da totales de Q 449.99 donde debe decir Q 450.00, y un libro de caja no puede explicar esa diferencia |
+| Fechas y horas | `DATETIME` / `DATE` | Antes eran texto ISO. Ahora los filtros por rango usan `DATE(creado_en) BETWEEN …` y el motor entiende lo que ordena |
+| Identificadores y folios | `VARCHAR` con largo definido | Con su `PRIMARY KEY`; el folio de `ms-vigia` lleva además un `UNIQUE` explícito |
+| Estados y categorías | `VARCHAR` con `CHECK` | Se eligió `CHECK` sobre `ENUM` porque es portable a SQL Server y Oracle, que el enunciado también admite. La misma convención en los tres servicios |
+| Listas cortas | `JSON` | Psicopatologías y alergias del interno, y el dictamen completo de `ms-vigia` |
+| Motor | `InnoDB` | Con claves foráneas declaradas de verdad e índices sobre lo que de verdad se consulta |
+
+Y **transacciones**: crear un plan con sus tomas, o registrar un pago que
+además cambia el estado del cargo, van en una sola transacción con `rollback()`
+si algo falla. Con SQLite podían quedar a medias.
+
+### Cómo revisarla con MySQL Workbench
+
+El contenedor **no publica el puerto 3306** a propósito. Para inspeccionarla,
+descomente estas dos líneas en el `docker-compose.yml`:
+
+```yaml
+    # ports:
+    #   - "3306:3306"
+```
+
+y vuelva a levantar (`docker compose up -d`). Luego, en MySQL Workbench:
+
+| Campo | Valor |
+|---|---|
+| Hostname | `127.0.0.1` |
+| Port | `3306` |
+| Username | `root` (o `usr_vigia` / `usr_pastillero` / `usr_caja`) |
+| Password | el valor de `BD_CLAVE_ROOT` en su archivo `.env` |
+
+Con `root` se ven las tres bases; con cada usuario de servicio se ve solo la
+suya, que es justamente lo que conviene enseñar en la defensa. **Vuelva a
+comentar las dos líneas** cuando termine.
+
+Sin abrir el puerto, también se puede consultar desde la línea de comandos:
+
+```bash
+docker compose exec bd-asilo mysql -u root -p"$BD_CLAVE_ROOT" \
+  -e "SELECT * FROM asilo_pastillero.internos\G"
+```
+
+---
+
+## 9. Estructura de archivos
 
 ```
 asilo-microservicios/
-├── docker-compose.yml          orquesta los cinco contenedores
+├── docker-compose.yml          orquesta los seis contenedores
+├── sql/                        el modelo de datos, como entrega legible
+│   ├── 01-bases-y-usuarios.sh    tres bases, tres usuarios y sus permisos
+│   │                             (toma las claves del entorno · SE VERSIONA)
+│   ├── 01-bases-y-usuarios.ejemplo.sql  el mismo modelo de permisos, legible,
+│   │                             con claves de marcador · NO se ejecuta
+│   ├── 02-esquema-vigia.sql      bitacora de farmacovigilancia
+│   ├── 03-esquema-pastillero.sql padron de internos, planes y tomas
+│   └── 04-esquema-caja.sql       cargos, pagos, donaciones y gastos
 ├── .env.ejemplo                plantilla de configuración (se copia a .env)
 ├── .env                        secreto de esta instalación · NO se versiona
 ├── pruebas.sh                  prueba de humo por consola, toda vía el gateway
@@ -694,7 +877,7 @@ asilo-microservicios/
 
 ---
 
-## 9. Limitaciones conocidas del prototipo
+## 10. Limitaciones conocidas del prototipo
 
 Esto es un **prototipo académico**, no un sistema en producción. Lo que sigue
 son decisiones tomadas a conciencia, no descuidos: enumerarlas es parte del
@@ -709,6 +892,15 @@ peligroso que uno que sí.
   sistema real la lista vendría de la tabla de personal del módulo
   administrativo, con altas, bajas y cambio de clave obligatorio al primer
   ingreso. **No use estas credenciales fuera de la demostración.**
+- **Las credenciales ya no se imprimen en la pantalla de acceso.** Tenerlas
+  escritas en el login era cómodo para grabar el video y contradecía todo lo
+  demás. Ahora dependen de la bandera `MOSTRAR_USUARIOS_DEMO`, **apagada por
+  defecto**. Para encenderla solo mientras se graba, ponga `MOSTRAR_USUARIOS_DEMO=1`
+  en el `.env` y reinicie el gateway. Como la estación web es HTML estático
+  servido por nginx y no puede leer variables de entorno, la consulta en
+  `GET /api/config`, que es público y no devuelve ninguna credencial: solo el
+  sí o el no. Si el gateway no responde, el bloque se queda oculto — el valor
+  seguro por defecto.
 - **No hay HTTPS.** Todo viaja en HTTP plano dentro de `localhost` y de la red
   interna de Docker. En una red real, el token de sesión se puede leer en
   tránsito: haría falta TLS terminado en nginx (o un proxy inverso delante) con
@@ -728,17 +920,26 @@ peligroso que uno que sí.
 
 ### Datos y persistencia
 
-- **SQLite en vez de MySQL.** Cada microservicio tiene su propia base SQLite en
-  un volumen de Docker. Es coherente con el patrón *database per service* y
-  alcanza de sobra para tres internos y una demostración, pero **no es lo que
-  se entrega en el proyecto final**, que usa MySQL. SQLite admite un solo
-  escritor a la vez; está mitigado con `journal_mode=WAL` y `timeout=10`, y se
-  probó con escrituras concurrentes sin bloqueos, pero no aguanta la carga ni
-  la replicación de un motor cliente-servidor. Migrar es cambiar la capa de
-  conexión de cada servicio: el esquema y las consultas son SQL estándar.
-- **No hay migraciones.** El esquema se crea con `CREATE TABLE IF NOT EXISTS`
-  al arrancar. Un cambio de columna exigiría borrar los volúmenes
-  (`docker compose down -v`).
+- **Una sola instancia de MySQL para las tres bases.** Se explica y se
+  cuantifica en la sección 8: se conserva el aislamiento lógico de los datos,
+  pero se pierde el aislamiento de fallos y de recursos, y la posibilidad de
+  escalar cada base por separado.
+- **No hay migraciones de esquema.** El esquema se crea una sola vez, cuando
+  MySQL arranca con el volumen vacío. Un cambio de columna exige recrear el
+  volumen (`docker compose down -v`), lo que borra los datos. Un sistema real
+  usaría una herramienta de migraciones versionadas.
+- **Ninguna clave de MySQL está en un archivo versionado.** Viven solo en el
+  `.env`, que no se versiona, y `sql/01-bases-y-usuarios.sh` las toma de las
+  variables de entorno del contenedor al crear los usuarios. Ese script sí se
+  versiona —es parte del despliegue— y no contiene ninguna clave: solo
+  referencias a `${BD_CLAVE_VIGIA}`, `${BD_CLAVE_PASTILLERO}` y
+  `${BD_CLAVE_CAJA}`. En producción vendrían de un gestor de secretos en vez
+  de un archivo en el disco.
+- **Los usuarios de MySQL se crean una sola vez**, cuando el volumen de datos
+  está vacío. Cambiar una clave en el `.env` después no surte efecto: hay que
+  recrear el volumen con `docker compose down -v`, lo que borra los datos.
+- **Sin copias de seguridad ni réplica.** El volumen `bd-datos` es el único
+  lugar donde viven los datos.
 - **Los datos de ejemplo se siembran solos** (`SEMBRAR=1`) la primera vez. Los
   tres internos, sus tratamientos y los movimientos de caja son inventados para
   la demostración.

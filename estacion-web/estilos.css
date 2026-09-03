@@ -430,6 +430,11 @@ button { font-family: inherit; }
   background: var(--blanco);
   border: 1px solid var(--linea);
 }
+/* Con sesion de medico el panel de balance no se pinta, y un contenedor
+   vacio seguia dibujando su marco y su relleno: una caja blanca en blanco
+   en medio de la pantalla. */
+.datos:empty { display: none; }
+
 .datos dt {
   font-family: var(--dato);
   font-size: 10.5px;
@@ -440,6 +445,26 @@ button { font-family: inherit; }
 }
 .datos dd { margin: 0; font-size: 14.5px; line-height: 1.45; }
 .datos em { font-style: normal; color: var(--alerta); font-weight: 500; }
+
+/* Cada tratamiento en una fila: la pauta a la izquierda y el boton de
+   suspender alineado a la derecha, todos del mismo ancho y a la misma
+   altura. Antes el boton iba pegado al nombre del medicamento y las filas
+   quedaban en escalera, cada una a distinta altura. */
+.medicacion { display: flex; flex-direction: column; gap: 6px; }
+.medicacion__linea {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.medicacion__pauta { min-width: 0; }
+.medicacion__accion {
+  flex: none;
+  width: 108px;
+  text-align: center;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
 
 .bloque { margin-bottom: 26px; }
 .bloque__cabecera {
