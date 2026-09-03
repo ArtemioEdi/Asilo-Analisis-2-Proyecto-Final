@@ -1,0 +1,106 @@
+name: asilo-cabeza-de-algodon
+
+# ---------------------------------------------------------------------------
+# Al host solo se le exponen dos puertos: 8090 (la estacion web) y 8080
+# (ms-gateway). Los tres microservicios NO publican puerto: viven unicamente
+# dentro de la red interna "asilo" y se llaman entre ellos por nombre de
+# servicio. Antes cualquiera podia escribir en la caja del asilo apuntando a
+# localhost:8083 sin haber iniciado sesion nunca.
+#
+# GATEWAY_SECRETO se lee del archivo .env (ver .env.ejemplo). Si falta, el
+# stack no levanta: no hay secreto por defecto en ninguna parte del codigo.
+# ---------------------------------------------------------------------------
+
+services:
+
+  ms-vigia:
+    build: ./ms-vigia
+    container_name: ms-vigia
+    environment:
+      TZ: America/Guatemala
+      VIGIA_BD: /datos/vigia.db
+      # ms-vigia le pide a ms-pastillero la ficha del interno antes de
+      # dictaminar. Es una llamada en tiempo de peticion, no de arranque, por
+      # eso NO lleva depends_on: ms-pastillero ya depende de ms-vigia y se
+      # armaria un ciclo. Si ms-pastillero no responde, ms-vigia devuelve 503.
+      PASTILLERO_URL: http://ms-pastillero:8082
+      GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
+    volumes:
+      - vigia-datos:/datos
+    restart: unless-stopped
+    networks: [asilo]
+
+  ms-pastillero:
+    build: ./ms-pastillero
+    container_name: ms-pastillero
+    environment:
+      TZ: America/Guatemala
+      PASTILLERO_BD: /datos/pastillero.db
+      VIGIA_URL: http://ms-vigia:8081
+      TOLERANCIA_MIN: "60"
+      SEMBRAR: "1"
+      GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
+    volumes:
+      - pastillero-datos:/datos
+    depends_on:
+      ms-vigia:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [asilo]
+
+  ms-caja:
+    build: ./ms-caja
+    container_name: ms-caja
+    environment:
+      TZ: America/Guatemala
+      CAJA_BD: /datos/caja.db
+      SEMBRAR: "1"
+      GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
+    volumes:
+      - caja-datos:/datos
+    restart: unless-stopped
+    networks: [asilo]
+
+  ms-gateway:
+    build: ./ms-gateway
+    container_name: ms-gateway
+    environment:
+      TZ: America/Guatemala
+      PUERTO: "8080"
+      GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
+      GATEWAY_DURACION_SESION: ${GATEWAY_DURACION_SESION:-8h}
+      ORIGEN_PERMITIDO: ${ORIGEN_PERMITIDO:-http://localhost:8090}
+      VIGIA_URL: http://ms-vigia:8081
+      PASTILLERO_URL: http://ms-pastillero:8082
+      CAJA_URL: http://ms-caja:8083
+    ports:
+      - "8080:8080"
+    depends_on:
+      ms-vigia:
+        condition: service_healthy
+      ms-pastillero:
+        condition: service_healthy
+      ms-caja:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [asilo]
+
+  estacion-web:
+    build: ./estacion-web
+    container_name: estacion-web
+    ports:
+      - "8090:80"
+    depends_on:
+      ms-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [asilo]
+
+volumes:
+  vigia-datos:
+  pastillero-datos:
+  caja-datos:
+
+networks:
+  asilo:
+    driver: bridge

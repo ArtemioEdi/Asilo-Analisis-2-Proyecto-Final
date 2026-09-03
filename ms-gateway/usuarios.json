@@ -1,0 +1,31 @@
+{
+  "_comentario": [
+    "Personal de demostracion del asilo Cabeza de Algodon.",
+    "Las claves nunca se guardan en texto plano: aqui va el hash bcrypt (coste 10).",
+    "Son usuarios de PRUEBA para la defensa del proyecto; las claves estan",
+    "documentadas en el README. En un sistema real esta lista vendria de la tabla",
+    "de personal del modulo administrativo y no de un archivo del repositorio.",
+    "Para regenerar un hash:",
+    "  docker compose run --rm --entrypoint node ms-gateway -e \"console.log(require('bcryptjs').hashSync('LA_CLAVE',10))\""
+  ],
+  "usuarios": [
+    {
+      "usuario": "medico",
+      "nombre": "Dr. Angel Maltez",
+      "rol": "MEDICO",
+      "claveHash": "$2a$10$3NiJ6wDavB8ZFIq5IQ6sDOh/CTWKtySBpm37iT6hgQOQqXPt8zvC2"
+    },
+    {
+      "usuario": "enfermeria",
+      "nombre": "Enf. Lucia Cabrera",
+      "rol": "ENFERMERIA",
+      "claveHash": "$2a$10$4dBU8uVC5Yk62HMMMBqWi.dQfmAc0v8bSvp37CQzYMu8SohDYJcbW"
+    },
+    {
+      "usuario": "administracion",
+      "nombre": "Marta Solis",
+      "rol": "ADMINISTRACION",
+      "claveHash": "$2a$10$TfAfArMu0mKMjiD/R52IHu5jp9a9PDer3s3g5kMK6OrtOr.VTmNgq"
+    }
+  ]
+}

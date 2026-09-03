@@ -1,0 +1,18 @@
+{
+  "name": "ms-gateway",
+  "version": "1.0.0",
+  "description": "Puerta de entrada unica del sistema del asilo Cabeza de Algodon: autentica a la persona usuaria y reenvia sus peticiones a ms-vigia, ms-pastillero y ms-caja segun su rol.",
+  "private": true,
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "2.4.3",
+    "cors": "2.8.5",
+    "express": "4.21.2",
+    "http-proxy-middleware": "2.0.7",
+    "jsonwebtoken": "9.0.2"
+  }
+}

@@ -1,0 +1,8 @@
+# Todo el texto se guarda y se saca del repositorio con saltos de linea LF.
+#
+# Sin esto, Git en Windows convierte los archivos a CRLF al clonar, y
+# pruebas.sh deja de correr en Linux y en macOS con el error
+# "/bin/bash^M: bad interpreter". Los Dockerfile y los scripts que se copian
+# dentro de las imagenes tienen el mismo problema: los contenedores son
+# Linux, sin importar en que sistema se hizo el clon.
+* text=auto eol=lf

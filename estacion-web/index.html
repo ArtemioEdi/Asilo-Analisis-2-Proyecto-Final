@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jornada de medicación · Cabeza de Algodón</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+
+<!-- ===================================================================
+     Acceso. Ocupa la pantalla completa por encima de todo lo demas: no
+     es una seccion mas de la pagina, asi que no hay nada detras ni hay
+     que desplazarse para encontrarlo.
+     =================================================================== -->
+<section class="acceso" id="acceso" aria-labelledby="acceso-titulo">
+  <form class="acceso__tarjeta" id="formulario-acceso" autocomplete="off">
+    <span class="marca">Cabeza de Algodón</span>
+    <h1 id="acceso-titulo">Estación de enfermería</h1>
+    <p class="acceso__nota">Inicie sesión con su usuario del asilo para continuar.</p>
+
+    <p class="acceso__reanudar" id="acceso-reanudar" hidden></p>
+
+    <div class="campo campo--ancho">
+      <label for="acceso-usuario">Usuario</label>
+      <input id="acceso-usuario" name="usuario" type="text" autocomplete="username"
+             placeholder="medico · enfermeria · administracion" required>
+    </div>
+    <div class="campo campo--ancho">
+      <label for="acceso-clave">Clave</label>
+      <input id="acceso-clave" name="clave" type="password" autocomplete="current-password" required>
+      <p class="campo__error" id="acceso-error" role="alert"></p>
+    </div>
+
+    <button class="accion accion--ancha" id="acceso-enviar" type="submit">Ingresar</button>
+
+    <p class="acceso__ayuda">
+      Prototipo de demostración: <b>medico</b> / medico2026 ·
+      <b>enfermeria</b> / enfermeria2026 · <b>administracion</b> / admin2026
+    </p>
+  </form>
+</section>
+
+
+<!-- ===================================================================
+     Barra superior fija: asilo, interno seleccionado, quien esta en
+     sesion y la salida. Siempre visible, no se va con el desplazamiento.
+     =================================================================== -->
+<header class="superior" id="superior" hidden>
+  <div class="superior__marca">
+    <span class="superior__asilo">Cabeza de Algodón</span>
+    <span class="superior__sub">Estación de enfermería</span>
+  </div>
+
+  <div class="superior__interno" id="superior-interno" hidden>
+    <span class="superior__rotulo">Interno</span>
+    <span class="superior__nombre" id="superior-interno-nombre">—</span>
+    <span class="superior__codigo" id="superior-interno-codigo"></span>
+  </div>
+
+  <div class="superior__sesion">
+    <div class="superior__quien">
+      <span class="superior__nombre" id="sesion-nombre">—</span>
+      <span class="marbete" id="sesion-rol">—</span>
+    </div>
+    <button class="accion-sec" id="cerrar-sesion" type="button">Salir</button>
+  </div>
+</header>
+
+
+<div class="armazon" id="armazon" hidden>
+
+  <aside class="internos" id="internos">
+    <p class="internos__rotulo" id="internos-rotulo">Internos a cargo</p>
+
+    <div class="buscador" id="buscador" hidden>
+      <label class="visualmente-oculto" for="buscador-campo">Buscar interno por nombre o código</label>
+      <input id="buscador-campo" type="search" placeholder="Buscar por nombre o código…"
+             autocomplete="off">
+    </div>
+
+    <ul class="internos__lista" id="lista-internos"></ul>
+    <p class="internos__vacio" id="internos-vacio" hidden></p>
+
+    <div class="internos__pie">
+      <p>Eddinson Artemio Ovalle López · 3090-23-20497</p>
+      <p>Análisis y Diseño de Sistemas II · Universidad Mariano Gálvez, Mazatenango</p>
+    </div>
+  </aside>
+
+  <main class="principal">
+
+    <nav class="pestanas" id="pestanas" role="tablist" aria-label="Vistas de la estación">
+      <button class="pestana" id="pestana-jornada" data-vista="jornada" type="button"
+              role="tab" aria-selected="true" aria-controls="vista-jornada">
+        Jornada de medicación
+      </button>
+      <button class="pestana" id="pestana-caja" data-vista="caja" type="button"
+              role="tab" aria-selected="false" aria-controls="vista-caja">
+        Caja y donaciones
+      </button>
+    </nav>
+
+    <!-- ---------------- Jornada de medicacion ---------------- -->
+    <section id="vista-jornada" role="tabpanel" aria-labelledby="pestana-jornada" tabindex="-1">
+
+      <header class="encabezado">
+        <div>
+          <h2 id="nombre-interno">—</h2>
+          <p class="encabezado__meta" id="meta-interno"></p>
+        </div>
+        <button class="accion" id="abrir-cajon" type="button" hidden>Indicar un medicamento</button>
+      </header>
+
+      <dl class="datos" id="datos-interno"></dl>
+
+      <section class="bloque">
+        <div class="bloque__cabecera">
+          <h3>Recorrido del día</h3>
+          <span id="fecha-hoy" class="bloque__nota"></span>
+        </div>
+        <div class="regla" id="regla"></div>
+        <p class="leyenda">
+          <span class="marca-estado marca-estado--ADMINISTRADA" aria-hidden="true"></span> administrada
+          <span class="marca-estado marca-estado--PENDIENTE" aria-hidden="true"></span> pendiente
+          <span class="marca-estado marca-estado--OMITIDA" aria-hidden="true"></span> omitida
+          <span class="marca-estado marca-estado--VENCIDA" aria-hidden="true"></span> vencida
+        </p>
+      </section>
+
+      <p class="parte" id="parte"></p>
+
+      <section class="registro" id="registro"></section>
+
+    </section>
+
+    <!-- ---------------- Caja y donaciones ---------------- -->
+    <section id="vista-caja" role="tabpanel" aria-labelledby="pestana-caja" tabindex="-1" hidden>
+
+      <header class="encabezado">
+        <div>
+          <h2>Caja y donaciones</h2>
+          <p class="encabezado__meta" id="caja-meta"></p>
+        </div>
+      </header>
+
+      <dl class="datos" id="caja-resumen"></dl>
+
+      <section class="bloque">
+        <div class="bloque__cabecera">
+          <h3>Cuenta de <span id="caja-interno-nombre">—</span></h3>
+          <span class="bloque__nota" id="caja-saldo"></span>
+        </div>
+        <div class="cargos" id="caja-cargos"></div>
+      </section>
+
+      <section class="caja-admin" id="caja-admin" hidden>
+        <h3>Registrar movimiento</h3>
+        <div class="caja-formularios">
+
+          <form class="formulario formulario--caja" id="formulario-cargo">
+            <p class="formulario__titulo">Cargar a la cuenta del interno</p>
+            <div class="campo campo--ancho">
+              <label for="cargo-tarifa">Tarifa</label>
+              <select id="cargo-tarifa" required></select>
+            </div>
+            <div class="campo campo--ancho">
+              <label for="cargo-concepto">Concepto</label>
+              <input id="cargo-concepto" type="text" placeholder="Ej. Consulta de control mensual" required>
+            </div>
+            <button class="accion accion--ancha" type="submit">Registrar cargo</button>
+          </form>
+
+          <form class="formulario formulario--caja" id="formulario-donacion">
+            <p class="formulario__titulo">Registrar una donación</p>
+            <div class="campo campo--ancho">
+              <label for="donacion-donante">Donante</label>
+              <input id="donacion-donante" type="text" placeholder="Empresa, institución o persona" required>
+            </div>
+            <div class="campo">
+              <label for="donacion-tipo">Tipo</label>
+              <select id="donacion-tipo">
+                <option value="EMPRESA">Empresa</option>
+                <option value="GOBIERNO">Gobierno</option>
+                <option value="PARTICULAR">Particular</option>
+              </select>
+            </div>
+            <div class="campo">
+              <label for="donacion-monto">Monto, en Q</label>
+              <input id="donacion-monto" type="number" min="1" step="0.01" required>
+            </div>
+            <button class="accion accion--ancha" type="submit">Registrar donación</button>
+          </form>
+
+          <form class="formulario formulario--caja" id="formulario-gasto">
+            <p class="formulario__titulo">Registrar un gasto</p>
+            <div class="campo campo--ancho">
+              <label for="gasto-concepto">Concepto</label>
+              <input id="gasto-concepto" type="text" placeholder="Ej. Energía eléctrica del mes" required>
+            </div>
+            <div class="campo">
+              <label for="gasto-categoria">Categoría</label>
+              <select id="gasto-categoria">
+                <option value="SERVICIOS">Servicios</option>
+                <option value="PERSONAL">Personal</option>
+                <option value="INSUMOS">Insumos</option>
+                <option value="MANTENIMIENTO">Mantenimiento</option>
+                <option value="OTRO">Otro</option>
+              </select>
+            </div>
+            <div class="campo">
+              <label for="gasto-monto">Monto, en Q</label>
+              <input id="gasto-monto" type="number" min="1" step="0.01" required>
+            </div>
+            <button class="accion accion--ancha" type="submit">Registrar gasto</button>
+          </form>
+
+        </div>
+      </section>
+
+    </section>
+
+  </main>
+</div>
+
+
+<!-- ===================================================================
+     Recetario: dialogo lateral que atrapa el foco mientras esta abierto
+     y lo devuelve al boton que lo abrio al cerrarse.
+     =================================================================== -->
+<div class="velo" id="velo" hidden></div>
+
+<aside class="cajon" id="cajon" hidden role="dialog" aria-modal="true" aria-labelledby="cajon-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio">ms-vigia</span>
+      <h3 id="cajon-titulo">Revisión de la prescripción</h3>
+    </div>
+    <button class="cerrar" id="cerrar-cajon" type="button" aria-label="Cerrar el recetario">×</button>
+  </header>
+
+  <p class="cajon__nota">
+    Nada entra al registro del día sin pasar por aquí. Se contrasta la indicación contra
+    la ficha del interno: alergias, interacciones con lo que ya recibe, duplicidad
+    terapéutica, criterios de edad y dosis máxima diaria.
+  </p>
+
+  <form class="formulario" id="formulario" autocomplete="off">
+    <div class="campo campo--ancho">
+      <label for="principioActivo">Medicamento</label>
+      <select id="principioActivo" required></select>
+    </div>
+    <div class="campo">
+      <label for="dosisMg">Dosis por toma, en mg</label>
+      <input id="dosisMg" type="number" min="0.05" step="0.05" value="400" required>
+    </div>
+    <div class="campo">
+      <label for="cadaHoras">Intervalo, en horas</label>
+      <input id="cadaHoras" type="number" min="1" max="72" step="1" value="8" required>
+    </div>
+    <div class="campo">
+      <label for="dias">Duración, en días</label>
+      <input id="dias" type="number" min="1" max="90" step="1" value="3" required>
+    </div>
+    <div class="campo">
+      <label for="via">Vía</label>
+      <select id="via">
+        <option value="oral">Oral</option>
+        <option value="sublingual">Sublingual</option>
+        <option value="intramuscular">Intramuscular</option>
+        <option value="topica">Tópica</option>
+      </select>
+    </div>
+    <div class="campo campo--ancho">
+      <label for="indicacion">Motivo de la indicación</label>
+      <input id="indicacion" type="text" placeholder="Dolor lumbar tras la caída del martes">
+    </div>
+    <button class="accion accion--ancha" id="someter" type="submit">Someter a revisión</button>
+  </form>
+
+  <div class="dictamen" id="dictamen" aria-live="polite"></div>
+</aside>
+
+
+<!-- ===================================================================
+     Confirmacion de actos irreversibles: administrar una toma, registrar
+     un pago, suspender un tratamiento.
+     =================================================================== -->
+<div class="velo" id="velo-confirmar" hidden></div>
+<div class="confirmar" id="confirmar" hidden role="alertdialog" aria-modal="true"
+     aria-labelledby="confirmar-titulo" aria-describedby="confirmar-cuerpo">
+  <h3 id="confirmar-titulo">—</h3>
+  <div class="confirmar__cuerpo" id="confirmar-cuerpo"></div>
+  <div class="confirmar__botones">
+    <button class="accion-sec" id="confirmar-no" type="button">Cancelar</button>
+    <button class="accion" id="confirmar-si" type="button">Confirmar</button>
+  </div>
+</div>
+
+
+<footer class="barra" id="barra" hidden>
+  <span class="barra__grupo" id="barra-servicios">
+    <span data-servicio="gateway">ms-gateway: consultando</span>
+    <span data-servicio="vigia">ms-vigia: consultando</span>
+    <span data-servicio="pastillero">ms-pastillero: consultando</span>
+    <span data-servicio="caja">ms-caja: consultando</span>
+  </span>
+  <span class="barra__grupo">
+    <span id="barra-turno">turno —</span>
+    <span id="barra-hora">--:--</span>
+  </span>
+</footer>
+
+<!-- Los avisos se anuncian a los lectores de pantalla. Los errores se
+     quedan hasta que la persona los cierre; los demas se van solos. -->
+<div class="avisos" id="avisos" aria-live="polite" aria-atomic="false"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

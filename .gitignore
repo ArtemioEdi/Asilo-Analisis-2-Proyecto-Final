@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.db
+datos/
+.DS_Store
+node_modules/
+npm-debug.log*
+
+# Configuracion local con el secreto de la instalacion (ver .env.ejemplo)
+.env

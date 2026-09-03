@@ -1,0 +1,1001 @@
+/* =====================================================================
+   Estacion de enfermeria · Asilo Cabeza de Algodon
+   ---------------------------------------------------------------------
+   Quien usa esto esta de pie, apurado, en un turno de noche y frente a
+   un monitor que puede ser viejo. Las tres prioridades del diseño, en
+   este orden:
+
+     1. La hora y el estado de cada toma se leen de lejos.
+     2. "pendiente" y "vencida" no se pueden confundir.
+     3. El veredicto de ms-vigia domina la pantalla cuando aparece.
+
+   El estado NUNCA se codifica solo con color: cada uno lleva ademas una
+   forma y una palabra, porque una parte de la poblacion no distingue el
+   rojo del verde y porque en un monitor gastado los colores mienten.
+   ===================================================================== */
+
+:root {
+  /* Paleta de seis. Todos los contrastes medidos contra --papel. */
+  --papel:    #f2f1ed;  /* fondo hueso: menos deslumbre que el blanco puro */
+  --blanco:   #ffffff;  /* tarjetas y campos, para separarlas del fondo   */
+  --tinta:    #14161a;  /* texto principal            16.03:1             */
+  --cobalto:  #1f3a9e;  /* administrada, aprobado, accion primaria 8.61:1 */
+  --alerta:   #a32414;  /* vencida, bloqueado          6.59:1             */
+  --ambar:    #7a5200;  /* omitida, advertencia        6.12:1             */
+  --pizarra:  #4a5058;  /* texto secundario            7.20:1             */
+
+  /* Tintes de los mismos colores, solo para fondos. */
+  --cobalto-tenue: #e6e9f7;
+  --alerta-tenue:  #fae9e6;
+  --ambar-tenue:   #f7efdc;
+  --linea:         #d7d5cf;
+  --linea-suave:   #e7e5df;
+
+  /* Space Grotesk para lo que se lee; JetBrains Mono para lo que se
+     compara. Las horas en monoespaciada se alinean en columna y se
+     escanean de un vistazo, igual que en una hoja de administracion
+     de medicamentos en papel. */
+  --titular: "Space Grotesk", system-ui, -apple-system, sans-serif;
+  --dato:    "JetBrains Mono", ui-monospace, "Courier New", monospace;
+
+  --superior-alto: 56px;
+  --barra-alto: 30px;
+}
+
+* { box-sizing: border-box; }
+
+/* El atributo hidden gana SIEMPRE. Sin esto, cualquier regla de clase que
+   traiga su propio display (.acceso es flex, .armazon es grid, .superior es
+   flex) le pasa por encima al display:none del navegador y el elemento
+   sigue ocupando la pantalla aunque este marcado como oculto. Con la
+   pantalla de acceso eso significaba que el formulario, ya invisible,
+   seguia tapando la aplicacion entera y se comia todos los clics. */
+[hidden] { display: none !important; }
+
+/* La barra superior es fija: todo salto de desplazamiento —anclas,
+   scrollIntoView, la fila resaltada tras registrar una toma— tiene que
+   dejar libre esa franja, o el contenido al que se salta queda debajo. */
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+
+body {
+  margin: 0;
+  background: var(--papel);
+  color: var(--tinta);
+  font-family: var(--titular);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 { margin: 0; font-weight: 700; letter-spacing: -.01em; }
+p { margin: 0; }
+button { font-family: inherit; }
+
+/* El foco se ve siempre, en todo lo enfocable. Doble anillo para que
+   destaque tanto sobre papel como sobre las tarjetas blancas. */
+:focus-visible {
+  outline: 3px solid var(--cobalto);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.visualmente-oculto {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.marca {
+  display: block;
+  font-family: var(--dato);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+  margin-bottom: 4px;
+}
+
+/* ---------------------------------------------------------------------
+   Marbete de rol
+--------------------------------------------------------------------- */
+.marbete {
+  display: inline-block;
+  font-family: var(--dato);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .06em;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  color: var(--cobalto);
+  white-space: nowrap;
+}
+
+/* =====================================================================
+   Acceso · pantalla completa, por encima de todo
+   ===================================================================== */
+.acceso {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--papel);
+  overflow-y: auto;
+}
+.acceso__tarjeta {
+  width: min(400px, 100%);
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+  border-top: 4px solid var(--cobalto);
+  padding: 32px 30px 26px;
+  box-shadow: 0 24px 60px -34px rgba(20, 22, 26, .5);
+}
+.acceso__tarjeta h1 { font-size: 24px; margin-bottom: 6px; }
+.acceso__nota { color: var(--pizarra); font-size: 14px; margin-bottom: 22px; }
+
+/* Aviso de sesion expirada: no se expulsa de golpe, se explica. */
+.acceso__reanudar {
+  background: var(--ambar-tenue);
+  border-left: 4px solid var(--ambar);
+  color: var(--tinta);
+  font-size: 13.5px;
+  padding: 10px 12px;
+  margin-bottom: 18px;
+}
+.acceso__ayuda {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--linea-suave);
+  font-size: 12.5px;
+  color: var(--pizarra);
+  line-height: 1.7;
+}
+.acceso__ayuda b { font-family: var(--dato); font-weight: 500; color: var(--tinta); }
+
+/* =====================================================================
+   Campos de formulario
+   ===================================================================== */
+.campo { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+.campo label {
+  font-family: var(--dato);
+  font-size: 10.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+}
+.campo input,
+.campo select {
+  font: 15px var(--titular);
+  color: var(--tinta);
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+  border-radius: 2px;
+  padding: 9px 11px;
+  width: 100%;
+}
+.campo input:focus, .campo select:focus { border-color: var(--cobalto); }
+.campo input[aria-invalid="true"] { border-color: var(--alerta); border-width: 2px; }
+
+/* El error va junto al campo, no en una franja lejana. */
+.campo__error {
+  color: var(--alerta);
+  font-size: 13px;
+  font-weight: 500;
+  min-height: 0;
+}
+.campo__error:empty { display: none; }
+
+/* =====================================================================
+   Acciones
+   ===================================================================== */
+.accion {
+  font: 500 14.5px var(--titular);
+  background: var(--cobalto);
+  color: var(--blanco);
+  border: 1px solid var(--cobalto);
+  border-radius: 2px;
+  padding: 10px 18px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.accion:hover:not(:disabled) { background: #162c7d; border-color: #162c7d; }
+.accion--ancha { width: 100%; margin-top: 6px; }
+.accion--peligro { background: var(--alerta); border-color: var(--alerta); }
+.accion--peligro:hover:not(:disabled) { background: #851c0f; border-color: #851c0f; }
+
+.accion-sec {
+  font: 500 13.5px var(--titular);
+  background: var(--blanco);
+  color: var(--tinta);
+  border: 1px solid var(--linea);
+  border-radius: 2px;
+  padding: 7px 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.accion-sec:hover:not(:disabled) { border-color: var(--cobalto); color: var(--cobalto); }
+.accion-sec--suave { color: var(--pizarra); }
+.accion-sec--suave:hover:not(:disabled) { border-color: var(--ambar); color: var(--ambar); }
+
+.accion:disabled, .accion-sec:disabled { opacity: .55; cursor: progress; }
+
+.cerrar {
+  background: none; border: none; cursor: pointer;
+  font-size: 26px; line-height: 1; color: var(--pizarra); padding: 2px 6px;
+}
+.cerrar:hover { color: var(--tinta); }
+
+/* =====================================================================
+   Barra superior fija
+   ===================================================================== */
+.superior {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--superior-alto);
+  z-index: 50;
+  background: var(--tinta);
+  color: var(--papel);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 18px;
+}
+.superior__asilo {
+  display: block;
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  line-height: 1.15;
+}
+.superior__sub {
+  display: block;
+  font-family: var(--dato);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #a8adb6;
+}
+.superior__interno {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding-left: 20px;
+  border-left: 1px solid #33373f;
+  min-width: 0;
+  flex: 1;
+}
+.superior__rotulo {
+  font-family: var(--dato);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #a8adb6;
+}
+.superior__interno .superior__nombre {
+  font-size: 15px; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.superior__codigo { font-family: var(--dato); font-size: 12.5px; color: #a8adb6; }
+.superior__sesion { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+.superior__quien { text-align: right; line-height: 1.25; }
+.superior__quien .superior__nombre { display: block; font-size: 13.5px; font-weight: 500; }
+.superior__quien .marbete { color: #9fb0e8; border-color: #4a5580; }
+.superior .accion-sec { background: transparent; color: var(--papel); border-color: #4a5058; }
+.superior .accion-sec:hover { border-color: var(--papel); color: var(--blanco); }
+.superior :focus-visible { outline-color: #8fa3e8; }
+
+/* =====================================================================
+   Armazon
+   ===================================================================== */
+.armazon {
+  display: grid;
+  grid-template-columns: 274px minmax(0, 1fr);
+  min-height: 100vh;
+  padding-top: var(--superior-alto);
+  padding-bottom: var(--barra-alto);
+}
+
+.internos {
+  background: var(--blanco);
+  border-right: 1px solid var(--linea);
+  padding: 20px 0 18px;
+  display: flex;
+  flex-direction: column;
+}
+.internos__rotulo {
+  font-family: var(--dato);
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+  padding: 0 18px 12px;
+}
+.buscador { padding: 0 18px 12px; }
+.buscador input {
+  width: 100%;
+  font: 14px var(--titular);
+  color: var(--tinta);
+  border: 1px solid var(--linea);
+  border-radius: 2px;
+  padding: 8px 11px;
+  background: var(--papel);
+}
+.buscador input:focus { border-color: var(--cobalto); background: var(--blanco); }
+
+.internos__lista { list-style: none; margin: 0; padding: 0; flex: 1; }
+.internos__vacio { padding: 14px 18px; color: var(--pizarra); font-size: 13.5px; }
+
+.interno {
+  width: 100%;
+  display: block;
+  text-align: left;
+  background: none;
+  border: none;
+  border-left: 4px solid transparent;
+  border-bottom: 1px solid var(--linea-suave);
+  padding: 12px 18px 12px 15px;
+  cursor: pointer;
+  color: inherit;
+}
+.interno:hover { background: var(--papel); }
+.interno__nombre { display: block; font-size: 15.5px; font-weight: 500; }
+.interno__meta {
+  display: block;
+  font-family: var(--dato);
+  font-size: 11.5px;
+  color: var(--pizarra);
+  margin-top: 2px;
+}
+/* El seleccionado se marca con fondo, barra lateral y peso: tres señales,
+   no solo el atributo aria. */
+.interno[aria-pressed="true"] {
+  background: var(--cobalto-tenue);
+  border-left-color: var(--cobalto);
+}
+.interno[aria-pressed="true"] .interno__nombre { font-weight: 700; color: var(--cobalto); }
+.interno[aria-pressed="true"] .interno__meta { color: var(--tinta); }
+
+.internos__pie {
+  padding: 16px 18px 0;
+  margin-top: 16px;
+  border-top: 1px solid var(--linea-suave);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--pizarra);
+}
+.internos__pie p { margin-bottom: 3px; }
+
+.principal { padding: 0 30px 40px; min-width: 0; overflow-x: hidden; }
+
+/* =====================================================================
+   Pestañas
+   ===================================================================== */
+/* Las pestañas NO son pegajosas. Viven al principio de la pagina y la barra
+   superior fija ya da el contexto permanente; dejarlas sticky dentro de un
+   contenedor que ya trae padding por esa barra las desplazaba encima del
+   encabezado y tapaba el boton de indicar un medicamento. */
+.pestanas {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--linea);
+  margin-bottom: 26px;
+  background: var(--papel);
+  padding-top: 16px;
+}
+.pestana {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+  padding: 10px 14px;
+  font: 500 14.5px var(--titular);
+  color: var(--pizarra);
+  cursor: pointer;
+}
+.pestana:hover { color: var(--tinta); }
+.pestana[aria-selected="true"] {
+  color: var(--cobalto);
+  border-bottom-color: var(--cobalto);
+  font-weight: 700;
+}
+
+/* =====================================================================
+   Encabezado del interno y ficha
+   ===================================================================== */
+.encabezado {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.encabezado h2 { font-size: 28px; line-height: 1.15; }
+.encabezado__meta {
+  font-family: var(--dato);
+  font-size: 12.5px;
+  color: var(--pizarra);
+  margin-top: 4px;
+}
+
+.datos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px 24px;
+  margin: 0 0 26px;
+  padding: 16px 18px;
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+}
+.datos dt {
+  font-family: var(--dato);
+  font-size: 10.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+  margin-bottom: 4px;
+}
+.datos dd { margin: 0; font-size: 14.5px; line-height: 1.45; }
+.datos em { font-style: normal; color: var(--alerta); font-weight: 500; }
+
+.bloque { margin-bottom: 26px; }
+.bloque__cabecera {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--linea);
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+}
+.bloque__cabecera h3 { font-size: 17px; }
+.bloque__nota { font-family: var(--dato); font-size: 12.5px; color: var(--pizarra); }
+
+/* =====================================================================
+   Marcas de estado · forma + color, nunca color solo
+   ---------------------------------------------------------------------
+     administrada  ●  disco lleno cobalto
+     pendiente     ○  anillo hueco
+     omitida       ⊘  anillo tachado ambar
+     vencida       ▲  triangulo lleno alerta
+   ===================================================================== */
+.marca-estado {
+  display: inline-block;
+  width: 13px; height: 13px;
+  vertical-align: -1px;
+  margin: 0 3px 0 9px;
+  border-radius: 50%;
+  border: 2px solid var(--pizarra);
+  background: transparent;
+  position: relative;
+  flex: none;
+}
+.marca-estado--ADMINISTRADA { background: var(--cobalto); border-color: var(--cobalto); }
+.marca-estado--PENDIENTE    { background: var(--blanco); border-color: var(--pizarra); }
+.marca-estado--OMITIDA      { border-color: var(--ambar); background: var(--blanco); }
+.marca-estado--OMITIDA::after {
+  content: "";
+  position: absolute; left: -2px; right: -2px; top: 50%;
+  height: 2px; background: var(--ambar);
+  transform: rotate(-45deg);
+}
+/* La vencida no es un circulo: es un triangulo. Se distingue de la
+   pendiente por forma, no solo por color. */
+.marca-estado--VENCIDA {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  width: 0; height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 12px solid var(--alerta);
+}
+
+/* =====================================================================
+   Recorrido del dia · regla de 24 horas
+   En pantalla ancha es horizontal con alfileres. En angosto se convierte
+   en linea de tiempo vertical (ver el bloque @media): es la misma
+   informacion con el eje girado, no la misma regla apretada.
+   ===================================================================== */
+.regla {
+  position: relative;
+  height: 104px;
+  border-bottom: 2px solid var(--tinta);
+  margin-bottom: 30px;
+}
+.regla__marca { position: absolute; bottom: 0; width: 1px; background: var(--linea); height: 9px; }
+.regla__marca--mayor { height: 16px; background: var(--pizarra); }
+.regla__hora {
+  position: absolute;
+  bottom: -22px;
+  transform: translateX(-50%);
+  font-family: var(--dato);
+  font-size: 11px;
+  color: var(--pizarra);
+}
+.regla__ahora { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--tinta); }
+.regla__ahora::after {
+  content: "ahora";
+  position: absolute; top: -4px; left: 5px;
+  font-family: var(--dato); font-size: 10px;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--tinta);
+}
+.regla__vacia { color: var(--pizarra); font-size: 14px; padding-top: 34px; }
+
+.alfiler {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: none; border: none; padding: 0; cursor: pointer;
+}
+.alfiler__tallo { width: 1.5px; height: 30px; background: var(--pizarra); }
+.alfiler .marca-estado { margin: 0 0 1px; }
+.alfiler__etiqueta { display: none; }
+.alfiler:hover .marca-estado { transform: scale(1.25); }
+
+/* =====================================================================
+   Parte del dia y filas de toma
+   ===================================================================== */
+.parte {
+  font-size: 14.5px;
+  color: var(--pizarra);
+  padding: 12px 16px;
+  background: var(--blanco);
+  border-left: 4px solid var(--linea);
+  margin-bottom: 24px;
+}
+.parte b { color: var(--tinta); font-family: var(--dato); font-weight: 500; }
+
+.turno { margin-bottom: 22px; }
+.turno__titulo {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--dato);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+  border-bottom: 1px solid var(--linea);
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+  font-weight: 500;
+}
+
+.toma {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 12px 14px 10px;
+  border-bottom: 1px solid var(--linea-suave);
+  border-left: 4px solid transparent;
+  background: var(--blanco);
+}
+/* La hora es el dato que se busca primero: monoespaciada y grande. */
+.toma__hora {
+  font-family: var(--dato);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -.02em;
+}
+.toma__farmaco { font-size: 17px; font-weight: 500; line-height: 1.25; }
+.toma__farmaco small { display: block; font-weight: 400; color: var(--pizarra); font-size: 13.5px; }
+.toma__pie { font-size: 13px; color: var(--pizarra); margin-top: 3px; }
+.toma__acciones { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+
+.estado {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--dato);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--pizarra);
+  white-space: nowrap;
+}
+.estado[data-estado="ADMINISTRADA"] { color: var(--cobalto); }
+.estado[data-estado="OMITIDA"] { color: var(--ambar); }
+
+/* Vencida: barra lateral roja en toda la fila, fondo tenue, VERSALITAS.
+   Tres señales encima del color, para que sea imposible confundirla con
+   una pendiente aunque la pantalla este mal calibrada. */
+.toma--VENCIDA { border-left-color: var(--alerta); background: var(--alerta-tenue); }
+.toma--VENCIDA .toma__hora { color: var(--alerta); font-weight: 700; }
+.estado[data-estado="VENCIDA"] {
+  color: var(--alerta);
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.toma--ADMINISTRADA { border-left-color: var(--cobalto); }
+.toma--ADMINISTRADA .toma__hora { color: var(--pizarra); }
+.toma--OMITIDA { border-left-color: var(--ambar); }
+.toma--OMITIDA .toma__hora { color: var(--pizarra); }
+
+/* Al registrar algo, la fila afectada se resalta un momento para que se
+   vea QUE cambio, en vez de repintar toda la vista en silencio. */
+.toma--cambiada { animation: destello 1.8s ease-out; }
+@keyframes destello {
+  0%, 22% { background: var(--cobalto-tenue); box-shadow: inset 0 0 0 2px var(--cobalto); }
+  100% { background: var(--blanco); box-shadow: none; }
+}
+
+.motivo { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.motivo input {
+  flex: 1; min-width: 200px;
+  font: 14px var(--titular); color: var(--tinta);
+  border: 1px solid var(--linea); border-bottom: 2px solid var(--ambar);
+  padding: 8px 10px; border-radius: 2px; background: var(--blanco);
+}
+
+.leyenda {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px;
+  font-family: var(--dato); font-size: 11.5px; color: var(--pizarra);
+}
+
+/* =====================================================================
+   Estados de carga, vacio y error
+   ===================================================================== */
+.esqueleto { display: grid; gap: 10px; }
+.esqueleto__linea {
+  height: 16px;
+  background: linear-gradient(90deg, var(--linea-suave) 25%, #f0eeea 50%, var(--linea-suave) 75%);
+  background-size: 200% 100%;
+  animation: brillo 1.3s linear infinite;
+  border-radius: 2px;
+}
+.esqueleto__linea--alta { height: 52px; }
+.esqueleto__linea--media { width: 60%; }
+.esqueleto__linea--corta { width: 35%; }
+@keyframes brillo { to { background-position: -200% 0; } }
+
+/* El vacio explica que hacer, no solo que no hay nada. */
+.vacio {
+  text-align: center;
+  padding: 34px 24px;
+  background: var(--blanco);
+  border: 1px dashed var(--linea);
+}
+.vacio__titulo { font-size: 16.5px; font-weight: 700; margin-bottom: 6px; }
+.vacio__texto { color: var(--pizarra); font-size: 14px; max-width: 46ch; margin: 0 auto 16px; }
+.vacio .accion { margin-top: 4px; }
+
+.problema {
+  border-left: 4px solid var(--alerta);
+  background: var(--alerta-tenue);
+  padding: 14px 16px;
+}
+.problema--espera { border-left-color: var(--ambar); background: var(--ambar-tenue); }
+.problema__titulo { font-size: 15.5px; font-weight: 700; margin-bottom: 4px; }
+.problema__texto { font-size: 14px; color: var(--tinta); margin-bottom: 10px; }
+
+/* =====================================================================
+   Recetario (cajon lateral)
+   ===================================================================== */
+.velo { position: fixed; inset: 0; background: rgba(20, 22, 26, .42); z-index: 60; }
+
+.cajon {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: min(480px, 100%);
+  background: var(--blanco);
+  border-left: 1px solid var(--linea);
+  box-shadow: -20px 0 50px -30px rgba(20, 22, 26, .55);
+  z-index: 61;
+  padding: 22px 26px 40px;
+  overflow-y: auto;
+  animation: entra .2s ease-out;
+}
+@keyframes entra { from { transform: translateX(24px); opacity: 0; } }
+.cajon__cabecera { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.cajon__servicio {
+  font-family: var(--dato); font-size: 11px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--cobalto);
+}
+.cajon__cabecera h3 { font-size: 19px; margin-top: 2px; }
+.cajon__nota {
+  font-size: 13.5px; color: var(--pizarra);
+  margin: 12px 0 20px; padding-bottom: 18px;
+  border-bottom: 1px solid var(--linea-suave);
+}
+
+.formulario { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.campo--ancho { grid-column: 1 / -1; }
+.formulario__titulo { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+
+/* =====================================================================
+   Dictamen de ms-vigia
+   ---------------------------------------------------------------------
+   Es una decision de seguridad del paciente: cuando aparece, domina la
+   pantalla. Banda de ancho completo, palabra en versalitas grandes, y en
+   BLOQUEADO ademas fondo solido para que no se pueda pasar por alto.
+   ===================================================================== */
+.dictamen:empty { display: none; }
+.dictamen { margin-top: 26px; }
+
+.dictamen__banda { padding: 18px 20px; margin: 0 -26px 18px; }
+.dictamen__veredicto {
+  font-size: 38px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 12px;
+}
+.dictamen__simbolo { font-size: 32px; line-height: 1; }
+.dictamen__resumen { font-size: 15px; margin-top: 8px; font-weight: 500; }
+.dictamen__folio {
+  font-family: var(--dato); font-size: 11.5px; margin-top: 6px; opacity: .85;
+}
+
+.dictamen--BLOQUEADO .dictamen__banda { background: var(--alerta); color: var(--blanco); }
+.dictamen--ADVERTENCIA .dictamen__banda {
+  background: var(--ambar-tenue); color: var(--tinta); border-left: 6px solid var(--ambar);
+}
+.dictamen--ADVERTENCIA .dictamen__veredicto { color: var(--ambar); }
+.dictamen--APROBADO .dictamen__banda {
+  background: var(--cobalto-tenue); color: var(--tinta); border-left: 6px solid var(--cobalto);
+}
+.dictamen--APROBADO .dictamen__veredicto { color: var(--cobalto); }
+
+.hallazgo { border-left: 3px solid var(--linea); padding: 10px 0 10px 14px; margin-bottom: 12px; }
+.hallazgo--CRITICA { border-left-color: var(--alerta); }
+.hallazgo--ALTA { border-left-color: var(--ambar); }
+.hallazgo--MEDIA { border-left-color: var(--pizarra); }
+.hallazgo__marbete {
+  font-family: var(--dato); font-size: 10.5px; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--pizarra); margin-bottom: 4px;
+}
+.hallazgo--CRITICA .hallazgo__marbete { color: var(--alerta); font-weight: 700; }
+.hallazgo p { margin: 4px 0 0; font-size: 14px; }
+.hallazgo__salida { color: var(--pizarra); font-size: 13.5px; }
+
+/* =====================================================================
+   Confirmacion de actos irreversibles
+   ===================================================================== */
+.confirmar {
+  position: fixed;
+  z-index: 70;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, calc(100% - 32px));
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+  border-top: 5px solid var(--cobalto);
+  box-shadow: 0 30px 70px -30px rgba(20, 22, 26, .6);
+  padding: 24px 26px 20px;
+}
+.confirmar--peligro { border-top-color: var(--alerta); }
+.confirmar h3 { font-size: 19px; margin-bottom: 12px; }
+.confirmar__cuerpo { margin-bottom: 20px; }
+.confirmar__dato {
+  display: flex; justify-content: space-between; gap: 16px;
+  padding: 7px 0; border-bottom: 1px solid var(--linea-suave);
+  font-size: 14.5px;
+}
+.confirmar__dato dt {
+  font-family: var(--dato); font-size: 10.5px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--pizarra); padding-top: 3px;
+}
+.confirmar__dato dd { margin: 0; font-weight: 500; text-align: right; }
+.confirmar__aviso { font-size: 13.5px; color: var(--pizarra); margin-top: 12px; }
+.confirmar__botones { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* =====================================================================
+   Caja
+   ===================================================================== */
+.cargos { display: grid; gap: 1px; background: var(--linea-suave); border: 1px solid var(--linea); }
+.cargo {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr) 130px auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--blanco);
+}
+.cargo__categoria {
+  font-family: var(--dato); font-size: 10.5px; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--pizarra);
+}
+.cargo__concepto { font-size: 14.5px; }
+.cargo__concepto small { display: block; font-family: var(--dato); font-size: 11.5px; color: var(--pizarra); }
+.cargo__monto { font-family: var(--dato); font-size: 15px; text-align: right; white-space: nowrap; font-weight: 500; }
+.cargo__monto small { display: block; font-weight: 400; }
+.estado-pago {
+  font-family: var(--dato); font-size: 11px; font-weight: 500;
+  letter-spacing: .05em; text-transform: uppercase; color: var(--pizarra);
+}
+.estado-pago[data-estado="PENDIENTE"] { color: var(--alerta); }
+.estado-pago[data-estado="ABONADO"] { color: var(--ambar); }
+.estado-pago[data-estado="PAGADO"] { color: var(--cobalto); }
+
+.caja-admin { margin-top: 34px; padding-top: 24px; border-top: 1px solid var(--linea); }
+.caja-admin h3 { font-size: 17px; margin-bottom: 16px; }
+.caja-formularios { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 22px; }
+.formulario--caja {
+  background: var(--blanco); border: 1px solid var(--linea);
+  padding: 18px 18px 16px; align-content: start;
+}
+
+/* =====================================================================
+   Barra de estado de los servicios
+   ===================================================================== */
+.barra {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: var(--barra-alto);
+  background: var(--tinta);
+  color: #c9ccd4;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+  font-family: var(--dato);
+  font-size: 11.5px;
+  z-index: 40;
+}
+.barra__grupo { display: flex; gap: 18px; flex-wrap: wrap; }
+.barra span[data-vivo="si"]::before,
+.barra span[data-vivo="no"]::before {
+  content: "●"; margin-right: 5px;
+}
+.barra span[data-vivo="si"]::before { color: #7fe0a8; }
+.barra span[data-vivo="no"]::before { color: #ff9d8f; }
+
+/* =====================================================================
+   Avisos
+   Los errores se quedan hasta que la persona los cierre; el resto se va
+   solo a los 6 segundos.
+   ===================================================================== */
+.avisos {
+  position: fixed;
+  right: 16px; bottom: calc(var(--barra-alto) + 14px);
+  z-index: 80;
+  display: flex; flex-direction: column; gap: 10px;
+  width: min(400px, calc(100% - 32px));
+}
+.aviso {
+  background: var(--tinta);
+  color: var(--papel);
+  padding: 13px 14px;
+  border-left: 5px solid var(--cobalto);
+  box-shadow: 0 16px 40px -20px rgba(20, 22, 26, .7);
+  display: flex; gap: 12px; align-items: flex-start;
+  animation: sube .18s ease-out;
+}
+@keyframes sube { from { transform: translateY(10px); opacity: 0; } }
+.aviso--error { border-left-color: var(--alerta); }
+.aviso--aviso { border-left-color: var(--ambar); }
+.aviso__cuerpo { flex: 1; min-width: 0; }
+.aviso__titulo { font-size: 14.5px; font-weight: 700; }
+.aviso__texto { font-size: 13.5px; color: #c9ccd4; margin-top: 3px; }
+.aviso__cerrar {
+  background: none; border: none; color: #c9ccd4; cursor: pointer;
+  font-size: 20px; line-height: 1; padding: 0 2px;
+}
+.aviso__cerrar:hover { color: var(--blanco); }
+.aviso .accion-sec {
+  margin-top: 10px; background: transparent; color: var(--papel); border-color: #4a5058;
+}
+.aviso :focus-visible { outline-color: #8fa3e8; }
+
+/* =====================================================================
+   Pantallas angostas
+   ===================================================================== */
+@media (max-width: 940px) {
+  .armazon { grid-template-columns: 1fr; }
+  .internos {
+    border-right: none;
+    border-bottom: 1px solid var(--linea);
+    padding-bottom: 0;
+    /* Sin esto, la tira de internos (3 x 190px = 570px) estira la columna
+       del grid y toda la pagina se desborda a lo ancho: un elemento de
+       grid no encoge por debajo de su contenido salvo que se le diga. */
+    min-width: 0;
+  }
+  .internos__lista { display: flex; overflow-x: auto; min-width: 0; }
+  .interno {
+    border-left: none;
+    border-bottom: 4px solid transparent;
+    border-right: 1px solid var(--linea-suave);
+    min-width: 190px;
+  }
+  .interno[aria-pressed="true"] { border-bottom-color: var(--cobalto); }
+  .internos__pie { display: none; }
+  .principal { padding: 0 16px 40px; }
+}
+
+@media (max-width: 720px) {
+  .superior { height: auto; padding: 8px 12px; flex-wrap: wrap; gap: 8px 14px; }
+  .superior__interno { padding-left: 0; border-left: none; order: 3; width: 100%; }
+  .armazon { padding-top: 96px; }
+  /* La barra superior mide mas en angosto (el interno baja a su propia
+     linea): el salto de desplazamiento tiene que dejarle esa franja. */
+  html { scroll-padding-top: 100px; }
+  .pestanas { padding-top: 12px; }
+
+  .encabezado h2 { font-size: 23px; }
+
+  /* La regla de 24 horas NO se achica: se convierte en linea de tiempo
+     vertical. La hora baja por la izquierda en monoespaciada, la marca de
+     estado queda sobre el eje y el farmaco va a la derecha. Es la misma
+     informacion con el eje girado 90 grados. */
+  .regla {
+    height: auto;
+    border-bottom: none;
+    border-left: 2px solid var(--tinta);
+    margin: 0 0 24px;
+    padding: 4px 0 4px 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .regla__marca, .regla__hora, .regla__ahora { display: none; }
+  .alfiler {
+    position: static;
+    transform: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 0 7px 12px;
+    margin-left: -8px;
+    border-bottom: 1px solid var(--linea-suave);
+    text-align: left;
+  }
+  .alfiler__tallo { display: none; }
+  .alfiler__etiqueta {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    min-width: 0;
+    flex: 1;
+  }
+  .alfiler__hora {
+    font-family: var(--dato); font-size: 15px; font-weight: 500; flex: none;
+  }
+  .alfiler__farmaco {
+    font-size: 14px; color: var(--pizarra);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .alfiler[data-estado="VENCIDA"] .alfiler__hora { color: var(--alerta); font-weight: 700; }
+
+  .toma { grid-template-columns: 70px minmax(0, 1fr); gap: 10px 12px; }
+  .toma__acciones { grid-column: 1 / -1; justify-content: flex-start; }
+  .toma__hora { font-size: 20px; }
+
+  .formulario { grid-template-columns: 1fr; }
+  .cajon { padding: 20px 18px 36px; }
+  .dictamen__banda { margin: 0 -18px 18px; }
+  .dictamen__veredicto { font-size: 30px; }
+
+  .cargo { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
+  .cargo__categoria { grid-column: 1 / -1; }
+  .cargo__acciones { grid-column: 1 / -1; }
+
+  .avisos { right: 8px; left: 8px; width: auto; }
+
+  /* La barra de servicios no puede crecer a varias lineas: su alto esta
+     reservado con padding en el armazon, y si envuelve, el texto se sale
+     del fondo y queda encima del contenido. En angosto se desplaza a lo
+     largo en una sola linea. */
+  .barra { overflow-x: auto; gap: 14px; }
+  .barra__grupo { flex-wrap: nowrap; }
+}
+
+/* =====================================================================
+   Quien pidio menos movimiento, recibe menos movimiento.
+   ===================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+  .esqueleto__linea { background: var(--linea-suave); }
+  .toma--cambiada { box-shadow: inset 0 0 0 2px var(--cobalto); }
+}

@@ -1,0 +1,22 @@
+# Lo que NO entra en la imagen de ms-gateway.
+#
+# node_modules es lo importante: si se copiara desde el equipo de
+# desarrollo, la imagen quedaria con binarios compilados para otro sistema
+# y ademas pisaria lo que instala "npm ci" dentro del contenedor. Las
+# dependencias se instalan siempre dentro de la imagen, a partir de
+# package-lock.json.
+node_modules/
+npm-debug.log*
+.npm/
+
+# Configuracion local y secretos: el secreto llega por variable de entorno
+# desde el compose, nunca dentro de la imagen.
+.env
+.env.*
+
+# Ruido del sistema y del editor
+.DS_Store
+Thumbs.db
+*.log
+.git/
+.gitignore
