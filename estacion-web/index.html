@@ -27,7 +27,8 @@
     <div class="campo campo--ancho">
       <label for="acceso-usuario">Usuario</label>
       <input id="acceso-usuario" name="usuario" type="text" autocomplete="username"
-             placeholder="medico · enfermeria · administracion" required>
+             placeholder="medico · enfermeria · administracion · fundacion · laboratorio · farmacia"
+             required>
     </div>
     <div class="campo campo--ancho">
       <label for="acceso-clave">Clave</label>
@@ -39,7 +40,9 @@
 
     <p class="acceso__ayuda" id="acceso-ayuda" hidden>
       Prototipo de demostración: <b>medico</b> / medico2026 ·
-      <b>enfermeria</b> / enfermeria2026 · <b>administracion</b> / admin2026
+      <b>enfermeria</b> / enfermeria2026 · <b>administracion</b> / admin2026 ·
+      <b>fundacion</b> / fundacion2026 · <b>laboratorio</b> / laboratorio2026 ·
+      <b>farmacia</b> / farmacia2026
     </p>
   </form>
 </section>
@@ -98,6 +101,10 @@
               role="tab" aria-selected="true" aria-controls="vista-jornada">
         Jornada de medicación
       </button>
+      <button class="pestana" id="pestana-consultas" data-vista="consultas" type="button"
+              role="tab" aria-selected="false" aria-controls="vista-consultas" hidden>
+        Consultas
+      </button>
       <button class="pestana" id="pestana-caja" data-vista="caja" type="button"
               role="tab" aria-selected="false" aria-controls="vista-caja">
         <span id="pestana-caja-texto">Caja y donaciones</span>
@@ -155,6 +162,19 @@
           <span class="bloque__nota" id="caja-saldo"></span>
         </div>
         <div class="cargos" id="caja-cargos"></div>
+      </section>
+
+      <section class="bloque" id="bloque-costos" hidden>
+        <div class="bloque__cabecera">
+          <h3>Costo por consulta</h3>
+          <span class="bloque__nota" id="costos-conteo"></span>
+        </div>
+        <p class="parte">
+          Cada consulta con especialista arrastra el laboratorio y la farmacia que
+          salieron de ella. Aquí se ven juntos, que es como se le explica el cobro
+          al familiar responsable.
+        </p>
+        <div id="lista-costos"></div>
       </section>
 
       <section class="caja-admin" id="caja-admin" hidden>
@@ -223,9 +243,270 @@
 
     </section>
 
+    <!-- ---------------- Consultas · la cadena clinica (MEDICO) ----------- -->
+    <section id="vista-consultas" role="tabpanel" aria-labelledby="pestana-consultas"
+             tabindex="-1" hidden>
+
+      <header class="encabezado">
+        <div>
+          <h2>Consultas y ficha médica</h2>
+          <p class="encabezado__meta" id="consultas-meta"></p>
+        </div>
+        <div class="encabezado__acciones">
+          <button class="accion-sec" id="abrir-ficha" type="button">Ver ficha médica completa</button>
+          <button class="accion" id="abrir-remision" type="button">Remitir a especialidad</button>
+        </div>
+      </header>
+
+      <section class="bloque">
+        <div class="bloque__cabecera">
+          <h3>Remisiones</h3>
+          <span class="bloque__nota" id="consultas-conteo"></span>
+        </div>
+        <div id="lista-solicitudes"></div>
+      </section>
+
+      <section class="bloque">
+        <div class="bloque__cabecera">
+          <h3>Avisos a la familia</h3>
+          <span class="bloque__nota" id="correos-conteo"></span>
+        </div>
+        <p class="parte" id="correos-nota"></p>
+        <div id="lista-correos"></div>
+      </section>
+
+      <section class="bloque">
+        <div class="bloque__cabecera">
+          <h3>Exámenes realizados</h3>
+          <span class="bloque__nota" id="examenes-conteo"></span>
+        </div>
+        <div id="lista-examenes"></div>
+      </section>
+
+      <section class="bloque">
+        <div class="bloque__cabecera">
+          <h3>Historial clínico</h3>
+          <span class="bloque__nota" id="historial-conteo"></span>
+        </div>
+        <div id="historial"></div>
+      </section>
+
+    </section>
+
+    <!-- ---------------- Agenda de la fundacion (FUNDACION) --------------- -->
+    <section id="vista-agenda" role="tabpanel" aria-labelledby="pestana-agenda"
+             tabindex="-1" hidden>
+      <header class="encabezado">
+        <div>
+          <h2>Bandeja de remisiones</h2>
+          <p class="encabezado__meta">
+            Remisiones que el médico general envió y todavía no tienen cita asignada.
+          </p>
+        </div>
+      </header>
+      <section class="bloque">
+        <div class="bloque__cabecera">
+          <h3>Pendientes de agendar</h3>
+          <span class="bloque__nota" id="agenda-conteo"></span>
+        </div>
+        <div id="bandeja-agenda"></div>
+      </section>
+    </section>
+
+    <!-- ---------------- Laboratorio (LABORATORIO) ------------------------ -->
+    <section id="vista-laboratorio" role="tabpanel" aria-labelledby="pestana-laboratorio"
+             tabindex="-1" hidden>
+      <header class="encabezado">
+        <div>
+          <h2>Exámenes solicitados</h2>
+          <p class="encabezado__meta">
+            Exámenes que un especialista indicó y están esperando resultado.
+          </p>
+        </div>
+      </header>
+      <section class="bloque">
+        <div class="bloque__cabecera">
+          <h3>Pendientes de resultado</h3>
+          <span class="bloque__nota" id="laboratorio-conteo"></span>
+        </div>
+        <div id="bandeja-laboratorio"></div>
+      </section>
+    </section>
+
+    <!-- ---------------- Farmacia (FARMACIA) ------------------------------ -->
+    <section id="vista-farmacia" role="tabpanel" aria-labelledby="pestana-farmacia"
+             tabindex="-1" hidden>
+      <header class="encabezado">
+        <div>
+          <h2>Medicamentos por entregar</h2>
+          <p class="encabezado__meta">
+            Recetas que ms-vigia aprobó y que todavía no se le han entregado al interno.
+          </p>
+        </div>
+      </header>
+      <section class="bloque">
+        <div class="bloque__cabecera">
+          <h3>Pendientes de entrega</h3>
+          <span class="bloque__nota" id="farmacia-conteo"></span>
+        </div>
+        <div id="bandeja-farmacia"></div>
+      </section>
+    </section>
+
   </main>
 </div>
 
+
+<!-- ===================================================================
+     Remitir a especialidad: el medico general envia al interno.
+     =================================================================== -->
+<div class="velo" id="velo-remision" hidden></div>
+<aside class="cajon" id="cajon-remision" hidden role="dialog" aria-modal="true"
+       aria-labelledby="remision-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio">ms-consultas</span>
+      <h3 id="remision-titulo">Remitir a especialidad</h3>
+    </div>
+    <button class="cerrar" id="cerrar-remision" type="button" aria-label="Cerrar">×</button>
+  </header>
+
+  <p class="cajon__nota">
+    La remisión llega a la fundación, que le asigna médico, especialidad y hora.
+    Hasta entonces la solicitud queda <b>pendiente</b>.
+  </p>
+
+  <form class="formulario" id="formulario-remision" autocomplete="off">
+    <div class="campo campo--ancho">
+      <label for="remision-motivo">Motivo de la remisión</label>
+      <input id="remision-motivo" type="text" required
+             placeholder="Control de INR inestable pese a la warfarina">
+    </div>
+    <div class="campo campo--ancho">
+      <label for="remision-especialidad">Especialidad</label>
+      <input id="remision-especialidad" type="text"
+             placeholder="Cardiología, neurología, psiquiatría geriátrica…">
+    </div>
+    <div class="campo campo--ancho">
+      <label for="remision-enfermero">Enfermero que acompaña</label>
+      <input id="remision-enfermero" type="text"
+             placeholder="Quién lleva al interno a la cita">
+    </div>
+    <button class="accion accion--ancha" id="enviar-remision" type="submit">
+      Enviar la remisión
+    </button>
+  </form>
+</aside>
+
+
+<!-- ===================================================================
+     Atender: el especialista llena la ficha de la visita.
+     =================================================================== -->
+<div class="velo" id="velo-visita" hidden></div>
+<aside class="cajon" id="cajon-visita" hidden role="dialog" aria-modal="true"
+       aria-labelledby="visita-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio" id="visita-servicio">ms-consultas</span>
+      <h3 id="visita-titulo">Consulta del especialista</h3>
+    </div>
+    <button class="cerrar" id="cerrar-visita" type="button" aria-label="Cerrar">×</button>
+  </header>
+
+  <dl class="datos" id="visita-cabecera"></dl>
+
+  <form class="formulario" id="formulario-visita" autocomplete="off">
+    <div class="campo campo--ancho">
+      <label for="visita-diagnostico">Diagnóstico</label>
+      <input id="visita-diagnostico" type="text"
+             placeholder="Lo que el especialista concluye de la consulta">
+    </div>
+    <div class="campo campo--ancho">
+      <label for="visita-observaciones">Observaciones</label>
+      <input id="visita-observaciones" type="text"
+             placeholder="Indicaciones generales, controles, seguimiento">
+    </div>
+    <button class="accion accion--ancha" id="guardar-visita" type="submit">
+      Guardar la ficha
+    </button>
+  </form>
+
+  <section class="bloque">
+    <div class="bloque__cabecera">
+      <h3>Exámenes</h3>
+      <span class="bloque__nota" id="visita-examenes-conteo"></span>
+    </div>
+    <div id="visita-examenes"></div>
+    <form class="formulario" id="formulario-examen" autocomplete="off">
+      <div class="campo campo--ancho">
+        <label for="examen-nombre">Indicar un examen</label>
+        <input id="examen-nombre" type="text" required
+               placeholder="Perfil de laboratorio, tiempo de protrombina…">
+      </div>
+      <button class="accion-sec" id="agregar-examen" type="submit">Agregar examen</button>
+    </form>
+  </section>
+
+  <section class="bloque">
+    <div class="bloque__cabecera">
+      <h3>Indicaciones</h3>
+      <span class="bloque__nota" id="visita-indicaciones-conteo"></span>
+    </div>
+    <div id="visita-indicaciones"></div>
+    <form class="formulario" id="formulario-indicacion" autocomplete="off">
+      <div class="campo campo--ancho">
+        <label for="indicacion-principio">Medicamento</label>
+        <select id="indicacion-principio" required></select>
+      </div>
+      <div class="campo">
+        <label for="indicacion-dosis">Dosis por toma, en mg</label>
+        <input id="indicacion-dosis" type="number" min="0.05" step="0.05" value="500" required>
+      </div>
+      <div class="campo">
+        <label for="indicacion-cada">Intervalo, en horas</label>
+        <input id="indicacion-cada" type="number" min="1" max="72" step="1" value="8" required>
+      </div>
+      <div class="campo">
+        <label for="indicacion-dias">Duración, en días</label>
+        <input id="indicacion-dias" type="number" min="1" max="90" step="1" value="5" required>
+      </div>
+      <div class="campo campo--ancho">
+        <label for="indicacion-como">Cómo tomarlo</label>
+        <input id="indicacion-como" type="text" placeholder="Con alimentos, en ayunas…">
+      </div>
+      <button class="accion-sec" id="agregar-indicacion" type="submit">
+        Recetar, si ms-vigia lo aprueba
+      </button>
+    </form>
+    <!-- El dictamen se pinta aqui con el mismo tratamiento visual del recetario -->
+    <div class="dictamen" id="dictamen-indicacion" aria-live="polite"></div>
+  </section>
+</aside>
+
+
+
+<!-- ===================================================================
+     Ficha medica completa: el expediente del interno en un solo lugar.
+     Junta lo del padron (psicopatologias y alergias) con lo de la cadena
+     clinica (diagnosticos, examenes y medicamentos de cada consulta).
+     Solo lo abre quien es clinico; el reporte que lo llena tambien lo
+     comprueba por su cuenta.
+     =================================================================== -->
+<div class="velo" id="velo-ficha" hidden></div>
+<aside class="cajon" id="cajon-ficha" hidden role="dialog" aria-modal="true"
+       aria-labelledby="ficha-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio">ms-consultas · ms-pastillero</span>
+      <h3 id="ficha-titulo">Ficha médica completa</h3>
+    </div>
+    <button class="cerrar" id="cerrar-ficha" type="button" aria-label="Cerrar la ficha">×</button>
+  </header>
+
+  <p class="cajon__nota" id="ficha-pie"></p>
+
+  <div id="ficha-cuerpo"></div>
+</aside>
 
 <!-- ===================================================================
      Recetario: dialogo lateral que atrapa el foco mientras esta abierto
@@ -307,6 +588,7 @@
     <span data-servicio="vigia">ms-vigia: consultando</span>
     <span data-servicio="pastillero">ms-pastillero: consultando</span>
     <span data-servicio="caja">ms-caja: consultando</span>
+    <span data-servicio="consultas">ms-consultas: consultando</span>
   </span>
   <span class="barra__grupo">
     <span id="barra-turno">turno —</span>

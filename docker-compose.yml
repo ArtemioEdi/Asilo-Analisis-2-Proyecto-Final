@@ -34,6 +34,7 @@ services:
       BD_CLAVE_VIGIA: ${BD_CLAVE_VIGIA:?falta BD_CLAVE_VIGIA. Copie .env.ejemplo a .env}
       BD_CLAVE_PASTILLERO: ${BD_CLAVE_PASTILLERO:?falta BD_CLAVE_PASTILLERO. Copie .env.ejemplo a .env}
       BD_CLAVE_CAJA: ${BD_CLAVE_CAJA:?falta BD_CLAVE_CAJA. Copie .env.ejemplo a .env}
+      BD_CLAVE_CONSULTAS: ${BD_CLAVE_CONSULTAS:?falta BD_CLAVE_CONSULTAS. Copie .env.ejemplo a .env}
     volumes:
       - bd-datos:/var/lib/mysql
       # Se montan los cuatro archivos de inicializacion UNO POR UNO, y no el
@@ -49,6 +50,7 @@ services:
       - ./sql/02-esquema-vigia.sql:/docker-entrypoint-initdb.d/02-esquema-vigia.sql:ro
       - ./sql/03-esquema-pastillero.sql:/docker-entrypoint-initdb.d/03-esquema-pastillero.sql:ro
       - ./sql/04-esquema-caja.sql:/docker-entrypoint-initdb.d/04-esquema-caja.sql:ro
+      - ./sql/05-esquema-consultas.sql:/docker-entrypoint-initdb.d/05-esquema-consultas.sql:ro
     # Para inspeccionar la base con MySQL Workbench, descomente estas dos
     # lineas y vuelva a levantar. Queda comentado a proposito: en la entrega
     # la base no se expone al equipo anfitrion.
@@ -129,6 +131,43 @@ services:
     restart: unless-stopped
     networks: [asilo]
 
+  # -------------------------------------------------------------------------
+  # La cadena clinica: remision, cita, consulta y ficha medica. Habla con
+  # ms-pastillero (padron), ms-vigia (farmacovigilancia) y ms-caja (cobros).
+  # -------------------------------------------------------------------------
+  ms-consultas:
+    build: ./ms-consultas
+    container_name: ms-consultas
+    environment:
+      TZ: America/Guatemala
+      BD_HOST: bd-asilo
+      BD_PUERTO: "3306"
+      BD_NOMBRE: asilo_consultas
+      BD_USUARIO: usr_consultas
+      BD_CLAVE: ${BD_CLAVE_CONSULTAS:?falta BD_CLAVE_CONSULTAS. Copie .env.ejemplo a .env}
+      PASTILLERO_URL: http://ms-pastillero:8082
+      VIGIA_URL: http://ms-vigia:8081
+      CAJA_URL: http://ms-caja:8083
+      # Deja el escenario de la demostracion listo la primera vez que arranca:
+      # una remision PENDIENTE que la fundacion agenda en vivo, una AGENDADA
+      # que el medico atiende en vivo, y una consulta ya cerrada que llena la
+      # ficha medica. Poner "0" para arrancar con la cadena clinica vacia.
+      SEMBRAR: "1"
+      # Correo al familiar. Todas OPCIONALES: si SMTP_HOST viene vacio, el
+      # aviso no se envia pero tampoco se pierde — queda en la bitacora del
+      # contenedor y en la tabla correos_enviados, y la estacion lo muestra.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PUERTO: ${SMTP_PUERTO:-587}
+      SMTP_USUARIO: ${SMTP_USUARIO:-}
+      SMTP_CLAVE: ${SMTP_CLAVE:-}
+      SMTP_DE: ${SMTP_DE:-asilo@cabezadealgodon.local}
+      GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
+    depends_on:
+      bd-asilo:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [asilo]
+
   ms-gateway:
     build: ./ms-gateway
     container_name: ms-gateway
@@ -144,6 +183,7 @@ services:
       VIGIA_URL: http://ms-vigia:8081
       PASTILLERO_URL: http://ms-pastillero:8082
       CAJA_URL: http://ms-caja:8083
+      CONSULTAS_URL: http://ms-consultas:8084
     ports:
       - "8080:8080"
     depends_on:
@@ -154,6 +194,8 @@ services:
       ms-pastillero:
         condition: service_healthy
       ms-caja:
+        condition: service_healthy
+      ms-consultas:
         condition: service_healthy
     restart: unless-stopped
     networks: [asilo]

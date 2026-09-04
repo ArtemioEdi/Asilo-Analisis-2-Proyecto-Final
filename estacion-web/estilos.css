@@ -1024,3 +1024,278 @@ button { font-family: inherit; }
   .esqueleto__linea { background: var(--linea-suave); }
   .toma--cambiada { box-shadow: inset 0 0 0 2px var(--cobalto); }
 }
+
+/* =====================================================================
+   Consultas · la cadena clinica
+   ---------------------------------------------------------------------
+   Nada nuevo en la paleta ni en las tipografias: se reusan los mismos
+   tokens, la misma monoespaciada para fechas y codigos, y las mismas
+   marcas de forma que ya distinguen los estados en la jornada.
+   ===================================================================== */
+
+/* Los tres roles operativos (fundacion, laboratorio y farmacia) no tienen
+   internos a cargo: su vista ocupa el ancho completo. */
+.armazon--sin-lateral { grid-template-columns: minmax(0, 1fr); }
+.armazon--sin-lateral .internos { display: none; }
+
+/* ---------------------------------------------------------------------
+   Estados de la cadena. Igual que en la jornada, cada uno lleva forma y
+   palabra ademas de color: se distinguen en escala de grises.
+--------------------------------------------------------------------- */
+.marbete-estado {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--dato);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  white-space: nowrap;
+  color: var(--pizarra);
+}
+.marbete-estado::before { content: "○"; font-size: 12px; line-height: 1; }
+.marbete-estado[data-estado="PENDIENTE"]        { color: var(--pizarra); }
+.marbete-estado[data-estado="AGENDADA"]         { color: var(--cobalto); }
+.marbete-estado[data-estado="AGENDADA"]::before { content: "◷"; }
+.marbete-estado[data-estado="ATENDIDA"]         { color: var(--cobalto); }
+.marbete-estado[data-estado="ATENDIDA"]::before { content: "●"; }
+.marbete-estado[data-estado="CANCELADA"]        { color: var(--alerta); }
+.marbete-estado[data-estado="CANCELADA"]::before{ content: "⊘"; }
+.marbete-estado[data-estado="ABIERTA"]          { color: var(--ambar); }
+.marbete-estado[data-estado="ABIERTA"]::before  { content: "◐"; }
+.marbete-estado[data-estado="CERRADA"]          { color: var(--cobalto); }
+.marbete-estado[data-estado="CERRADA"]::before  { content: "●"; }
+.marbete-estado[data-estado="SOLICITADO"]       { color: var(--ambar); }
+.marbete-estado[data-estado="RESULTADO_LISTO"]  { color: var(--cobalto); }
+.marbete-estado[data-estado="RESULTADO_LISTO"]::before { content: "●"; }
+
+/* ---------------------------------------------------------------------
+   Fichas: una tarjeta por solicitud, examen o indicacion pendiente.
+   Misma caja blanca con barra lateral que usa la jornada.
+--------------------------------------------------------------------- */
+.ficha {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 18px;
+  align-items: start;
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+  border-left: 4px solid var(--linea);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.ficha--PENDIENTE  { border-left-color: var(--pizarra); }
+.ficha--AGENDADA   { border-left-color: var(--cobalto); background: var(--cobalto-tenue); }
+.ficha--ATENDIDA   { border-left-color: var(--cobalto); }
+.ficha--SOLICITADO { border-left-color: var(--ambar); }
+.ficha--ABIERTA    { border-left-color: var(--ambar); }
+
+.ficha__titulo { font-size: 16.5px; font-weight: 500; line-height: 1.3; }
+.ficha__dato {
+  font-family: var(--dato);
+  font-size: 12px;
+  color: var(--pizarra);
+  margin-top: 3px;
+}
+.ficha__texto { font-size: 14.5px; margin-top: 6px; }
+.ficha__acciones {
+  display: flex; flex-direction: column; gap: 8px;
+  align-items: flex-end; justify-self: end;
+}
+.ficha__formulario { grid-column: 1 / -1; margin-top: 10px; }
+
+/* ---------------------------------------------------------------------
+   Historial clinico · la ficha medica del interno
+   Es la pantalla de mas peso: cada visita es un bloque con su fecha
+   grande en monoespaciada, como la hora de una toma.
+--------------------------------------------------------------------- */
+.visita {
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+  border-left: 5px solid var(--cobalto);
+  margin-bottom: 18px;
+}
+.visita--ABIERTA { border-left-color: var(--ambar); }
+
+.visita__cabecera {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--linea-suave);
+}
+.visita__fecha {
+  font-family: var(--dato);
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -.02em;
+}
+.visita__medico { font-size: 15px; font-weight: 500; }
+.visita__especialidad {
+  font-family: var(--dato);
+  font-size: 11.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+}
+.visita__cuerpo { padding: 16px 18px; }
+
+.visita__campo { margin-bottom: 16px; }
+.visita__campo:last-child { margin-bottom: 0; }
+.visita__rotulo {
+  font-family: var(--dato);
+  font-size: 10.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+  margin-bottom: 4px;
+}
+/* El diagnostico es lo que se busca primero al abrir una ficha. */
+.visita__diagnostico { font-size: 16.5px; font-weight: 500; line-height: 1.35; }
+.visita__observaciones { font-size: 14.5px; line-height: 1.5; }
+.visita__sinllenar { color: var(--pizarra); font-style: italic; }
+
+.visita__lista { list-style: none; margin: 0; padding: 0; }
+.visita__linea {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 14px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--linea-suave);
+}
+.visita__linea:last-child { border-bottom: none; }
+.visita__nombre { font-size: 14.5px; font-weight: 500; }
+.visita__pauta { font-family: var(--dato); font-size: 12.5px; color: var(--pizarra); }
+/* El resultado del laboratorio va destacado: es el dato que se consulta. */
+.visita__resultado {
+  grid-column: 1 / -1;
+  font-size: 14px;
+  background: var(--papel);
+  border-left: 3px solid var(--cobalto);
+  padding: 8px 12px;
+  margin-top: 4px;
+}
+.visita__comotomarlo { grid-column: 1 / -1; font-size: 13.5px; color: var(--pizarra); }
+
+@media (max-width: 720px) {
+  .ficha { grid-template-columns: minmax(0, 1fr); }
+  .ficha__acciones { flex-direction: row; justify-self: stretch; justify-content: flex-start; }
+  .visita__fecha { font-size: 17px; }
+}
+
+/* ---------------------------------------------------------------------
+   Avisos a la familia · el correo que se le manda al responsable
+   cuando se remite al interno. Se muestra en pantalla porque en la
+   demostracion no hay servidor de correo y hay que poder ensenar que el
+   aviso se genero.
+--------------------------------------------------------------------- */
+.correo__asunto { font-size: 15px; font-weight: 500; line-height: 1.35; }
+.correo__cuerpo {
+  grid-column: 1 / -1;
+  font-family: var(--dato);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  background: var(--papel);
+  border-left: 3px solid var(--linea);
+  padding: 12px 14px;
+  margin-top: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.marbete-estado[data-estado="ENVIADO"]          { color: var(--cobalto); }
+.marbete-estado[data-estado="ENVIADO"]::before  { content: "●"; }
+.marbete-estado[data-estado="REGISTRADO"]       { color: var(--ambar); }
+.marbete-estado[data-estado="REGISTRADO"]::before { content: "◐"; }
+.marbete-estado[data-estado="FALLIDO"]          { color: var(--alerta); }
+.marbete-estado[data-estado="FALLIDO"]::before  { content: "⊘"; }
+.marbete-estado[data-estado="SIN_DESTINATARIO"] { color: var(--alerta); }
+.marbete-estado[data-estado="SIN_DESTINATARIO"]::before { content: "⊘"; }
+
+/* --- Reportes: examenes, ficha medica completa y costo por consulta ------ */
+
+/* Dos estados que faltaban en la escala de la ficha. El examen con resultado
+   y la consulta cerrada son lo mismo que "atendida": trabajo terminado, y se
+   marcan con el mismo cobalto para que la vista se lea igual en las tres. */
+.ficha--RESULTADO_LISTO { border-left-color: var(--cobalto); }
+.ficha--CERRADA         { border-left-color: var(--cobalto); }
+
+/* La ficha normal es una rejilla de dos columnas: contenido y acciones a la
+   derecha. Las tarjetas del expediente y las del costo no tienen acciones,
+   sino bloques que ocupan todo el ancho, asi que se salen de la rejilla. */
+.ficha--documento { display: block; }
+
+/* El resultado del laboratorio: es prosa, no un dato tabulado, asi que va en
+   la tipografia de lectura y con un filete que lo separe del encabezado. */
+.ficha__resultado {
+  font-size: 14.5px;
+  line-height: 1.45;
+  margin-top: 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--linea-suave);
+  color: var(--tinta);
+}
+
+/* Rotulo de un bloque dentro de una tarjeta: "Examenes", "Medicamentos". */
+.ficha__rotulo {
+  font-family: var(--dato);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+  margin: 12px 0 5px;
+}
+
+/* La linea del total. Va en monoespaciada porque son cifras que se comparan
+   entre una consulta y otra, y en cobalto porque es la conclusion de la
+   tarjeta: es el numero que administracion busca al abrir el bloque. */
+.ficha__total {
+  font-family: var(--dato);
+  font-size: 13px;
+  color: var(--cobalto);
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--linea-suave);
+}
+
+/* Psicopatologias, alergias, examenes y medicamentos: listas cortas, sin
+   vinetas redondas, con un guion que no compita con el texto. */
+.lista-ficha {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.lista-ficha li {
+  font-size: 14.5px;
+  line-height: 1.45;
+  padding: 3px 0 3px 16px;
+  position: relative;
+}
+.lista-ficha li::before {
+  content: "—";
+  position: absolute;
+  left: 0;
+  color: var(--pizarra);
+}
+
+/* Dos botones en el encabezado de una vista. En pantalla angosta se apilan
+   en vez de desbordar: min-width 0 para que el hijo de la rejilla pueda
+   encogerse, que es la trampa que ya nos costo una barra horizontal. */
+.encabezado__acciones {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* El cajon mide 480px: ahi el titulo del bloque y su nota no caben en una
+   sola linea y se aprietan uno contra otro. En la pagina, que es ancha, se
+   siguen viendo enfrentados como antes. */
+.cajon .bloque__cabecera { flex-wrap: wrap; }

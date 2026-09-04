@@ -3,10 +3,14 @@
 **Eddinson Artemio Ovalle López — 3090-23-20497**
 Análisis y Diseño de Sistemas II · Universidad Mariano Gálvez de Guatemala · Centro Regional de Mazatenango
 
-Seis contenedores: tres microservicios de dominio, un **gateway con inicio de
-sesión** que es la única puerta de entrada, la aplicación base que los consume
+Siete contenedores: cuatro microservicios de dominio, un **gateway con inicio
+de sesión** que es la única puerta de entrada, la estación web que los consume
 y una instancia de **MySQL 8.4** con una base separada por servicio. Todo el
 conjunto se levanta con **un solo comando**.
+
+**Si viene a calificar, la sección 2 es la tabla que busca**: cada requisito
+del enunciado con el endpoint que lo cumple, la pantalla donde se ve y el
+usuario con el que hay que entrar.
 
 ---
 
@@ -22,14 +26,15 @@ es geriátrica, polimedicada y con psicopatologías: es justo donde ocurren los
 errores de medicación, y donde una cuenta mal llevada le cuesta dinero real a
 alguien.
 
-De ahí salieron los tres microservicios de dominio, más el gateway que los
+De ahí salieron los cuatro microservicios de dominio, más el gateway que los
 protege:
 
 | Servicio | Responsabilidad única | Puerto interno |
 |---|---|---|
 | **ms-vigia** | Dictaminar si un medicamento es seguro para *ese* interno: alergias, interacciones, duplicidad terapéutica, criterios geriátricos y dosis máxima. Devuelve veredicto, puntaje de riesgo y folio. | 8081 |
 | **ms-pastillero** | Convertir la indicación médica ("500 mg cada 8 horas por 3 días") en tomas con hora y turno, y registrar quién administró cada una, quién la omitió y por qué. | 8082 |
-| **ms-caja** *(nuevo)* | El "Módulo de Entradas, Salidas y Manejo de Caja" del enunciado: tarifario con descuento de la fundación, cargos a la cuenta del familiar, pagos y abonos, donaciones, gastos operativos y el saldo con la fundación. | 8083 |
+| **ms-caja** | El "Módulo de Entradas, Salidas y Manejo de Caja" del enunciado: tarifario con descuento de la fundación, cargos a la cuenta del familiar, pagos y abonos, donaciones, gastos operativos y el saldo con la fundación. | 8083 |
+| **ms-consultas** *(nuevo)* | La cadena clínica completa: el médico remite al interno a una especialidad, la fundación le asigna médico y hora, el especialista lo atiende y llena la ficha, indica exámenes y receta. Avisa por correo al familiar responsable en cuanto se crea la remisión. | 8084 |
 | **ms-gateway** *(nuevo)* | Puerta única de entrada: inicia sesión, firma un JWT, y reenvía cada petición al microservicio que corresponde solo si el rol de quien la hace lo permite. | 8080 (publicado) |
 
 `ms-pastillero` **no programa** un tratamiento si `ms-vigia` lo dictaminó
@@ -40,9 +45,97 @@ reenvía la petición tal cual al servicio dueño de esos datos.
 
 ---
 
-## 2. Cómo encaja con lo que ya se entregó del curso
+## 2. El enunciado, requisito por requisito
 
-- **Tarea de diseño arquitectónico (N-Tiers).** Los tres microservicios de
+Esta es la tabla para calificar. Cada fila es un requisito del enunciado del
+proyecto, con **el endpoint que lo cumple**, **la pantalla donde se ve** y
+**con qué usuario hay que entrar para verlo**. Todos los endpoints se piden a
+través del gateway, en `http://localhost:8080`, con el token de sesión.
+
+### La ficha médica del interno
+
+| Requisito | Endpoint | Pantalla | Usuario |
+|---|---|---|---|
+| Ficha médica completa del interno | `GET /consultas/api/v1/reportes/ficha?pacienteId=` | Consultas → **Ver ficha médica completa** | `medico` |
+| Psicopatologías del interno | dentro de la ficha, y `GET /pastillero/api/v1/internos/{id}` | Ficha médica completa, bloque *Psicopatologías* | `medico` |
+| Alergias del interno | dentro de la ficha, y `GET /pastillero/api/v1/internos/{id}` | Ficha médica completa, bloque *Alergias* | `medico` |
+| Diagnóstico y observaciones de cada consulta | `GET /consultas/api/v1/visitas/{id}` | Ficha médica completa, *Historial de consultas* | `medico` |
+| Medicamento aplicado, cantidad y tiempo de aplicación | `GET /pastillero/api/v1/turnos` · `POST /pastillero/api/v1/tomas/{id}/administrar` | Jornada de medicación | `enfermeria` |
+
+### La cadena de la consulta
+
+| Requisito | Endpoint | Pantalla | Usuario |
+|---|---|---|---|
+| Solicitar consulta con especialista | `POST /consultas/api/v1/solicitudes` | Consultas → **Remitir a especialidad** | `medico` |
+| Asignar médico, fecha y hora a la solicitud | `PUT /consultas/api/v1/solicitudes/{id}/agendar` | Bandeja de remisiones → **Asignar cita** | `fundacion` |
+| Atender la consulta y llenar la ficha | `POST /consultas/api/v1/visitas` · `PUT /consultas/api/v1/visitas/{id}` | Consultas → **Atender** → **Guardar la ficha** | `medico` |
+| Indicar exámenes en la consulta | `POST /consultas/api/v1/visitas/{id}/examenes` | Cajón de la consulta → **Agregar examen** | `medico` |
+| Cargar el resultado del examen | `PUT /consultas/api/v1/examenes/{id}/resultado` | Exámenes solicitados → **Cargar el resultado** | `laboratorio` |
+| Recetar medicamentos en la consulta | `POST /consultas/api/v1/visitas/{id}/indicaciones` | Cajón de la consulta → **Recetar, si ms-vigia lo aprueba** | `medico` |
+| Entregar el medicamento recetado | `PUT /consultas/api/v1/indicaciones/{id}/entregar` | Medicamentos por entregar → **Entregar** | `farmacia` |
+| Cerrar la consulta | `PUT /consultas/api/v1/visitas/{id}/cerrar` | **sin pantalla todavía** — ver la nota de abajo | `medico` |
+
+### El aviso al familiar
+
+| Requisito | Endpoint | Pantalla | Usuario |
+|---|---|---|---|
+| Avisar al familiar el estado de la solicitud y a qué especialidad se remitió | se genera solo dentro de `POST /consultas/api/v1/solicitudes` | Consultas → **Avisos a la familia** | `medico` |
+| Ver los avisos generados, con asunto y cuerpo completos | `GET /consultas/api/v1/correos?pacienteId=` | Consultas → **Avisos a la familia** → *Ver el correo* | `medico` |
+
+> **Lo único de esta tabla que no tiene pantalla:** cerrar la consulta. El
+> endpoint existe, funciona y `pruebas.sh` lo comprueba, pero ningún botón de
+> la estación web lo llama todavía, así que desde la interfaz las consultas se
+> quedan `ABIERTA`. Se cierra por API:
+>
+> ```bash
+> curl -X PUT "http://localhost:8080/consultas/api/v1/visitas/{id}/cerrar" >   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" >   -d @cierre.json
+> ```
+
+> El aviso sale por SMTP si hay servidor configurado (`SMTP_HOST` en `.env`) y
+> queda con estado `ENVIADO`. Sin servidor configurado **no falla**: se escribe
+> completo en la bitácora del contenedor, se guarda en la tabla
+> `correos_enviados` con estado `REGISTRADO` y la pantalla lo muestra entero.
+> Así el requisito se demuestra sin depender de un servidor de correo.
+
+### El módulo de entradas, salidas y manejo de caja
+
+| Requisito | Endpoint | Pantalla | Usuario |
+|---|---|---|---|
+| Costo de la consulta con sus exámenes y medicamentos | `GET /caja/api/v1/reportes/costo-por-visita?visitaId=` | Caja → **Costo por consulta** | `administracion` |
+| Cobros a la familia con el descuento de la fundación | `POST /caja/api/v1/cargos` · `GET /caja/api/v1/cargos` | Caja → *Cargar a la cuenta del interno* | `administracion` |
+| Estado de cuenta y saldo de cada interno | `GET /caja/api/v1/pacientes/{id}/cuenta` | Caja → *Cuenta del interno* | `administracion` (y `medico`, solo lectura) |
+| Pagos y abonos de la familia | `POST /caja/api/v1/cargos/{id}/pagar` | Caja → botón **Pagar** de cada cargo | `administracion` |
+| Cuota mensual de estadía | tarifa `cuota-mensual` en `POST /caja/api/v1/cargos` | Caja → *Cargar a la cuenta*, tarifa *Cuota mensual* | `administracion` |
+| Entradas por donaciones | `POST /caja/api/v1/donaciones` · `GET /caja/api/v1/donaciones` | Caja → *Registrar una donación* | `administracion` |
+| Salidas por gastos operativos | `POST /caja/api/v1/gastos` · `GET /caja/api/v1/gastos` | Caja → *Registrar un gasto* | `administracion` |
+| Lo que el asilo le debe a la fundación y sus pagos | `GET /caja/api/v1/fundacion/resumen` · `POST /caja/api/v1/fundacion/pagos` | Caja → resumen superior | `administracion` |
+| Balance general de entradas y salidas | `GET /caja/api/v1/resumen` | Caja → resumen superior | `administracion` |
+
+### Reportes
+
+| Requisito | Endpoint | Pantalla | Usuario |
+|---|---|---|---|
+| Reporte de exámenes realizados por paciente | `GET /consultas/api/v1/reportes/examenes?pacienteId=` | Consultas → **Exámenes realizados** | `medico` |
+| Reporte de medicamentos aplicados por paciente | `GET /pastillero/api/v1/pacientes/{id}/tomas` · `GET /pastillero/api/v1/pacientes/{id}/adherencia` | Jornada de medicación | `enfermeria` |
+| Reporte de cobros por paciente y rango de fecha | `GET /caja/api/v1/cargos?pacienteId=&desde=&hasta=` | Caja → *Cuenta del interno* | `administracion` |
+| Bitácora de dictámenes de farmacovigilancia | `GET /vigia/api/v1/validaciones` | Recetario, tras cada validación | `medico` |
+
+### Lo que el enunciado no pide y el sistema hace igual
+
+Estas tres no salen del enunciado; están porque sin ellas el prototipo no
+resistiría una pregunta incómoda en la defensa.
+
+| | Qué hace | Dónde se ve |
+|---|---|---|
+| **Farmacovigilancia** (`ms-vigia`) | Antes de guardar una receta comprueba alergias, interacciones, duplicidad terapéutica, criterios geriátricos y dosis máxima. Si el veredicto es `BLOQUEADO` la receta **no se guarda** y responde `409` con el motivo. | Recetario, y al recetar dentro de una consulta |
+| **Control de acceso** (`ms-gateway`) | Inicio de sesión, JWT firmado, revocación al cerrar sesión, límite de intentos y una matriz de acceso por rol y por ruta. | Pantalla de acceso, y los `403` de cada rol |
+| **Separación de datos** | Una base por microservicio, un usuario de MySQL por base, y ningún usuario con permiso sobre la base de otro. Lo comprueba `verificar.sh` en sus bloques 16 y 19. | `bash verificar.sh` |
+
+---
+
+## 3. Cómo encaja con lo que ya se entregó del curso
+
+- **Tarea de diseño arquitectónico (N-Tiers).** Los cuatro microservicios de
   dominio viven en la *capa de negocio*. La capa de presentación (React, en
   el proyecto final) ya no les habla directo: pasa por `ms-gateway`, que es
   el patrón *API Gateway* de un diseño de microservicios — un único punto de
@@ -72,53 +165,67 @@ reenvía la petición tal cual al servicio dueño de esos datos.
 
 ---
 
-## 3. Arquitectura del conjunto
+## 4. Arquitectura del conjunto
 
 ```
                   navegador  ->  http://localhost:8090   (unico puerto que
                                       |                   abre el navegador)
-                      +-----------------------------------+
-                      |   estacion-web  (nginx)           |  contenedor 1
-                      |   sirve la interfaz y reenvia     |
-                      |   todo a ms-gateway               |
-                      +----------------+------------------+
-                                       |  /api /vigia /pastillero /caja
-                                       v
-                      +-----------------------------------+
-                      |            ms-gateway             |  contenedor 2
-                      |  login + JWT + revocacion +       |  puerto 8080
-                      |  matriz de acceso por rol         |  (publicado)
-                      +---+-------------+-------------+---+
-                         /vigia      /pastillero    /caja
-                          |             |             |
-     +--------------------v--+  +-------v----------+  +v-------------------+
-     |       ms-vigia         |  |  ms-pastillero   |  |      ms-caja       |
-     |   farmacovigilancia    |  | padron + plan    |  | entradas, salidas  |
-     |    Python + Flask      |  | Python + Flask   |  |  Python + Flask    |
-     +---+----------------^---+  +--^-----------+---+  +--------+-----------+
-         |  |             |         |           |               |
-         |  |             +---------+           |               |
-         |  |              (1) el dictamen      |               |
-         |  +------------------------------------+              |
-         |          (2) la ficha del interno                    |
-         |                       |                              |
-         | usr_vigia             | usr_pastillero               | usr_caja
-         v                       v                              v
-     +------------------------------------------------------------------+
-     |                     bd-asilo   ·   MySQL 8.4                      |
-     |                                                                   |
-     |   asilo_vigia      asilo_pastillero        asilo_caja             |
-     |   validaciones     internos, planes,       cargos, pagos,         |
-     |                    tomas                   donaciones, gastos,    |
-     |                                            pagos_fundacion        |
-     |                                                                   |
-     |   Tres bases separadas, un usuario por servicio, y ningun usuario  |
-     |   con permiso sobre la base de otro.       sin puerto al host      |
-     +------------------------------------------------------------------+
-        contenedor 3, 4 y 5 arriba (sin puerto al host) · contenedor 6 aqui
+                  +---------------------------------------------+
+                  |   estacion-web  (nginx)                     | contenedor 1
+                  |   sirve la interfaz y reenvia todo          |
+                  |   a ms-gateway                              |
+                  +----------------------+----------------------+
+                                         |  /api /vigia /pastillero
+                                         |  /caja /consultas
+                                         v
+                  +---------------------------------------------+
+                  |                 ms-gateway                  | contenedor 2
+                  |   login + JWT + revocacion + limite de       | puerto 8080
+                  |   intentos + matriz de acceso por rol        | (publicado)
+                  +--+----------+-------------+--------------+---+
+                 /vigia    /pastillero      /caja       /consultas
+                    |          |              |              |
+      +-------------v-+  +-----v---------+  +-v-----------+  +v----------------+
+      |   ms-vigia    |  | ms-pastillero |  |   ms-caja   |  |  ms-consultas   |
+      | farmacovigi-  |  | padron, plan  |  | entradas,   |  | remision, cita, |
+      | lancia        |  | y tomas       |  | salidas y   |  | consulta, ficha |
+      | Python+Flask  |  | Python+Flask  |  | caja        |  | y aviso al      |
+      |               |  |               |  | Python+Flask|  | familiar        |
+      |               |  |               |  |             |  | Python+Flask    |
+      +--^---------^--+  +--^---------^--+  +------^------+  +--+---+---+------+
+         |         |        |         |            |            |   |   |
+         |         +--------+         |            |            |   |   |
+         |          (1) el dictamen   |            |            |   |   |
+         |                            |            |            |   |   |
+         +----------------------------+            |            |   |   |
+                  (2) la ficha del interno         |            |   |   |
+         |                                         |            |   |   |
+         +-----------------------------------------|------------+   |   |
+                  (4) el dictamen de la receta     |                |   |
+                                    |              |                |   |
+                                    +--------------|----------------+   |
+                                     (3) el padron |                    |
+                                                   +--------------------+
+                                        (5) el cobro, con token de servicio
+
+         | usr_vigia    | usr_pastillero   | usr_caja      | usr_consultas
+         v              v                  v               v
+   +---------------------------------------------------------------------+
+   |                      bd-asilo   ·   MySQL 8.4                        | cont. 7
+   |                                                                      |
+   |  asilo_vigia    asilo_pastillero   asilo_caja      asilo_consultas   |
+   |  validaciones   internos, planes,  cargos, pagos,  solicitudes,      |
+   |                 tomas              donaciones,     visitas, examenes,|
+   |                                    gastos,         indicaciones,     |
+   |                                    pagos_fundacion correos_enviados  |
+   |                                                                      |
+   |  Cuatro bases separadas, un usuario por servicio, y ningun usuario    |
+   |  con permiso sobre la base de otro.            sin puerto al host     |
+   +---------------------------------------------------------------------+
+      contenedores 3, 4, 5 y 6 arriba (sin puerto al host)
 ```
 
-Los dos puntos de integracion entre microservicios estan numerados arriba:
+Los cinco puntos de integracion entre microservicios estan numerados arriba:
 
 1. **`ms-pastillero` -> `ms-vigia`**: antes de programar un tratamiento le pide
    el dictamen por folio. Si el veredicto fue `BLOQUEADO`, responde `409` y no
@@ -127,6 +234,24 @@ Los dos puntos de integracion entre microservicios estan numerados arriba:
    interno (edad, alergias, psicopatologias y medicacion activa), porque ese
    dato no puede venir del navegador. Si no responde, `ms-vigia` devuelve `503`
    y no dictamina a ciegas.
+3. **`ms-consultas` -> `ms-pastillero`**: antes de remitir comprueba que el
+   interno exista en el padron, y de paso saca el correo de su familiar
+   responsable para avisarle. Si el padron no responde, devuelve `503` y no
+   registra la remision a ciegas.
+4. **`ms-consultas` -> `ms-vigia`**: cada receta que el especialista escribe
+   dentro de una consulta pasa por la misma farmacovigilancia. Si sale
+   `BLOQUEADO`, la receta **no se guarda** y responde `409`.
+5. **`ms-consultas` -> `ms-caja`**: al indicar un examen o entregar un
+   medicamento, el cobro queda asentado en la caja. Quien dispara la accion es
+   un MEDICO o FARMACIA, y ninguno de los dos puede escribir en la caja: el
+   cobro viaja con un **token de servicio** de un minuto, firmado con el mismo
+   secreto compartido, que lleva el nombre real de la persona para que el cargo
+   quede firmado por ella y no por un robot. `ms-caja` acepta ese token
+   UNICAMENTE para crear cargos: no puede pagar, ni donar, ni leer nada.
+
+   Si `ms-caja` no responde, el dato clinico **se guarda igual** y el cargo
+   queda nulo, para conciliarse despues. No se pierde un examen ni una receta
+   por un fallo de facturacion.
 
 Es una dependencia en los dos sentidos, y esta asumida a proposito: ver la
 decision de diseño mas abajo, donde tambien se explica por que **no** genera un
@@ -136,7 +261,8 @@ Red interna `asilo` de Docker. Los servicios se encuentran por **nombre de
 servicio** (`http://ms-vigia:8081`), no por IP.
 
 **Al equipo anfitrión solo se le publican dos puertos: el 8090 de la estación
-web y el 8080 del gateway.** `ms-vigia`, `ms-pastillero` y `ms-caja` no tienen
+web y el 8080 del gateway.** `ms-vigia`, `ms-pastillero`, `ms-caja` y
+`ms-consultas` no tienen
 bloque `ports:` en el `docker-compose.yml`: viven únicamente dentro de la red
 interna. Antes sí lo tenían, y eso hacía del gateway un adorno — bastaba un
 `POST` a `http://localhost:8083/api/v1/donaciones` para meter una donación
@@ -145,7 +271,7 @@ inventada en los libros del asilo sin haber iniciado sesión nunca.
 ### Cómo se protege cada ruta
 
 `ms-gateway` exige una sesión iniciada (`Authorization: Bearer <token>`) para
-**cualquier** ruta de los tres microservicios de dominio, y hace cumplir esta
+**cualquier** ruta de los cuatro microservicios de dominio, y hace cumplir esta
 matriz. Se controla la lectura y no solo la escritura: en un sistema de salud,
 quién puede *ver* la historia clínica o el estado financiero de una familia
 importa tanto como quién puede modificarlos.
@@ -277,7 +403,7 @@ sesión, no quien escribe el JSON.
 
 ---
 
-## 4. Cómo ejecutarlo
+## 5. Cómo ejecutarlo
 
 Requisito único: **Docker Desktop** instalado y corriendo.
 
@@ -324,17 +450,25 @@ Para borrar también los datos y volver a sembrar los internos de ejemplo:
 
 ### Usuarios de prueba
 
-`ms-gateway` trae tres usuarios para la demostración, definidos en
+`ms-gateway` trae seis usuarios para la demostración, definidos en
 `ms-gateway/usuarios.json` con la clave guardada como hash **bcrypt** (nunca en
 texto plano) y sesión de 8 horas. **Son credenciales de prueba de este
 prototipo académico**; en un sistema real esta lista vendría de la tabla de
 personal del módulo administrativo y no de un archivo del repositorio.
 
-| Usuario | Clave | Rol |
-|---|---|---|
-| `medico` | `medico2026` | `MEDICO` |
-| `enfermeria` | `enfermeria2026` | `ENFERMERIA` |
-| `administracion` | `admin2026` | `ADMINISTRACION` |
+Los tres primeros son **personal del asilo**. Los tres últimos son la
+**fundación que presta el servicio médico** y sus dos proveedores: no son
+empleados del asilo, y por eso no alcanzan el padrón de internos, ni la
+farmacovigilancia, ni la caja.
+
+| Usuario | Clave | Rol | Quién es y qué hace |
+|---|---|---|---|
+| `medico` | `medico2026` | `MEDICO` | Dr. Angel Maltez. Receta, remite a especialidad y atiende consultas. |
+| `enfermeria` | `enfermeria2026` | `ENFERMERIA` | Administra las tomas del día y registra omisiones. |
+| `administracion` | `admin2026` | `ADMINISTRACION` | Marta Solís. Lleva la caja: cobros, pagos, donaciones y gastos. |
+| `fundacion` | `fundacion2026` | `FUNDACION` | Fundación Manos Unidas. Recibe las remisiones y les asigna médico, fecha y hora. |
+| `laboratorio` | `laboratorio2026` | `LABORATORIO` | Lab. Clínico Central. Carga el resultado de los exámenes indicados. |
+| `farmacia` | `farmacia2026` | `FARMACIA` | Farmacia de la Fundación. Entrega los medicamentos recetados. |
 
 Para dar de alta a alguien o cambiarle la clave, se genera el hash y se edita
 `usuarios.json`:
@@ -350,6 +484,62 @@ fallido tarda lo mismo exista o no el usuario (siempre se compara contra un
 hash, incluso cuando no hay nadie con ese nombre), para que cronometrar la
 respuesta no revele qué usuarios están dados de alta.
 
+### El escenario sembrado
+
+La primera vez que arranca el stack —o después de `docker compose down -v`—
+`ms-consultas` deja la cadena clínica en un estado desde el que se puede
+recorrer todo el sistema **sin crear nada a mano**. Se apaga con `SEMBRAR=0`
+en el `.env`.
+
+| Estado | Interno | Para qué sirve |
+|---|---|---|
+| `PENDIENTE` · `SOL-2026-DEMO0007` | Tránsito Xicará (ASL-007) | La fundación la agenda **en vivo**. Cardiología, por presión elevada pese al enalapril que ya toma. |
+| `AGENDADA` · `SOL-2026-DEMO0014` | Rosalía Menchú (ASL-014) | El médico la atiende **en vivo**. Psiquiatría, mañana a las 09:00. |
+| `ATENDIDA` → visita `CERRADA` · `VM-2026-DEMO0022` | Bernardo Puac (ASL-022) | La consulta que **llena la ficha médica**: diagnóstico, observaciones, dos exámenes con resultado y warfarina entregada. |
+
+Los folios llevan la palabra `DEMO` a propósito. Los que genera el sistema son
+aleatorios (`SOL-2026-584C9650`), así que en la defensa se distingue de un
+vistazo lo que venía sembrado de lo que se acaba de crear.
+
+Dos cosas del sembrado que conviene saber antes de grabar:
+
+- **Las bandejas de laboratorio y farmacia arrancan vacías**, y está bien: lo
+  sembrado ya tiene resultado y ya fue entregado. Se llenan en vivo, en el paso
+  4 y en el 6 del recorrido.
+- **El medicamento sembrado se eligió preguntándole a `ms-vigia`.** Warfarina
+  5 mg cada 24 h sale `APROBADO` y sin hallazgos para ese interno. Sembrar algo
+  que la propia farmacovigilancia del sistema marcaría sería contradecirse en la
+  demostración.
+
+### El recorrido de la demostración, paso por paso
+
+Cada paso es un usuario distinto. Hay que **cerrar sesión** (botón *Salir*)
+entre uno y otro. Las acciones que dejan registro piden confirmación antes de
+ejecutarse: aparece un diálogo con el resumen de lo que se va a hacer y hay que
+aceptarlo.
+
+| # | Usuario | Dónde | Qué se hace | Qué se muestra |
+|---|---|---|---|---|
+| 1 | `medico` | Consultas → **Remitir a especialidad** | Remitir a Rosalía Menchú (ASL-014) a una especialidad | Aparece en *Remisiones* como `PENDIENTE`, y en **Avisos a la familia** el correo recién generado. Abrir *Ver el correo*: sale entero, con destinatario y cuerpo. |
+| 2 | `fundacion` | Bandeja de remisiones → **Asignar cita** | Agendar la remisión `DEMO0007` de Tránsito Xicará | Pasa a `AGENDADA` con médico, fecha y hora. La fundación **no ve** el padrón, ni la farmacovigilancia, ni la caja. |
+| 3 | `medico` | Consultas → **Atender** | Abrir la consulta de la remisión `DEMO0014`, ya agendada. Pide confirmación: **Sí, atender** | Se abre el cajón de la consulta con el diagnóstico por llenar |
+| 4 | `medico` | Cajón de la consulta → **Agregar examen** | Indicar un examen | Queda `SOLICITADO`. **El cobro se creó solo** en la caja, aunque el médico no pueda escribir en ella. |
+| 5 | `laboratorio` | Exámenes solicitados → **Cargar el resultado** | Escribir el resultado del examen del paso 4 | Pasa a `RESULTADO_LISTO`, firmado por el laboratorio. **No ve las recetas.** |
+| 6 | `medico` | Cajón de la consulta → **Recetar, si ms-vigia lo aprueba** | **Recetar quetiapina** (un antipsicótico) | **`ms-vigia` lo bloquea con `409`**: `FV-GER-04`, severidad `CRITICA`, "antipsicótico indicado a un paciente con demencia". La receta **no se guarda**. Este es el momento más fuerte de la demostración. |
+| 7 | `medico` | Cajón de la consulta → **Recetar, si ms-vigia lo aprueba** | Recetar paracetamol 500 mg | Pasa el dictamen y queda recetado |
+| 8 | `farmacia` | Medicamentos por entregar → **Entregar** | Entregar el paracetamol | Queda entregado y **se cobra solo**. **No ve los resultados de laboratorio.** |
+| 9 | `medico` | Cajón de la consulta → **Guardar la ficha** | Escribir diagnóstico y observaciones y guardar | Quedan en la ficha del interno. **Ojo:** *cerrar* la consulta todavía no tiene botón; queda `ABIERTA`. Si necesita mostrarla `CERRADA`, use la consulta ya sembrada de Bernardo Puac en el paso siguiente. |
+| 10 | `medico` | Elegir a Bernardo Puac (ASL-022) → **Ver ficha médica completa** | Abrir la ficha | Psicopatologías, alergias, y el historial con diagnóstico, exámenes con resultado y medicamentos. Junta **dos microservicios** en un documento. |
+| 11 | `administracion` | Caja → **Costo por consulta** | Elegir a Bernardo Puac | El costo de la consulta cerrada, con su laboratorio y su farmacia sumados y el descuento de la fundación aplicado |
+
+Si además quiere mostrar el aislamiento de datos, sin salir de la terminal:
+
+```bash
+bash verificar.sh          # 81 comprobaciones, entre ellas las 21 puertas
+                           # cerradas de los tres roles nuevos y el aislamiento
+                           # de usr_consultas
+```
+
 ### Los dos guiones de comprobación
 
 El proyecto trae dos, con propósitos distintos. Los dos corren en **Git Bash
@@ -360,7 +550,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **64**, en 15 bloques | **54**, en 17 bloques |
+| **Comprobaciones** | **96**, en 17 bloques | **81**, en 19 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre) | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -385,12 +575,28 @@ completo de caja, y los dos casos clínicos de siempre: ibuprofeno sobre
 warfarina → `BLOQUEADO`, y `ms-pastillero` negándose a programar ese folio con
 `409`.
 
+Su bloque 16 recorre **la cadena clínica entera**, con un rol distinto en cada
+paso, que es justo lo que hace valer la separación: el médico remite, la
+fundación agenda, el médico atiende e indica un examen, el laboratorio carga el
+resultado, el médico receta, la farmacia entrega y el médico cierra. Después de
+cada paso comprueba que **ningún otro rol podía haberlo hecho**. En medio está
+el caso que más se defiende solo: el médico receta un antipsicótico a la interna
+con demencia mixta y `ms-vigia` lo **bloquea con `409`**, con el código del
+hallazgo (`FV-GER-04`), su severidad (`CRITICA`) y la comprobación de que la
+receta **no quedó guardada**. El bloque 17 cierra pidiendo los tres reportes
+sobre esa consulta recién hecha.
+
 **Qué cubre `verificar.sh`** — lo que no se ve desde la interfaz: la matriz de
 acceso rol por rol y ruta por ruta; la defensa en profundidad, comprobando que
 un microservicio rechace por su cuenta a quien se salte el gateway desde la red
 interna; que la bitácora se firme con el token y no con el cuerpo de la
-petición; **el aislamiento entre las bases**, verificando que `usr_caja` no
-pueda leer `asilo_vigia`; que los nombres con tilde sobrevivan el viaje a MySQL
+petición; **la matriz de los tres roles nuevos** —21 puertas probadas, entre
+ellas que ninguno de los tres alcance el padrón, la farmacovigilancia ni la
+caja, y que dentro de la cadena clínica el laboratorio no lea recetas ni la
+farmacia resultados—; **el aislamiento entre las bases**, verificando que
+`usr_caja` no pueda leer `asilo_vigia` y que `usr_consultas` no alcance
+ninguna de las otras tres ni pueda alterar su propio esquema; que los nombres
+con tilde sobrevivan el viaje a MySQL
 y de vuelta; y una **auditoría estática del repositorio**: sin claves en texto
 plano, sin rastros de SQLite, con `.env` ignorado, el dinero en `DECIMAL` y el
 puerto de MySQL sin publicar.
@@ -414,7 +620,7 @@ bash verificar.sh
 
 ---
 
-## 5. Endpoints
+## 6. Endpoints
 
 ### ms-gateway — `http://localhost:8080`
 
@@ -424,7 +630,7 @@ bash verificar.sh
 | POST | `/api/auth/login` | `{ usuario, clave }` → `{ token, usuario, nombre, rol }` |
 | GET | `/api/auth/me` | Devuelve el usuario dueño del token vigente |
 | POST | `/api/auth/logout` | Revoca el token vigente: deja de servir aunque no haya vencido |
-| * | `/vigia/*`, `/pastillero/*`, `/caja/*` | Reenvía la petición al microservicio correspondiente, ya autenticada |
+| * | `/vigia/*`, `/pastillero/*`, `/caja/*`, `/consultas/*` | Reenvía la petición al microservicio correspondiente, ya autenticada |
 
 ### ms-vigia — detrás del gateway en `/vigia` (no tiene puerto propio en el anfitrión)
 
@@ -498,7 +704,52 @@ devuelve `404`.
 
 ---
 
-## 6. Las cinco reglas de ms-vigia
+### ms-consultas — detrás del gateway en `/consultas` (no tiene puerto propio en el anfitrión)
+
+La cadena clínica va en un solo servicio porque es una sola historia: una
+remisión produce una cita, la cita produce una consulta, y la consulta produce
+exámenes y recetas. Partirla en cuatro servicios habría repartido una
+transacción entre cuatro bases sin ganar nada.
+
+| Método | Ruta | Para qué | Rol |
+|---|---|---|---|
+| GET | `/salud` | Sonda de vida | — |
+| POST | `/api/v1/solicitudes` | **Remite** al interno a una especialidad. Comprueba el padrón y **avisa al familiar** por correo. | `MEDICO` |
+| GET | `/api/v1/solicitudes` | Remisiones, filtrables por `pacienteId` y `estado` | `MEDICO`, `ENFERMERIA`, `FUNDACION` |
+| GET | `/api/v1/solicitudes/{id}` | Una remisión | `MEDICO`, `ENFERMERIA`, `FUNDACION` |
+| PUT | `/api/v1/solicitudes/{id}/agendar` | **Asigna** médico, especialidad, fecha y hora | `FUNDACION` |
+| GET | `/api/v1/correos` | Bitácora de avisos al familiar, con asunto y cuerpo completos | `MEDICO`, `ENFERMERIA` |
+| POST | `/api/v1/visitas` | **Abre la consulta** desde una remisión agendada | `MEDICO` |
+| GET | `/api/v1/visitas` | Consultas, con sus exámenes e indicaciones | `MEDICO`, `ENFERMERIA`, `LABORATORIO`, `FARMACIA` |
+| GET | `/api/v1/visitas/{id}` | Una consulta con su ficha | igual que arriba |
+| PUT | `/api/v1/visitas/{id}` | Llena diagnóstico y observaciones | `MEDICO` |
+| PUT | `/api/v1/visitas/{id}/cerrar` | Cierra la consulta | `MEDICO` |
+| POST | `/api/v1/visitas/{id}/examenes` | **Indica un examen** y lo cobra en `ms-caja` | `MEDICO` |
+| GET | `/api/v1/examenes` | Exámenes, filtrables por `pacienteId` y `estado` | `MEDICO`, `ENFERMERIA`, `LABORATORIO` |
+| PUT | `/api/v1/examenes/{id}/resultado` | **Carga el resultado** | `LABORATORIO` |
+| POST | `/api/v1/visitas/{id}/indicaciones` | **Receta**, previo dictamen de `ms-vigia` | `MEDICO` |
+| PUT | `/api/v1/indicaciones/{id}/entregar` | **Entrega** y lo cobra en `ms-caja` | `FARMACIA` |
+| GET | `/api/v1/reportes/examenes` | Exámenes de un interno, con cuántos siguen pendientes | `MEDICO`, `ENFERMERIA`, `LABORATORIO` |
+| GET | `/api/v1/reportes/ficha` | **Ficha médica completa**: psicopatologías, alergias e historial | `MEDICO`, `ENFERMERIA` |
+
+Dos detalles del reparto que valen la pena:
+
+- Una visita trae la ficha entera. Sin filtrar por bloque, el laboratorio
+  leería las recetas y la farmacia los resultados de laboratorio con solo pedir
+  la visita. Por eso `GET /api/v1/visitas` **recorta** el bloque que no le toca
+  a quien pregunta, aunque los cuatro roles puedan abrir la visita.
+- La **ficha médica completa** se queda en manos clínicas. Al laboratorio y a
+  la farmacia darles la ficha entera desharía ese recorte por otra puerta.
+
+Y uno de `ms-caja`, que apareció con este servicio:
+
+| Método | Ruta | Para qué | Rol |
+|---|---|---|---|
+| GET | `/api/v1/reportes/costo-por-visita` | **Cuánto costó una consulta**, sumando su laboratorio y su farmacia | `ADMINISTRACION` |
+
+---
+
+## 7. Las cinco reglas de ms-vigia
 
 | Código | Regla | Ejemplo que la dispara |
 |---|---|---|
@@ -566,7 +817,7 @@ Todos estos casos están automatizados en `pruebas.sh`.
 
 ---
 
-## 7. La estación de enfermería
+## 8. La estación de enfermería
 
 La interfaz no es un tablero genérico: la usa alguien **de pie, apurado, en un
 turno de noche**, frente a un monitor que puede ser viejo. Todo lo visual está
@@ -701,12 +952,12 @@ con el eje girado 90°, que es lo que funciona en pantalla angosta.
 
 ---
 
-## 8. La base de datos
+## 9. La base de datos
 
 Motor: **MySQL 8.4**, en el contenedor `bd-asilo`. El enunciado exige MySQL,
 SQL Server u Oracle; el prototipo empezó con SQLite y se migró.
 
-### Una instancia, tres bases separadas
+### Una instancia, cuatro bases separadas
 
 Se conserva el patrón **database per service**: cada microservicio tiene su
 propia base, su propio usuario y sus propios permisos.
@@ -716,6 +967,7 @@ propia base, su propio usuario y sus propios permisos.
 | `asilo_vigia` | `usr_vigia` | ms-vigia | `validaciones` |
 | `asilo_pastillero` | `usr_pastillero` | ms-pastillero | `internos`, `planes`, `tomas` |
 | `asilo_caja` | `usr_caja` | ms-caja | `cargos`, `pagos`, `donaciones`, `gastos`, `pagos_fundacion` |
+| `asilo_consultas` | `usr_consultas` | ms-consultas | `solicitudes`, `visitas`, `examenes`, `indicaciones`, `correos_enviados` |
 
 Cada usuario recibe `SELECT, INSERT, UPDATE, DELETE` **solo sobre su propia
 base**, y nada más: ni `CREATE`, ni `DROP`, ni `ALTER`. Un servicio no puede
@@ -764,7 +1016,7 @@ primera vez que se levanta el volumen.
 
 | Archivo | Qué hace |
 |---|---|
-| `01-bases-y-usuarios.sh` | Crea las tres bases, los tres usuarios y sus permisos. **Es un `.sh` y no un `.sql` a propósito:** MySQL ejecuta los `.sql` literalmente, sin expandir variables, así que un `.sql` obligaría a escribir las tres claves dentro y versionarlas. El script las toma del entorno del contenedor, que el compose llena desde el `.env` |
+| `01-bases-y-usuarios.sh` | Crea las cuatro bases, los cuatro usuarios y sus permisos. **Es un `.sh` y no un `.sql` a propósito:** MySQL ejecuta los `.sql` literalmente, sin expandir variables, así que un `.sql` obligaría a escribir las cuatro claves dentro y versionarlas. El script las toma del entorno del contenedor, que el compose llena desde el `.env` |
 | `01-bases-y-usuarios.ejemplo.sql` | **No se ejecuta.** Las mismas sentencias `CREATE USER` y `GRANT`, con claves de marcador, para poder leer el modelo de permisos sin leer shell |
 | `02-esquema-vigia.sql` | Tabla de la bitácora de farmacovigilancia |
 | `03-esquema-pastillero.sql` | Padrón de internos, planes y tomas |
@@ -817,7 +1069,7 @@ y vuelva a levantar (`docker compose up -d`). Luego, en MySQL Workbench:
 | Username | `root` (o `usr_vigia` / `usr_pastillero` / `usr_caja`) |
 | Password | el valor de `BD_CLAVE_ROOT` en su archivo `.env` |
 
-Con `root` se ven las tres bases; con cada usuario de servicio se ve solo la
+Con `root` se ven las cuatro bases; con cada usuario de servicio se ve solo la
 suya, que es justamente lo que conviene enseñar en la defensa. **Vuelva a
 comentar las dos líneas** cuando termine.
 
@@ -830,22 +1082,25 @@ docker compose exec bd-asilo mysql -u root -p"$BD_CLAVE_ROOT" \
 
 ---
 
-## 9. Estructura de archivos
+## 10. Estructura de archivos
 
 ```
 asilo-microservicios/
-├── docker-compose.yml          orquesta los seis contenedores
+├── docker-compose.yml          orquesta los siete contenedores
 ├── sql/                        el modelo de datos, como entrega legible
-│   ├── 01-bases-y-usuarios.sh    tres bases, tres usuarios y sus permisos
+│   ├── 01-bases-y-usuarios.sh    cuatro bases, cuatro usuarios y sus permisos
 │   │                             (toma las claves del entorno · SE VERSIONA)
 │   ├── 01-bases-y-usuarios.ejemplo.sql  el mismo modelo de permisos, legible,
 │   │                             con claves de marcador · NO se ejecuta
 │   ├── 02-esquema-vigia.sql      bitacora de farmacovigilancia
 │   ├── 03-esquema-pastillero.sql padron de internos, planes y tomas
-│   └── 04-esquema-caja.sql       cargos, pagos, donaciones y gastos
+│   ├── 04-esquema-caja.sql       cargos, pagos, donaciones y gastos
+│   └── 05-esquema-consultas.sql  remisiones, consultas, examenes, recetas
+│                                 y la bitacora de avisos al familiar
 ├── .env.ejemplo                plantilla de configuración (se copia a .env)
 ├── .env                        secreto de esta instalación · NO se versiona
-├── pruebas.sh                  prueba de humo por consola, toda vía el gateway
+├── pruebas.sh                  prueba de humo funcional, toda vía el gateway
+├── verificar.sh                revisión de seguridad, permisos y repositorio
 ├── README.md
 ├── ms-vigia/
 │   ├── app.py                  API, motor de reglas y verificación del token
@@ -860,6 +1115,11 @@ asilo-microservicios/
 │   ├── app.py                  API del módulo de entradas, salidas y caja
 │   ├── requirements.txt
 │   └── Dockerfile
+├── ms-consultas/
+│   ├── app.py                  remisión, cita, consulta, ficha, exámenes,
+│   │                           recetas y el aviso por correo al familiar
+│   ├── requirements.txt
+│   └── Dockerfile
 ├── ms-gateway/
 │   ├── server.js               login, JWT, revocación y proxy autorizado por rol
 │   ├── usuarios.json           personal de demostración, con hash bcrypt
@@ -868,16 +1128,16 @@ asilo-microservicios/
 │   ├── .dockerignore           deja node_modules y .env fuera de la imagen
 │   └── Dockerfile
 └── estacion-web/
-    ├── index.html               acceso + jornada de medicación + caja y donaciones
+    ├── index.html               acceso + jornada + consultas + caja + las tres bandejas de la fundación
     ├── estilos.css              paleta, estados por forma y diseño para pantalla angosta
     ├── app.js                   enrutado, estados de carga/vacío/error y consumo de la API
-    ├── nginx.conf                sirve la interfaz y reenvia /api /vigia /pastillero /caja a ms-gateway
+    ├── nginx.conf                sirve la interfaz y reenvia /api /vigia /pastillero /caja /consultas a ms-gateway
     └── Dockerfile
 ```
 
 ---
 
-## 10. Limitaciones conocidas del prototipo
+## 11. Limitaciones conocidas del prototipo
 
 Esto es un **prototipo académico**, no un sistema en producción. Lo que sigue
 son decisiones tomadas a conciencia, no descuidos: enumerarlas es parte del
@@ -886,7 +1146,7 @@ peligroso que uno que sí.
 
 ### Seguridad
 
-- **Los tres usuarios son de demostración.** Viven en
+- **Los seis usuarios son de demostración.** Viven en
   `ms-gateway/usuarios.json` con la clave en hash bcrypt (nunca en texto
   plano), pero las credenciales están publicadas en este mismo README. En un
   sistema real la lista vendría de la tabla de personal del módulo
@@ -920,7 +1180,7 @@ peligroso que uno que sí.
 
 ### Datos y persistencia
 
-- **Una sola instancia de MySQL para las tres bases.** Se explica y se
+- **Una sola instancia de MySQL para las cuatro bases.** Se explica y se
   cuantifica en la sección 8: se conserva el aislamiento lógico de los datos,
   pero se pierde el aislamiento de fallos y de recursos, y la posibilidad de
   escalar cada base por separado.

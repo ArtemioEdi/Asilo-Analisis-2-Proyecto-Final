@@ -25,6 +25,7 @@
 --      asilo_vigia         usr_vigia         ms-vigia
 --      asilo_pastillero    usr_pastillero    ms-pastillero
 --      asilo_caja          usr_caja          ms-caja
+--      asilo_consultas     usr_consultas     ms-consultas
 --
 --  Para comprobar que el aislamiento es real:
 --      docker compose exec bd-asilo \
@@ -43,25 +44,30 @@ CREATE DATABASE IF NOT EXISTS asilo_pastillero
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS asilo_caja
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS asilo_consultas
+    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- --- Usuarios --------------------------------------------------------------
 -- '%' y no 'localhost': cada microservicio se conecta desde su propio
 -- contenedor, o sea desde otra direccion dentro de la red de Docker.
 --
 -- Las claves reales NO estan aqui: el script .sh las toma de las variables
--- BD_CLAVE_VIGIA, BD_CLAVE_PASTILLERO y BD_CLAVE_CAJA.
+-- BD_CLAVE_VIGIA, BD_CLAVE_PASTILLERO, BD_CLAVE_CAJA y BD_CLAVE_CONSULTAS.
 CREATE USER IF NOT EXISTS 'usr_vigia'@'%'
     IDENTIFIED BY 'CAMBIE_ESTA_CLAVE_VIGIA';
 CREATE USER IF NOT EXISTS 'usr_pastillero'@'%'
     IDENTIFIED BY 'CAMBIE_ESTA_CLAVE_PASTILLERO';
 CREATE USER IF NOT EXISTS 'usr_caja'@'%'
     IDENTIFIED BY 'CAMBIE_ESTA_CLAVE_CAJA';
+CREATE USER IF NOT EXISTS 'usr_consultas'@'%'
+    IDENTIFIED BY 'CAMBIE_ESTA_CLAVE_CONSULTAS';
 
 -- --- Permisos --------------------------------------------------------------
 -- Cada usuario, solo sobre su base. No se otorga CREATE, DROP ni ALTER: el
--- esquema lo definen los archivos 02, 03 y 04, no la aplicacion.
+-- esquema lo definen los archivos 02, 03, 04 y 05, no la aplicacion.
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_vigia.*      TO 'usr_vigia'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_pastillero.* TO 'usr_pastillero'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_caja.*       TO 'usr_caja'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_consultas.*  TO 'usr_consultas'@'%';
 
 FLUSH PRIVILEGES;

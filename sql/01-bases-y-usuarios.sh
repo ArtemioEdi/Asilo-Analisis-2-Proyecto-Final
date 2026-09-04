@@ -27,6 +27,7 @@
 #      asilo_vigia         usr_vigia         ms-vigia
 #      asilo_pastillero    usr_pastillero    ms-pastillero
 #      asilo_caja          usr_caja          ms-caja
+#      asilo_consultas     usr_consultas     ms-consultas
 #
 #  Nota sobre como lo ejecuta el entrypoint: si el archivo tiene permiso de
 #  ejecucion lo corre como un proceso aparte; si no, lo carga con "." dentro
@@ -38,7 +39,7 @@
 asilo_crear_bases_y_usuarios() {
     local faltantes=""
     local nombre
-    for nombre in MYSQL_ROOT_PASSWORD BD_CLAVE_VIGIA BD_CLAVE_PASTILLERO BD_CLAVE_CAJA; do
+    for nombre in MYSQL_ROOT_PASSWORD BD_CLAVE_VIGIA BD_CLAVE_PASTILLERO BD_CLAVE_CAJA BD_CLAVE_CONSULTAS; do
         if [ -z "$(eval "printf '%s' \"\${$nombre:-}\"")" ]; then
             faltantes="$faltantes $nombre"
         fi
@@ -49,7 +50,7 @@ asilo_crear_bases_y_usuarios() {
         return 1
     fi
 
-    echo "[01-bases-y-usuarios] creando las tres bases y sus usuarios..."
+    echo "[01-bases-y-usuarios] creando las cuatro bases y sus usuarios..."
 
     # Durante la inicializacion el servidor todavia no escucha en la red: se
     # entra por el socket local. Las claves viajan por la entrada estandar,
@@ -66,6 +67,8 @@ CREATE DATABASE IF NOT EXISTS asilo_pastillero
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS asilo_caja
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS asilo_consultas
+    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- --- Usuarios ----------------------------------------------------------
 -- '%' y no 'localhost': cada microservicio se conecta desde su propio
@@ -73,13 +76,15 @@ CREATE DATABASE IF NOT EXISTS asilo_caja
 CREATE USER IF NOT EXISTS 'usr_vigia'@'%'      IDENTIFIED BY '${BD_CLAVE_VIGIA}';
 CREATE USER IF NOT EXISTS 'usr_pastillero'@'%' IDENTIFIED BY '${BD_CLAVE_PASTILLERO}';
 CREATE USER IF NOT EXISTS 'usr_caja'@'%'       IDENTIFIED BY '${BD_CLAVE_CAJA}';
+CREATE USER IF NOT EXISTS 'usr_consultas'@'%'  IDENTIFIED BY '${BD_CLAVE_CONSULTAS}';
 
 -- --- Permisos ----------------------------------------------------------
 -- Cada usuario, solo sobre su base. No se otorga CREATE, DROP ni ALTER: el
--- esquema lo definen los archivos 02, 03 y 04, no la aplicacion.
+-- esquema lo definen los archivos 02, 03, 04 y 05, no la aplicacion.
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_vigia.*      TO 'usr_vigia'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_pastillero.* TO 'usr_pastillero'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_caja.*       TO 'usr_caja'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_consultas.*  TO 'usr_consultas'@'%';
 
 FLUSH PRIVILEGES;
 SQL
@@ -89,7 +94,7 @@ SQL
         echo "[01-bases-y-usuarios] ERROR: MySQL rechazo las sentencias." >&2
         return "$estado"
     fi
-    echo "[01-bases-y-usuarios] listo: asilo_vigia, asilo_pastillero y asilo_caja."
+    echo "[01-bases-y-usuarios] listo: asilo_vigia, asilo_pastillero, asilo_caja y asilo_consultas."
 }
 
 asilo_crear_bases_y_usuarios

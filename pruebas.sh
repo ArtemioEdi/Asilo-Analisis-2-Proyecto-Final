@@ -466,6 +466,178 @@ comprobar "la respuesta 429 trae encabezado Retry-After" "si" \
 detalle "Retry-After: ${RETRY:-ninguno} segundos"
 
 # ---------------------------------------------------------------------------
+titulo "16. La cadena clinica completa, de la remision a la entrega"
+# ---------------------------------------------------------------------------
+# El recorrido entero, con un rol distinto en cada paso, que es justo lo que
+# hace valer la separacion: ninguno de los cinco puede hacer el paso del otro.
+#
+#   MEDICO       remite al interno a una especialidad
+#   FUNDACION    le asigna medico, fecha y hora
+#   MEDICO       abre la consulta e indica un examen
+#   LABORATORIO  carga el resultado
+#   MEDICO       receta (y ms-vigia lo puede frenar)
+#   FARMACIA     entrega y se carga a la cuenta
+#   MEDICO       cierra la consulta
+#
+# Se usa ASL-014 a proposito: es la interna con demencia mixta, y es lo que
+# permite comprobar el bloqueo de ms-vigia mas abajo con un caso real y no
+# con una receta inventada para que falle.
+TOKEN_FUNDACION=$(entrar fundacion fundacion2026)
+TOKEN_LABORATORIO=$(entrar laboratorio laboratorio2026)
+TOKEN_FARMACIA=$(entrar farmacia farmacia2026)
+
+comprobar "los tres roles nuevos obtienen token" "si" \
+  "$([ -n "$TOKEN_FUNDACION" ] && [ -n "$TOKEN_LABORATORIO" ] && [ -n "$TOKEN_FARMACIA" ] && echo si || echo no)"
+
+# --- 1. El medico remite --------------------------------------------------
+SOLICITUD=$(cuerpo POST "$GATEWAY/consultas/api/v1/solicitudes" "$TOKEN_MEDICO" '{
+  "pacienteId":"ASL-014",
+  "motivo":"Prueba de humo: remision de la cadena clinica.",
+  "especialidadSolicitada":"Psiquiatria",
+  "enfermeroAcompanante":"Enf. Lucia Tzoc"}')
+SOLICITUD_ID=$(printf '%s' "$SOLICITUD" | campo id)
+comprobar "1. el medico remite al interno" "si" \
+  "$([ -n "$SOLICITUD_ID" ] && echo si || echo no)"
+comprobar "la remision nace PENDIENTE" "PENDIENTE" "$(printf '%s' "$SOLICITUD" | campo estado)"
+comprobar "la firma quien inicio sesion, no el cuerpo" "Dr. Angel Maltez" \
+  "$(printf '%s' "$SOLICITUD" | campo solicitadoPor)"
+detalle "$SOLICITUD_ID · aviso al familiar: $(printf '%s' "$SOLICITUD" | campo avisoFamiliar.estado) a $(printf '%s' "$SOLICITUD" | campo avisoFamiliar.destinatario)"
+
+comprobar "la fundacion NO puede remitir (eso es del medico)" "403" \
+  "$(codigo POST "$GATEWAY/consultas/api/v1/solicitudes" "$TOKEN_FUNDACION" \
+     '{"pacienteId":"ASL-014","motivo":"x","especialidadSolicitada":"Psiquiatria"}')"
+
+# --- 2. La fundacion agenda -----------------------------------------------
+AGENDA=$(cuerpo PUT "$GATEWAY/consultas/api/v1/solicitudes/$SOLICITUD_ID/agendar" "$TOKEN_FUNDACION" '{
+  "medicoAsignado":"Dra. Silvia Racancoj",
+  "especialidadAsignada":"Psiquiatria",
+  "agendadaPara":"2026-09-20T09:00:00"}')
+comprobar "2. la fundacion agenda la cita" "AGENDADA" "$(printf '%s' "$AGENDA" | campo estado)"
+detalle "asignada a $(printf '%s' "$AGENDA" | campo medicoAsignado) para $(printf '%s' "$AGENDA" | campo agendadaPara)"
+
+comprobar "el medico NO puede agendar (eso es de la fundacion)" "403" \
+  "$(codigo PUT "$GATEWAY/consultas/api/v1/solicitudes/$SOLICITUD_ID/agendar" "$TOKEN_MEDICO" \
+     '{"medicoAsignado":"Yo mismo","agendadaPara":"2026-09-20T09:00:00"}')"
+
+# --- 3. El medico atiende -------------------------------------------------
+VISITA=$(cuerpo POST "$GATEWAY/consultas/api/v1/visitas" "$TOKEN_MEDICO" \
+  "{\"solicitudId\":\"$SOLICITUD_ID\"}")
+VISITA_ID=$(printf '%s' "$VISITA" | campo id)
+comprobar "3. el medico abre la consulta" "si" "$([ -n "$VISITA_ID" ] && echo si || echo no)"
+comprobar "la consulta nace ABIERTA" "ABIERTA" "$(printf '%s' "$VISITA" | campo estado)"
+detalle "$VISITA_ID"
+
+# Una solicitud produce UNA visita, y lo garantiza el motor con un UNIQUE, no
+# una comprobacion en Python: dos peticiones simultaneas pasarian las dos.
+comprobar "la misma remision no produce dos consultas (409)" "409" \
+  "$(codigo POST "$GATEWAY/consultas/api/v1/visitas" "$TOKEN_MEDICO" \
+     "{\"solicitudId\":\"$SOLICITUD_ID\"}")"
+
+# --- 4. El medico indica un examen ----------------------------------------
+EXAMEN=$(cuerpo POST "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID/examenes" "$TOKEN_MEDICO" '{
+  "nombre":"Perfil tiroideo","tarifa":"laboratorio-basico"}')
+EXAMEN_ID=$(printf '%s' "$EXAMEN" | campo id)
+CARGO_EXAMEN=$(printf '%s' "$EXAMEN" | campo cargoId)
+comprobar "4. el medico indica un examen" "si" "$([ -n "$EXAMEN_ID" ] && echo si || echo no)"
+comprobar "el examen nace SOLICITADO" "SOLICITADO" "$(printf '%s' "$EXAMEN" | campo estado)"
+# El medico no puede escribir en la caja, pero el cobro tiene que quedar: lo
+# crea ms-consultas con su token de servicio, firmado con el nombre del medico.
+comprobar "el examen se cobro solo en ms-caja" "si" \
+  "$([ -n "$CARGO_EXAMEN" ] && echo si || echo no)"
+detalle "$EXAMEN_ID · cargo $CARGO_EXAMEN creado por el token de servicio"
+
+comprobar "el laboratorio NO puede indicar examenes" "403" \
+  "$(codigo POST "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID/examenes" "$TOKEN_LABORATORIO" \
+     '{"nombre":"El que yo quiera"}')"
+
+# --- 5. El laboratorio carga el resultado ---------------------------------
+RESULTADO=$(cuerpo PUT "$GATEWAY/consultas/api/v1/examenes/$EXAMEN_ID/resultado" "$TOKEN_LABORATORIO" '{
+  "resultado":"TSH 3.1 mUI/L, dentro de rango. Sin hallazgos."}')
+comprobar "5. el laboratorio carga el resultado" "RESULTADO_LISTO" \
+  "$(printf '%s' "$RESULTADO" | campo estado)"
+comprobar "el resultado queda firmado por el laboratorio" "Lab. Clínico Central" \
+  "$(printf '%s' "$RESULTADO" | campo registradoPor)"
+
+comprobar "el medico NO puede cargar resultados de laboratorio" "403" \
+  "$(codigo PUT "$GATEWAY/consultas/api/v1/examenes/$EXAMEN_ID/resultado" "$TOKEN_MEDICO" \
+     '{"resultado":"lo que a mi me parezca"}')"
+
+# --- 6. El medico receta, y ms-vigia lo frena -----------------------------
+# Este es el corazon del sistema. ASL-014 tiene demencia mixta: recetarle un
+# antipsicotico es un criterio geriatrico de severidad CRITICA. La receta NO
+# se guarda, y el 409 trae el dictamen con el codigo del hallazgo.
+BLOQUEADA=$(cuerpo POST "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID/indicaciones" "$TOKEN_MEDICO" '{
+  "principioActivo":"quetiapina","nombre":"Quetiapina",
+  "dosisMg":25,"cadaHoras":24,"duracionDias":30}')
+comprobar "6. ms-vigia BLOQUEA el antipsicotico en la paciente con demencia (409)" "409" \
+  "$(codigo POST "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID/indicaciones" "$TOKEN_MEDICO" \
+     '{"principioActivo":"quetiapina","nombre":"Quetiapina","dosisMg":25,"cadaHoras":24,"duracionDias":30}')"
+comprobar "el 409 explica por que, con el codigo del hallazgo" "FV-GER-04" \
+  "$(printf '%s' "$BLOQUEADA" | campo dictamen.hallazgos.0.codigo)"
+comprobar "y con su severidad" "CRITICA" \
+  "$(printf '%s' "$BLOQUEADA" | campo dictamen.hallazgos.0.severidad)"
+detalle "$(printf '%s' "$BLOQUEADA" | campo dictamen.hallazgos.0.mensaje)"
+
+# La receta rechazada no se guardo: la consulta sigue sin ninguna indicacion.
+comprobar "la receta bloqueada NO quedo guardada" "[]" \
+  "$(cuerpo GET "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID" "$TOKEN_MEDICO" | campo indicaciones)"
+
+# --- 7. El medico receta una alternativa ----------------------------------
+INDICACION=$(cuerpo POST "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID/indicaciones" "$TOKEN_MEDICO" '{
+  "principioActivo":"paracetamol","nombre":"Paracetamol",
+  "dosisMg":500,"cadaHoras":8,"duracionDias":5,
+  "comoTomarlo":"Con alimento."}')
+INDICACION_ID=$(printf '%s' "$INDICACION" | campo id)
+comprobar "7. el medico receta una alternativa y ms-vigia la aprueba" "si" \
+  "$([ -n "$INDICACION_ID" ] && echo si || echo no)"
+detalle "$INDICACION_ID · ms-vigia dictamino $(printf '%s' "$INDICACION" | campo veredictoVigia) con folio $(printf '%s' "$INDICACION" | campo folioValidacion)"
+
+# --- 8. Farmacia entrega --------------------------------------------------
+ENTREGA=$(cuerpo PUT "$GATEWAY/consultas/api/v1/indicaciones/$INDICACION_ID/entregar" "$TOKEN_FARMACIA" '{
+  "tarifa":"farmacia-generico"}')
+CARGO_FARMACIA=$(printf '%s' "$ENTREGA" | campo cargoId)
+comprobar "8. farmacia entrega el medicamento" "true" \
+  "$(printf '%s' "$ENTREGA" | campo entregado)"
+comprobar "la entrega se cobro sola en ms-caja" "si" \
+  "$([ -n "$CARGO_FARMACIA" ] && echo si || echo no)"
+detalle "entregado por $(printf '%s' "$ENTREGA" | campo entregadoPor) · cargo $CARGO_FARMACIA"
+
+comprobar "una entrega no se registra dos veces (409)" "409" \
+  "$(codigo PUT "$GATEWAY/consultas/api/v1/indicaciones/$INDICACION_ID/entregar" "$TOKEN_FARMACIA" '{}')"
+
+# --- 9. El medico cierra --------------------------------------------------
+CIERRE=$(cuerpo PUT "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID/cerrar" "$TOKEN_MEDICO" '{
+  "diagnostico":"Insomnio cronico sin causa organica nueva.",
+  "observaciones":"Se refuerza la higiene del sueño y se revalora en un mes."}')
+comprobar "9. el medico cierra la consulta" "CERRADA" "$(printf '%s' "$CIERRE" | campo estado)"
+
+# ---------------------------------------------------------------------------
+titulo "17. Los tres reportes, sobre la consulta recien hecha"
+# ---------------------------------------------------------------------------
+comprobar "reporte de examenes del interno (200)" "200" \
+  "$(codigo GET "$GATEWAY/consultas/api/v1/reportes/examenes?pacienteId=ASL-014" "$TOKEN_MEDICO")"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo total) examenes · $(cat "$TEMPORAL/respuesta.json" | campo conResultado) con resultado"
+
+comprobar "ficha medica completa del interno (200)" "200" \
+  "$(codigo GET "$GATEWAY/consultas/api/v1/reportes/ficha?pacienteId=ASL-014" "$TOKEN_MEDICO")"
+# La ficha junta dos microservicios: el padron pone psicopatologias y alergias,
+# esta base pone el historial. Si el padron no contesta, no vendrian.
+comprobar "la ficha trae la parte clinica del padron" "si" \
+  "$([ -n "$(cat "$TEMPORAL/respuesta.json" | campo psicopatologias)" ] && echo si || echo no)"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo resumen.visitas) consultas · $(cat "$TEMPORAL/respuesta.json" | campo resumen.examenes) examenes · $(cat "$TEMPORAL/respuesta.json" | campo resumen.medicamentosIndicados) medicamentos"
+
+comprobar "costo de esa consulta, sumando laboratorio y farmacia (200)" "200" \
+  "$(codigo GET "$GATEWAY/caja/api/v1/reportes/costo-por-visita?visitaId=$VISITA_ID" "$TOKEN_ADMINISTRACION")"
+comprobar "la caja encontro los dos cargos de la consulta" "2" \
+  "$(cat "$TEMPORAL/respuesta.json" | campo total)"
+detalle "neto Q $(cat "$TEMPORAL/respuesta.json" | campo totales.montoNeto) · la fundacion descuenta Q $(cat "$TEMPORAL/respuesta.json" | campo totales.descuento)"
+
+comprobar "el aviso al familiar quedo asentado" "200" \
+  "$(codigo GET "$GATEWAY/consultas/api/v1/correos?pacienteId=ASL-014" "$TOKEN_MEDICO")"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo total) avisos · servidor de correo configurado: $(cat "$TEMPORAL/respuesta.json" | campo smtpConfigurado)"
+
+
+# ---------------------------------------------------------------------------
 printf "\n%s== Resultado%s\n" "$CIAN" "$FIN"
 if [ "$FALLIDAS" -eq 0 ]; then
   printf "%sTodo pasa: %s de %s pruebas.%s\n\n" "$VERDE" "$TOTAL" "$TOTAL" "$FIN"

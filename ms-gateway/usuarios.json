@@ -4,6 +4,9 @@
     "Las claves nunca se guardan en texto plano: aqui va el hash bcrypt (coste 10).",
     "Son usuarios de PRUEBA para la defensa del proyecto; las claves estan",
     "documentadas en el README. En un sistema real esta lista vendria de la tabla",
+    "Los tres ultimos (fundacion, laboratorio y farmacia) son los roles que",
+    "necesita ms-consultas: la fundacion agenda las citas, laboratorio carga los",
+    "resultados de los examenes y farmacia entrega los medicamentos recetados.",
     "de personal del modulo administrativo y no de un archivo del repositorio.",
     "Para regenerar un hash:",
     "  docker compose run --rm --entrypoint node ms-gateway -e \"console.log(require('bcryptjs').hashSync('LA_CLAVE',10))\""
@@ -26,6 +29,24 @@
       "nombre": "Marta Solis",
       "rol": "ADMINISTRACION",
       "claveHash": "$2a$10$TfAfArMu0mKMjiD/R52IHu5jp9a9PDer3s3g5kMK6OrtOr.VTmNgq"
+    },
+    {
+      "usuario": "fundacion",
+      "nombre": "Fundación Manos Unidas",
+      "rol": "FUNDACION",
+      "claveHash": "$2a$10$/BDMqaJ2vi67RtCQbThF.uJXX8i6tVW7nGEN7DyjyKPXUevmiiJS."
+    },
+    {
+      "usuario": "laboratorio",
+      "nombre": "Lab. Clínico Central",
+      "rol": "LABORATORIO",
+      "claveHash": "$2a$10$syASm78x1JMgELgNm.tkI.j8/NJNWObuawvAY1/NcAgwLrk7DSvYu"
+    },
+    {
+      "usuario": "farmacia",
+      "nombre": "Farmacia de la Fundación",
+      "rol": "FARMACIA",
+      "claveHash": "$2a$10$3IGpX6ftQX5n8bgoEhzMXexVVmhowWnmQMCNG5B8NT4uWxNvmvggi"
     }
   ]
 }

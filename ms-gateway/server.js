@@ -11,24 +11,8 @@ const PUERTO = process.env.PUERTO || 8080;
 const DURACION_SESION = process.env.GATEWAY_DURACION_SESION || "8h";
 const ORIGEN_PERMITIDO = process.env.ORIGEN_PERMITIDO || "http://localhost:8090";
 
-// ---------------------------------------------------------------------------
-// Bandera para imprimir las credenciales de demostracion en la pantalla de
-// acceso. Apagada por defecto: tener las tres claves escritas en la pantalla
-// de login contradice todo lo demas que hace este gateway. Se enciende solo
-// para grabar el video de la entrega, poniendo MOSTRAR_USUARIOS_DEMO=1 en el
-// archivo .env.
-//
-// La estacion web es HTML estatico servido por nginx, asi que no puede leer
-// variables de entorno: las consulta en GET /api/config, que es publico y no
-// devuelve ninguna credencial, solo el si o el no.
-// ---------------------------------------------------------------------------
 const MOSTRAR_USUARIOS_DEMO = process.env.MOSTRAR_USUARIOS_DEMO === "1";
 
-// ---------------------------------------------------------------------------
-// El secreto no tiene valor por defecto. Un secreto de desarrollo escrito en
-// el codigo es un secreto publicado: cualquiera que lea el repositorio puede
-// firmarse un token de MEDICO. Si no viene por ambiente, el gateway no arranca.
-// ---------------------------------------------------------------------------
 const SECRETO = process.env.GATEWAY_SECRETO;
 if (!SECRETO || SECRETO.trim().length < 16) {
   console.error(
@@ -43,25 +27,15 @@ if (!SECRETO || SECRETO.trim().length < 16) {
 const VIGIA_URL = process.env.VIGIA_URL || "http://ms-vigia:8081";
 const PASTILLERO_URL = process.env.PASTILLERO_URL || "http://ms-pastillero:8082";
 const CAJA_URL = process.env.CAJA_URL || "http://ms-caja:8083";
+const CONSULTAS_URL = process.env.CONSULTAS_URL || "http://ms-consultas:8084";
 
-// ---------------------------------------------------------------------------
-// Personal del asilo. Ya no vive en este archivo: se lee de usuarios.json, con
-// las claves guardadas como hash bcrypt. Ver el README para las credenciales
-// de demostracion.
-// ---------------------------------------------------------------------------
 const USUARIOS = require("./usuarios.json").usuarios;
 
-// Hash de descarte con el que se compara cuando el usuario NO existe, para que
-// un login fallido tarde lo mismo exista o no la persona. Sin esto, medir el
-// tiempo de respuesta permite averiguar que usuarios estan dados de alta.
 const HASH_SENUELO = bcrypt.hashSync("usuario-inexistente-cabeza-de-algodon", 10);
 
 const app = express();
 app.disable("x-powered-by");
 
-// Solo la estacion web puede llamar al gateway desde un navegador. Antes el
-// CORS estaba abierto a cualquier origen, asi que una pagina cualquiera podia
-// usar la sesion de la enfermera que la tuviera abierta.
 app.use(cors({ origin: ORIGEN_PERMITIDO }));
 
 // OJO: express.json() NO se registra de forma global. Si consumieramos el
@@ -101,6 +75,11 @@ app.get("/", (_req, res) => {
         "* /caja/*":
           "ms-caja, entradas, salidas y caja. Lee y escribe ADMINISTRACION; " +
           "MEDICO solo lee /api/v1/pacientes/{id}/cuenta.",
+        "* /consultas/*":
+          "ms-consultas, la cadena clinica: remision, cita, consulta y ficha " +
+          "medica. La lee todo rol clinico; escribe segun el eslabon: MEDICO " +
+          "remite y atiende, FUNDACION agenda, LABORATORIO carga resultados y " +
+          "FARMACIA entrega.",
       },
     },
     comoAutenticarse:
@@ -124,7 +103,10 @@ app.get("/salud", (_req, res) => {
     servicio: APP_NOMBRE,
     version: APP_VERSION,
     estado: "arriba",
-    depende_de: { vigia: VIGIA_URL, pastillero: PASTILLERO_URL, caja: CAJA_URL },
+    depende_de: {
+      vigia: VIGIA_URL, pastillero: PASTILLERO_URL,
+      caja: CAJA_URL, consultas: CONSULTAS_URL,
+    },
     hora: new Date().toISOString(),
   });
 });
@@ -331,11 +313,83 @@ function autorizar(rolesLectura, rolesEscritura) {
   };
 }
 
-function montarProxy(ruta, destino, rolesLectura, rolesEscritura) {
+// ---------------------------------------------------------------------------
+// La matriz de /consultas no es de dos columnas como la de los otros tres
+// servicios: cada eslabon de la cadena clinica lo mueve un rol distinto, y
+// cada rol lee solo su parte. Se declara ruta por ruta.
+//
+//   MEDICO       lee todo; escribe solicitudes, visitas, examenes e indicaciones
+//   ENFERMERIA   lee todo; no escribe nada
+//   FUNDACION    lee solicitudes; escribe solo el agendar
+//   LABORATORIO  lee visitas y examenes; escribe solo el resultado
+//   FARMACIA     lee visitas e indicaciones; escribe solo la entrega
+//   ADMINISTRACION  sin acceso: la cadena clinica no es informacion suya
+//
+// La misma matriz esta repetida dentro de ms-consultas. Es defensa en
+// profundidad, igual que en los otros tres servicios.
+// ---------------------------------------------------------------------------
+const LECTURA_CONSULTAS = [
+  [/^\/api\/v1\/solicitudes/, ["MEDICO", "ENFERMERIA", "FUNDACION"]],
+  [/^\/api\/v1\/visitas/, ["MEDICO", "ENFERMERIA", "LABORATORIO", "FARMACIA"]],
+  [/^\/api\/v1\/examenes/, ["MEDICO", "ENFERMERIA", "LABORATORIO"]],
+  [/^\/api\/v1\/indicaciones/, ["MEDICO", "ENFERMERIA", "FARMACIA"]],
+  // La bitacora de avisos a la familia la ve quien lleva la parte clinica.
+  [/^\/api\/v1\/correos/, ["MEDICO", "ENFERMERIA"]],
+  // La ficha medica completa reune psicopatologias, alergias, diagnosticos,
+  // examenes y recetas en un solo documento. Se queda en manos clinicas: al
+  // laboratorio y a la farmacia ya se les filtra el bloque ajeno cuando leen
+  // una visita, y darles la ficha entera desharia ese filtro por otra puerta.
+  [/^\/api\/v1\/reportes\/ficha/, ["MEDICO", "ENFERMERIA"]],
+  // El reporte de examenes si lo ve el laboratorio: son los estudios que el
+  // mismo realiza y que ya lee uno por uno en su pantalla.
+  [/^\/api\/v1\/reportes\/examenes/, ["MEDICO", "ENFERMERIA", "LABORATORIO"]],
+];
+
+const ESCRITURA_CONSULTAS = [
+  ["POST", /^\/api\/v1\/solicitudes\/?$/, ["MEDICO"]],
+  ["PUT", /^\/api\/v1\/solicitudes\/[^/]+\/agendar\/?$/, ["FUNDACION"]],
+  ["POST", /^\/api\/v1\/visitas\/?$/, ["MEDICO"]],
+  ["PUT", /^\/api\/v1\/visitas\/[^/]+\/cerrar\/?$/, ["MEDICO"]],
+  ["PUT", /^\/api\/v1\/visitas\/[^/]+\/?$/, ["MEDICO"]],
+  ["POST", /^\/api\/v1\/visitas\/[^/]+\/examenes\/?$/, ["MEDICO"]],
+  ["POST", /^\/api\/v1\/visitas\/[^/]+\/indicaciones\/?$/, ["MEDICO"]],
+  ["PUT", /^\/api\/v1\/examenes\/[^/]+\/resultado\/?$/, ["LABORATORIO"]],
+  ["PUT", /^\/api\/v1\/indicaciones\/[^/]+\/entregar\/?$/, ["FARMACIA"]],
+];
+
+function autorizarConsultas(req, res, next) {
+  if (req.method === "OPTIONS") return next();
+  if (req.path === "/salud") return next();
+
+  const rol = req.usuario.rol;
+  const lee = req.method === "GET" || req.method === "HEAD";
+  const reglas = lee ? LECTURA_CONSULTAS : ESCRITURA_CONSULTAS;
+
+  for (const regla of reglas) {
+    const [metodo, patron, permitidos] = lee
+      ? [req.method, regla[0], regla[1]]
+      : regla;
+    if (req.method !== metodo || !patron.test(req.path)) continue;
+    if (permitidos.includes(rol)) return next();
+    return res.status(403).json({
+      error:
+        "Su rol (" + rol + ") no esta autorizado para " +
+        (lee ? "leer este registro" : "esta accion") + " de la cadena clinica.",
+      rolesPermitidos: permitidos,
+    });
+  }
+  return res.status(404).json({
+    error: "Ruta no encontrada en ms-consultas.",
+    ruta: req.originalUrl,
+    metodo: req.method,
+  });
+}
+
+function montarProxy(ruta, destino, rolesLectura, rolesEscritura, autorizador) {
   app.use(
     ruta,
     requiereSesion,
-    autorizar(rolesLectura, rolesEscritura),
+    autorizador || autorizar(rolesLectura, rolesEscritura),
     createProxyMiddleware({
       target: destino,
       changeOrigin: true,
@@ -357,6 +411,10 @@ function montarProxy(ruta, destino, rolesLectura, rolesEscritura) {
 montarProxy("/vigia", VIGIA_URL, ["MEDICO", "ENFERMERIA"], ["MEDICO"]);
 montarProxy("/pastillero", PASTILLERO_URL, ["MEDICO", "ENFERMERIA"], ["MEDICO", "ENFERMERIA"]);
 montarProxy("/caja", CAJA_URL, ["ADMINISTRACION"], ["ADMINISTRACION"]);
+
+// /consultas lleva su propio autorizador, declarado arriba: la matriz de la
+// cadena clinica es por ruta y no por servicio.
+montarProxy("/consultas", CONSULTAS_URL, null, null, autorizarConsultas);
 
 // El 404 dice QUE se pidio y COMO, para que se vea de un vistazo si el error
 // fue el metodo, un prefijo mal escrito o una ruta que no existe.

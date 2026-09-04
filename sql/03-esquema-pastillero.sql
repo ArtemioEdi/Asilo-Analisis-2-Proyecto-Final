@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS internos (
     psicopatologias  JSON          NOT NULL,
     alergias         JSON          NOT NULL,
     responsable      VARCHAR(120),
+    -- Correo del familiar responsable. Es a donde ms-consultas avisa cuando
+    -- se remite al interno a una especialidad. Dato de contacto, no clinico:
+    -- por eso viaja tambien en la ficha que recibe administracion.
+    correo_responsable VARCHAR(160),
 
     CONSTRAINT pk_internos PRIMARY KEY (id),
     CONSTRAINT ck_internos_edad CHECK (edad BETWEEN 0 AND 130)

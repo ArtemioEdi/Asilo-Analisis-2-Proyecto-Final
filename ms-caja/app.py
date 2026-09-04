@@ -62,6 +62,23 @@ ROLES_ESCRITURA = ("ADMINISTRACION",)
 # donaciones, ni los gastos, ni la cuenta con la fundacion.
 CUENTA_DE_PACIENTE = re.compile(r"^/api/v1/pacientes/[^/]+/cuenta/?$")
 
+# Segunda excepcion, esta vez para otro servicio y no para una persona.
+#
+# Cuando el especialista manda un examen o farmacia entrega un medicamento,
+# ms-consultas tiene que dejar el cobro asentado aqui. Pero quien dispara esa
+# accion es un MEDICO o FARMACIA, y ninguno de los dos puede escribir en la
+# caja: eso es de ADMINISTRACION, y asi debe seguir siendo. Si se le abriera
+# la caja al medico para resolver esto, se perderia toda la separacion que
+# defiende el resto del sistema.
+#
+# La salida es un token de servicio: ms-consultas firma, con el mismo secreto
+# compartido, un token de un minuto que dice rol=SERVICIO y lleva el nombre
+# real de la persona que provoco el cobro, para que el cargo quede firmado por
+# ella y no por un robot. Aqui se acepta ese rol UNICAMENTE para crear cargos:
+# no puede pagar, ni donar, ni registrar gastos, ni leer nada.
+CREAR_CARGO = re.compile(r"^/api/v1/cargos/?$")
+ROLES_SERVICIO = ("SERVICIO",)
+
 # La sonda de vida no expone datos del asilo y la consulta Docker desde dentro
 # del contenedor, sin token.
 RUTAS_LIBRES = ("/salud",)
@@ -186,6 +203,52 @@ def esperar_a_mysql(intentos=30, pausa=2):
     )
 
 
+def revisar_el_esquema():
+    """Avisa si la base viene de una version anterior a cargos.visita_id.
+
+    Este servicio NO se repara solo a proposito. usr_caja tiene unicamente
+    SELECT, INSERT, UPDATE y DELETE sobre su base: no tiene ALTER, igual que
+    los otros tres usuarios de servicio. Un microservicio que puede cambiar la
+    forma de sus propias tablas en caliente es un microservicio que, el dia
+    que lo comprometan, puede cambiarla para cualquier otra cosa. El esquema
+    lo define sql/04-esquema-caja.sql y lo aplica el arranque de bd-asilo.
+
+    En una instalacion nueva la columna ya viene creada y esta funcion no
+    dice nada. Solo habla cuando alguien levanta codigo nuevo sobre un volumen
+    viejo, y entonces dice exactamente que hacer.
+    """
+    try:
+        bd = abrir_conexion()
+        try:
+            with bd.cursor() as cursor:
+                cursor.execute(
+                    """SELECT COUNT(*) AS hay FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = 'cargos'
+                          AND column_name = 'visita_id'""",
+                    (BD_NOMBRE,),
+                )
+                if cursor.fetchone()["hay"]:
+                    return
+        finally:
+            bd.close()
+    except Exception as error:
+        print("[%s] no se pudo revisar el esquema: %s" % (APP_NOMBRE, error), flush=True)
+        return
+
+    print(
+        "\n[%s] AVISO: la tabla cargos de esta base no tiene la columna visita_id.\n"
+        "  Este volumen de datos se creo con una version anterior del esquema, y\n"
+        "  los archivos de sql/ solo corren cuando el volumen esta vacio.\n"
+        "  El reporte GET /api/v1/reportes/costo-por-visita no va a funcionar.\n"
+        "  La forma limpia de resolverlo es rehacer el volumen:\n"
+        "      docker compose down -v && docker compose up -d --build\n"
+        "  Si hay datos que conservar, la columna se agrega a mano con el usuario\n"
+        "  root del motor (usr_caja no tiene ALTER, y asi debe seguir):\n"
+        "      ALTER TABLE asilo_caja.cargos ADD COLUMN visita_id VARCHAR(24) NULL;\n"
+        "      ALTER TABLE asilo_caja.cargos ADD INDEX idx_cargos_visita (visita_id);\n"
+        % APP_NOMBRE, flush=True)
+
+
 def _folio(prefijo):
     return "%s-%s" % (prefijo, uuid.uuid4().hex[:8].upper())
 
@@ -226,6 +289,9 @@ def exigir_sesion():
     permitidos = ROLES_ESCRITURA if escribe else ROLES_LECTURA
     if not escribe and CUENTA_DE_PACIENTE.match(request.path):
         permitidos = permitidos + ("MEDICO",)
+    # El token de servicio de ms-consultas: solo POST /api/v1/cargos.
+    if escribe and request.method == "POST" and CREAR_CARGO.match(request.path):
+        permitidos = permitidos + ROLES_SERVICIO
 
     if g.sesion.get("rol") not in permitidos:
         return jsonify({
@@ -279,6 +345,10 @@ def _cargo_json(fila):
         "pacienteNombre": fila["paciente_nombre"],
         "categoria": fila["categoria"],
         "concepto": fila["concepto"],
+        # Nulo en los cargos que no nacen de una consulta (la cuota mensual,
+        # por ejemplo). Es la unica forma que tiene la caja de agrupar por
+        # visita sin leer la base de ms-consultas.
+        "visitaId": fila["visita_id"],
         "referencia": fila["referencia"],
         "montoBruto": float(fila["monto_bruto"]),
         "descuentoPct": float(fila["descuento_pct"]),
@@ -334,11 +404,11 @@ def crear_cargo():
             """INSERT INTO cargos
                    (id, paciente_id, paciente_nombre, categoria, concepto, referencia,
                     monto_bruto, descuento_pct, monto_neto, monto_pagado, estado,
-                    registrado_por, creado_en)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,0,'PENDIENTE',%s,%s)""",
+                    registrado_por, creado_en, visita_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,0,'PENDIENTE',%s,%s,%s)""",
             (cargo_id, cuerpo["pacienteId"], cuerpo.get("pacienteNombre"), categoria,
              cuerpo["concepto"], cuerpo.get("referencia"), monto_bruto, descuento_pct,
-             monto_neto, firmante(), ahora),
+             monto_neto, firmante(), ahora, cuerpo.get("visitaId")),
         )
         bd.commit()
     except Exception:
@@ -649,6 +719,104 @@ def resumen_general():
     })
 
 
+# ---------------------------------------------------------------------------
+# Reporte · cuanto costo una consulta
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/reportes/costo-por-visita")
+def costo_por_visita():
+    """Costo total de una consulta: la consulta mas su laboratorio y su farmacia.
+
+    Todo sale de la propia base de la caja. Esa fue la decision de diseño que
+    costo mas pensar, asi que conviene dejarla escrita:
+
+    La caja NO puede preguntarle a ms-consultas que examenes y que recetas
+    tuvo la visita. usr_caja no tiene permiso sobre asilo_consultas —el motor
+    se lo niega, y hay una prueba que lo comprueba— y abrirle ese permiso
+    tiraria abajo la separacion de bases que sostiene todo lo demas.
+
+    La alternativa era que la caja llamara por HTTP a ms-consultas cada vez
+    que alguien pide este reporte. Tambien se descarto: pondria a la caja a
+    depender de un servicio clinico para poder facturar, y un reporte de
+    dinero dejaria de funcionar cuando se cae un servicio que no maneja dinero.
+
+    Lo que se hizo es al reves: cuando ms-consultas manda a crear el cargo,
+    manda tambien de que visita salio, y la caja lo guarda en cargos.visita_id.
+    El reporte es entonces una consulta local, sin red de por medio.
+    """
+    visita = (request.args.get("visitaId") or "").strip()
+    if not visita:
+        return jsonify({
+            "error": "Falta visitaId.",
+            "ejemplo": "/api/v1/reportes/costo-por-visita?visitaId=VM-2026-1A2B3C4D",
+        }), 400
+
+    filas = consultar(
+        "SELECT * FROM cargos WHERE visita_id = %s ORDER BY creado_en, id",
+        (visita,),
+    )
+    cargos = [_cargo_json(f) for f in filas]
+
+    # Los totales se suman en el motor y sobre DECIMAL, no en Python sobre
+    # float: es la misma razon por la que las columnas de dinero son DECIMAL.
+    resumen = consultar_uno(
+        """SELECT COALESCE(SUM(monto_bruto), 0)  AS bruto,
+                  COALESCE(SUM(monto_neto), 0)   AS neto,
+                  COALESCE(SUM(monto_pagado), 0) AS pagado
+             FROM cargos WHERE visita_id = %s""",
+        (visita,),
+    )
+    bruto = float(resumen["bruto"])
+    neto = float(resumen["neto"])
+    pagado = float(resumen["pagado"])
+
+    # Desglose por categoria. Se piden las tres siempre, aunque vengan en
+    # cero: un reporte que esconde las filas vacias obliga a adivinar si el
+    # examen no se cobro o si no hubo examen.
+    porcategoria = {c: {"cantidad": 0, "montoBruto": 0.0, "montoNeto": 0.0, "montoPagado": 0.0}
+                    for c in ("CONSULTA", "LABORATORIO", "FARMACIA")}
+    for fila in consultar(
+        """SELECT categoria, COUNT(*) AS cantidad,
+                  SUM(monto_bruto) AS bruto, SUM(monto_neto) AS neto,
+                  SUM(monto_pagado) AS pagado
+             FROM cargos WHERE visita_id = %s GROUP BY categoria""",
+        (visita,),
+    ):
+        porcategoria[fila["categoria"]] = {
+            "cantidad": int(fila["cantidad"]),
+            "montoBruto": float(fila["bruto"]),
+            "montoNeto": float(fila["neto"]),
+            "montoPagado": float(fila["pagado"]),
+        }
+
+    salida = {
+        "visitaId": visita,
+        "pacienteId": cargos[0]["pacienteId"] if cargos else None,
+        "pacienteNombre": cargos[0]["pacienteNombre"] if cargos else None,
+        "total": len(cargos),
+        "porCategoria": porcategoria,
+        "totales": {
+            "montoBruto": round(bruto, 2),
+            # Lo que la fundacion le perdona a la familia por ser del asilo.
+            "descuento": round(bruto - neto, 2),
+            "montoNeto": round(neto, 2),
+            "montoPagado": round(pagado, 2),
+            "saldo": round(neto - pagado, 2),
+        },
+        "cargos": cargos,
+    }
+    if not cargos:
+        # Sin cargos hay dos explicaciones posibles y la caja no puede
+        # distinguirlas: no tiene la tabla de visitas para saber si el folio
+        # existe. Decirlo es mas util que devolver un 404 que seria mentira
+        # la mitad de las veces.
+        salida["nota"] = ("Esta visita no tiene ningun cargo asentado. Puede ser una "
+                          "consulta sin examenes ni recetas, o un folio de visita que "
+                          "no existe: la caja no lleva el registro de visitas y no "
+                          "puede distinguir entre las dos cosas.")
+    return jsonify(salida)
+
+
 @app.errorhandler(404)
 def no_encontrado(_):
     return jsonify({"error": "Ruta no encontrada en ms-caja."}), 404
@@ -708,6 +876,48 @@ def sembrar():
                 (_folio("PG"), cargo_id, pid, monto_neto, "efectivo",
                  "Marta Solis, administracion", creado))
 
+
+    # -----------------------------------------------------------------------
+    # Los cargos de la consulta cerrada que siembra ms-consultas.
+    #
+    # Van aparte de la lista de arriba porque llevan visita_id: son los que
+    # hacen que el reporte de costo por consulta tenga algo que sumar en la
+    # demostracion. El folio de la visita y los de los cargos estan fijados
+    # en los dos servicios; si cambia uno hay que cambiar el otro (ver
+    # VISITA_DEMO en ms-consultas/app.py).
+    #
+    # El concepto se escribe con el mismo formato que produce el camino en
+    # vivo —"nombre (visita FOLIO)" y "nombre dosis mg (indicacion FOLIO)"—
+    # para que en pantalla no se distinga un cargo sembrado de uno real.
+    # -----------------------------------------------------------------------
+    VISITA_DEMO = "VM-2026-DEMO0022"
+    atendida = hoy - timedelta(days=9)
+    de_la_visita = [
+        ("CG-DEMO0001", "laboratorio-basico",
+         "Tiempo de protrombina e INR (visita %s)" % VISITA_DEMO,
+         "Dr. Rolando Sicajau"),
+        ("CG-DEMO0002", "laboratorio-imagen",
+         "Electrocardiograma de 12 derivaciones (visita %s)" % VISITA_DEMO,
+         "Dr. Rolando Sicajau"),
+        ("CG-DEMO0003", "farmacia-generico",
+         "Warfarina 5.00 mg (indicacion IN-2026-DEMO0001)",
+         "Farmacia de la Fundación"),
+    ]
+    for cargo_id, tarifa_clave, concepto, quien in de_la_visita:
+        t = TARIFARIO[tarifa_clave]
+        neto = round(t["precioFundacion"] * (1 - t["descuentoPct"] / 100), 2)
+        cursor.execute(
+            """INSERT INTO cargos
+                   (id, paciente_id, paciente_nombre, categoria, concepto, referencia,
+                    monto_bruto, descuento_pct, monto_neto, monto_pagado, estado,
+                    registrado_por, creado_en, visita_id)
+               VALUES (%s,'ASL-022','Bernardo Puac Ixcoy',%s,%s,%s,%s,%s,%s,0,
+                       'PENDIENTE',%s,%s,%s)""",
+            (cargo_id, t["categoria"], concepto, tarifa_clave,
+             t["precioFundacion"], t["descuentoPct"], neto, quien,
+             atendida, VISITA_DEMO),
+        )
+
     donaciones = [
         ("Fundacion Amigos del Adulto Mayor", "EMPRESA", 5000.0, "fondo general", 25),
         ("Municipalidad de Mazatenango", "GOBIERNO", 3500.0, "insumos medicos", 18),
@@ -752,6 +962,7 @@ def sembrar():
 
 
 esperar_a_mysql()
+revisar_el_esquema()
 if os.environ.get("SEMBRAR", "1") == "1":
     sembrar()
 

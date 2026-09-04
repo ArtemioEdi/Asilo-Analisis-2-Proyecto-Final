@@ -344,6 +344,9 @@ def ficha_json(fila, incluir_clinico=True):
         # lee el personal del asilo.
         "ingreso": fila["ingreso"].strftime("%d/%m/%Y") if fila["ingreso"] else None,
         "responsable": fila["responsable"],
+        # Dato de contacto, no clinico: lo necesita ms-consultas para avisarle
+        # al familiar, y administracion para cobrarle.
+        "correoResponsable": fila["correo_responsable"],
     }
     if incluir_clinico:
         ficha["psicopatologias"] = json.loads(fila["psicopatologias"])
@@ -737,23 +740,27 @@ def sembrar_internos():
     # El ingreso se guarda como DATE (aaaa-mm-dd) y se presenta en dd/mm/aaaa.
     internos = [
         ("ASL-014", "Rosalía Menchú Coy", 84, "Pabellón A, cama 3", "2023-05-11",
-         ["Demencia mixta", "Insomnio crónico"], ["penicilina"], "María Coy, hija"),
+         ["Demencia mixta", "Insomnio crónico"], ["penicilina"],
+         "María Coy, hija", "maria.coy@ejemplo.gt"),
         ("ASL-007", "Tránsito Xicará Tzoc", 79, "Pabellón B, cama 1", "2024-02-02",
-         ["Depresión mayor", "Hipertensión arterial"], ["sulfas"], "Julio Xicará, sobrino"),
+         ["Depresión mayor", "Hipertensión arterial"], ["sulfas"],
+         "Julio Xicará, sobrino", "julio.xicara@ejemplo.gt"),
         ("ASL-022", "Bernardo Puac Ixcoy", 88, "Pabellón C, cama 2", "2022-09-19",
-         ["Deterioro cognitivo leve", "Fibrilación auricular"], [], "Elena Ixcoy, nieta"),
+         ["Deterioro cognitivo leve", "Fibrilación auricular"], [],
+         "Elena Ixcoy, nieta", "elena.ixcoy@ejemplo.gt"),
     ]
     try:
         with bd.cursor() as cursor:
-            for pid, nombre, edad, cama, ingreso, psico, alergias, responsable in internos:
+            for (pid, nombre, edad, cama, ingreso, psico, alergias,
+                 responsable, correo) in internos:
                 cursor.execute(
                     """INSERT INTO internos
                            (id, nombre, edad, cama, ingreso, psicopatologias,
-                            alergias, responsable)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            alergias, responsable, correo_responsable)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (pid, nombre, edad, cama, ingreso,
                      json.dumps(psico, ensure_ascii=False),
-                     json.dumps(alergias, ensure_ascii=False), responsable),
+                     json.dumps(alergias, ensure_ascii=False), responsable, correo),
                 )
         bd.commit()
     except Exception:

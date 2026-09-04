@@ -9,6 +9,7 @@ const CONFIG = "/api/config";
 const VIGIA = "/vigia";
 const PASTILLERO = "/pastillero";
 const CAJA = "/caja";
+const CONSULTAS = "/consultas";
 
 // Las fichas de los internos ya NO viven aqui. Estaban quemadas en este
 // archivo, o sea en el navegador, y son los tres datos —edad, alergias y
@@ -384,18 +385,28 @@ function problema(nodo, error, accion, alReintentar) {
 // boton de atras del navegador funciona.
 // ---------------------------------------------------------------------
 
-const VISTAS = ["jornada", "caja"];
+const VISTAS = ["jornada", "caja", "consultas", "agenda", "laboratorio", "farmacia"];
 
-// MEDICO ve las dos. ENFERMERIA no entra a la caja del asilo.
-// ADMINISTRACION no entra a la jornada de medicacion.
-function vistaPermitida(vista) {
-  if (vista === "caja") return SESION.rol === "ADMINISTRACION" || SESION.rol === "MEDICO";
-  if (vista === "jornada") return SESION.rol === "MEDICO" || SESION.rol === "ENFERMERIA";
-  return false;
-}
-function vistaPorDefecto() {
-  return SESION.rol === "ADMINISTRACION" ? "caja" : "jornada";
-}
+// Que vista puede abrir cada rol. Es el reflejo exacto de la matriz que hacen
+// cumplir el gateway y los microservicios: si aqui apareciera una vista de mas,
+// la persona pulsaria y recibiria un 403.
+const VISTAS_POR_ROL = {
+  MEDICO:         ["jornada", "consultas", "caja"],
+  ENFERMERIA:     ["jornada", "consultas"],
+  ADMINISTRACION: ["caja"],
+  FUNDACION:      ["agenda"],
+  LABORATORIO:    ["laboratorio"],
+  FARMACIA:       ["farmacia"],
+};
+
+// Los tres roles operativos no tienen internos a cargo: su pantalla es una
+// bandeja de trabajo, sin barra lateral y sin interno seleccionado.
+const ROLES_SIN_PADRON = ["FUNDACION", "LABORATORIO", "FARMACIA"];
+
+function vistasDelRol() { return VISTAS_POR_ROL[SESION.rol] || []; }
+function vistaPermitida(vista) { return vistasDelRol().includes(vista); }
+function vistaPorDefecto() { return vistasDelRol()[0] || "jornada"; }
+function tienePadron() { return !ROLES_SIN_PADRON.includes(SESION.rol); }
 
 function parsearHash(cadena) {
   const partes = String(cadena || "").replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -409,6 +420,9 @@ let rutaActual = { vista: null, interno: null };
 
 function normalizarRuta(destino) {
   let vista = destino.vista && vistaPermitida(destino.vista) ? destino.vista : vistaPorDefecto();
+  // Las bandejas de fundacion, laboratorio y farmacia no cuelgan de un
+  // interno: su ruta es solo la vista.
+  if (!tienePadron()) return { vista, interno: null };
   let interno = destino.interno && INTERNOS[destino.interno] ? destino.interno : estado.interno;
   if (!INTERNOS[interno]) interno = Object.keys(INTERNOS)[0] || null;
   return { vista, interno };
@@ -431,6 +445,10 @@ function irA(destino, reemplazar) {
 
   if (ruta.vista === "jornada" && (cambioVista || cambioInterno)) cargarInterno();
   if (ruta.vista === "caja" && (cambioVista || cambioInterno)) pintarCaja();
+  if (ruta.vista === "consultas" && (cambioVista || cambioInterno)) pintarConsultas();
+  if (ruta.vista === "agenda" && cambioVista) pintarAgenda();
+  if (ruta.vista === "laboratorio" && cambioVista) pintarLaboratorio();
+  if (ruta.vista === "farmacia" && cambioVista) pintarFarmacia();
 }
 
 function sincronizarDesdeHash() {
@@ -442,8 +460,10 @@ window.addEventListener("popstate", sincronizarDesdeHash);
 window.addEventListener("hashchange", sincronizarDesdeHash);
 
 function pintarVista(nombre) {
-  $("vista-jornada").hidden = nombre !== "jornada";
-  $("vista-caja").hidden = nombre !== "caja";
+  for (const vista of VISTAS) {
+    const nodo = $("vista-" + vista);
+    if (nodo) nodo.hidden = vista !== nombre;
+  }
   document.querySelectorAll(".pestana").forEach((b) =>
     b.setAttribute("aria-selected", String(b.dataset.vista === nombre)));
   window.scrollTo({ top: 0, behavior: "auto" });
@@ -586,6 +606,14 @@ function aplicarPermisos() {
   // Solo se muestran las pestañas que el rol puede usar.
   $("pestana-jornada").hidden = !vistaPermitida("jornada");
   $("pestana-caja").hidden = !vistaPermitida("caja");
+  $("pestana-consultas").hidden = !vistaPermitida("consultas");
+  // Enfermeria lee la cadena clinica pero no escribe en ella: ve la pestaña
+  // sin el boton de remitir.
+  $("abrir-remision").hidden = SESION.rol !== "MEDICO";
+  // Los tres roles operativos no tienen internos a cargo: fuera la lateral.
+  $("armazon").classList.toggle("armazon--sin-lateral", !tienePadron());
+  // Y con una sola vista, la barra de pestañas no aporta nada.
+  $("pestanas").hidden = vistasDelRol().length < 2;
   $("sesion-nombre").textContent = SESION.nombre;
   $("sesion-rol").textContent = SESION.rol;
   $("internos-rotulo").textContent =
@@ -630,7 +658,7 @@ async function refrescarBarra() {
     if (error.sesionExpirada) { sesionExpirada(); return; }
   }
 
-  for (const [clave, base] of [["vigia", VIGIA], ["pastillero", PASTILLERO], ["caja", CAJA]]) {
+  for (const [clave, base] of [["vigia", VIGIA], ["pastillero", PASTILLERO], ["caja", CAJA], ["consultas", CONSULTAS]]) {
     const nodo = document.querySelector('.barra span[data-servicio="' + clave + '"]');
     try {
       const salud = await pedir(base + "/salud");
@@ -642,7 +670,8 @@ async function refrescarBarra() {
     }
   }
 
-  if (SESION.rol !== "ADMINISTRACION") {
+  // El turno lo sirve ms-pastillero, que solo leen medicina y enfermeria.
+  if (SESION.rol === "MEDICO" || SESION.rol === "ENFERMERIA") {
     try {
       const t = await pedir(PASTILLERO + "/api/v1/turnos");
       $("barra-turno").textContent = "turno " + t.turnoActual;
@@ -1168,24 +1197,31 @@ const velo = $("velo");
 let soltarFocoCajon = null;
 let abrioElCajon = null;
 
+// El vademecum alimenta DOS desplegables: el del recetario de la jornada y el
+// de la consulta del especialista. Se piden juntos y se llenan los dos con la
+// misma respuesta, para no consultar ms-vigia dos veces.
 async function cargarVademecum() {
-  const select = $("principioActivo");
+  const destinos = [$("principioActivo"), $("indicacion-principio")].filter(Boolean);
   try {
     const datos = await pedir(VIGIA + "/api/v1/vademecum");
-    select.textContent = "";
-    for (const f of datos.farmacos) {
+    for (const select of destinos) {
+      select.textContent = "";
+      for (const f of datos.farmacos) {
+        const opcion = document.createElement("option");
+        opcion.value = f.principioActivo;
+        opcion.textContent = f.nombre + " — " + f.grupo.toLowerCase().replace(/_/g, " ");
+        select.appendChild(opcion);
+      }
+      select.value = "ibuprofeno";
+    }
+  } catch (_) {
+    for (const select of destinos) {
+      select.textContent = "";
       const opcion = document.createElement("option");
-      opcion.value = f.principioActivo;
-      opcion.textContent = f.nombre + " — " + f.grupo.toLowerCase().replace(/_/g, " ");
+      opcion.value = "";
+      opcion.textContent = "ms-vigia no responde";
       select.appendChild(opcion);
     }
-    select.value = "ibuprofeno";
-  } catch (_) {
-    select.textContent = "";
-    const opcion = document.createElement("option");
-    opcion.value = "";
-    opcion.textContent = "ms-vigia no responde";
-    select.appendChild(opcion);
   }
 }
 
@@ -1213,7 +1249,11 @@ $("abrir-cajon").addEventListener("click", abrirCajon);
 $("cerrar-cajon").addEventListener("click", cerrarCajon);
 velo.addEventListener("click", cerrarCajon);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !cajon.hidden) cerrarCajon();
+  if (e.key !== "Escape") return;
+  if (!cajon.hidden) cerrarCajon();
+  if (!$("cajon-remision").hidden) cerrarRemision();
+  if (!$("cajon-visita").hidden) cerrarVisita();
+  if (!$("cajon-ficha").hidden) cerrarFicha();
 });
 
 $("formulario").addEventListener("submit", async (evento) => {
@@ -1266,8 +1306,8 @@ const SIMBOLO_VEREDICTO = { BLOQUEADO: "⛔", ADVERTENCIA: "⚠", APROBADO: "✓
 
 // Todo el contenido de aqui viene del servidor, asi que se construye con
 // nodos y textContent: nunca se concatena en innerHTML.
-function pintarDictamen(d) {
-  const caja = $("dictamen");
+function pintarDictamen(d, contenedor, conBotonProgramar) {
+  const caja = contenedor || $("dictamen");
   caja.textContent = "";
   caja.className = "dictamen dictamen--" + d.veredicto;
 
@@ -1290,7 +1330,9 @@ function pintarDictamen(d) {
 
   const folio = document.createElement("p");
   folio.className = "dictamen__folio";
-  folio.textContent = "folio " + d.folio + " · riesgo " + d.puntajeRiesgo + " de 100";
+  folio.textContent = d.folio
+    ? "folio " + d.folio + (d.puntajeRiesgo ? " · riesgo " + d.puntajeRiesgo + " de 100" : "")
+    : "";
 
   banda.append(veredicto, resumen, folio);
   caja.appendChild(banda);
@@ -1316,7 +1358,9 @@ function pintarDictamen(d) {
     caja.appendChild(bloque);
   }
 
-  if (d.veredicto !== "BLOQUEADO") {
+  // El boton de programar solo aplica al recetario de la jornada. En la
+  // consulta del especialista la receta ya quedo guardada por ms-consultas.
+  if (d.veredicto !== "BLOQUEADO" && conBotonProgramar !== false) {
     const boton = document.createElement("button");
     boton.className = "accion accion--ancha";
     boton.type = "button";
@@ -1413,6 +1457,9 @@ async function pintarCaja() {
     } else {
       cuenta.cargos.forEach((c) => cargosNodo.appendChild(filaCargo(c)));
     }
+    // Solo administracion: la caja no se le abre a nadie mas, y el reporte
+    // por consulta tampoco.
+    if (SESION.rol === "ADMINISTRACION") await pintarCostosPorVisita(cuenta.cargos);
   } catch (error) {
     $("caja-saldo").textContent = "";
     problema(cargosNodo, error, "consultar el estado de cuenta", pintarCaja);
@@ -1586,6 +1633,1382 @@ $("formulario-gasto").addEventListener("submit", (evento) => {
     "registrar el gasto");
 });
 
+
+// =====================================================================
+// Consultas · la cadena clinica
+// ---------------------------------------------------------------------
+// Cuatro pantallas sobre el mismo servicio, una por rol. Todas reusan los
+// mismos esqueletos de carga, estados vacios y bloques de error que el
+// resto de la estacion.
+// =====================================================================
+
+const estadoConsultas = { visitaAbierta: null, solicitudes: [], visitas: [] };
+
+const ETIQUETA_ESTADO_CADENA = {
+  PENDIENTE: "pendiente", AGENDADA: "agendada", ATENDIDA: "atendida",
+  CANCELADA: "cancelada", ABIERTA: "abierta", CERRADA: "cerrada",
+  SOLICITADO: "solicitado", RESULTADO_LISTO: "resultado listo",
+  ENVIADO: "enviado", REGISTRADO: "registrado", FALLIDO: "falló",
+  SIN_DESTINATARIO: "sin correo"
+};
+
+function marbeteEstado(estadoNombre, textoPropio) {
+  const nodo = document.createElement("span");
+  nodo.className = "marbete-estado";
+  nodo.dataset.estado = estadoNombre;
+  nodo.textContent = textoPropio ||
+    ETIQUETA_ESTADO_CADENA[estadoNombre] || estadoNombre.toLowerCase();
+  return nodo;
+}
+
+// Fecha legible, sin depender de la configuración regional del equipo.
+function fechaLegible(iso) {
+  if (!iso) return "sin fecha";
+  const f = new Date(iso);
+  if (isNaN(f.getTime())) return iso;
+  return f.toLocaleDateString("es-GT", { day: "2-digit", month: "2-digit", year: "numeric" }) +
+    " · " + f.toTimeString().slice(0, 5);
+}
+
+// El nombre del interno si está en el padrón; si no, su código. Los roles
+// operativos no leen ms-pastillero, así que trabajan con el código.
+function nombreDeInterno(pacienteId) {
+  const ficha = INTERNOS[pacienteId];
+  return ficha ? ficha.nombre : pacienteId;
+}
+
+function campoFicha(rotulo, valor, clase) {
+  const caja = document.createElement("div");
+  caja.className = "visita__campo";
+  const r = document.createElement("p");
+  r.className = "visita__rotulo";
+  r.textContent = rotulo;
+  const v = document.createElement("p");
+  v.className = clase || "visita__observaciones";
+  if (valor) {
+    v.textContent = valor;
+  } else {
+    v.classList.add("visita__sinllenar");
+    v.textContent = "sin llenar";
+  }
+  caja.append(r, v);
+  return caja;
+}
+
+// ---------------------------------------------------------------------
+// Vista del MEDICO · remisiones e historial
+// ---------------------------------------------------------------------
+
+async function pintarConsultas() {
+  const interno = INTERNOS[estado.interno];
+  if (!interno) return;
+  $("consultas-meta").textContent =
+    interno.nombre + " · " + interno.pacienteId + " · " + interno.edad + " años";
+  await Promise.all([pintarSolicitudes(), pintarCorreos(), pintarExamenes(), pintarHistorial()]);
+}
+
+// ---------------------------------------------------------------------
+// Avisos a la familia
+//
+// El enunciado pide avisarle al familiar cuando se remite al interno. Sin
+// servidor de correo el mensaje no sale a Internet, pero se genera igual y
+// queda guardado: acá se muestra completo, con asunto y cuerpo, que es lo
+// que permite demostrar el requisito en la defensa.
+// ---------------------------------------------------------------------
+
+async function pintarCorreos() {
+  const nodo = $("lista-correos");
+  esqueleto(nodo, 2, true);
+  let datos;
+  try {
+    datos = await pedir(CONSULTAS + "/api/v1/correos?pacienteId=" + estado.interno);
+  } catch (error) {
+    problema(nodo, error, "consultar los avisos a la familia", pintarCorreos);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  $("correos-conteo").textContent =
+    datos.total + (datos.total === 1 ? " aviso" : " avisos");
+
+  // Se explica por qué el estado dice "registrado" y no "enviado", en vez de
+  // dejar a quien lo vea adivinando si el correo salió o no.
+  const nota = $("correos-nota");
+  nota.textContent = datos.smtpConfigurado
+    ? "Hay un servidor de correo configurado: los avisos salen de verdad."
+    : "No hay servidor de correo configurado, así que los avisos no salen a Internet. " +
+      "Se generan igual, quedan guardados y se muestran aquí completos.";
+
+  nodo.textContent = "";
+  if (!datos.total) {
+    vacio(nodo, "Todavía no se le ha avisado a ninguna familia",
+      "Cada vez que remita a este interno a una especialidad, se genera un aviso " +
+      "para su familiar responsable y aparece aquí con el texto completo.");
+    return;
+  }
+
+  for (const c of datos.correos) {
+    const ficha = document.createElement("div");
+    ficha.className = "ficha ficha--" + (c.estado === "ENVIADO" ? "ATENDIDA" : "SOLICITADO");
+
+    const cuerpo = document.createElement("div");
+    const asunto = document.createElement("p");
+    asunto.className = "correo__asunto";
+    asunto.textContent = c.asunto;
+    const dato = document.createElement("p");
+    dato.className = "ficha__dato";
+    dato.textContent = "para " + (c.destinatario || "(la ficha no tiene correo del familiar)") +
+      " · " + fechaLegible(c.enviadoEn) + " · " + c.solicitudId;
+    cuerpo.append(asunto, dato);
+
+    const acciones = document.createElement("div");
+    acciones.className = "ficha__acciones";
+    acciones.appendChild(marbeteEstado(c.estado));
+    const ver = document.createElement("button");
+    ver.className = "accion-sec";
+    ver.type = "button";
+    ver.textContent = "Ver el correo";
+    acciones.appendChild(ver);
+
+    const texto = document.createElement("pre");
+    texto.className = "correo__cuerpo";
+    texto.textContent = c.cuerpo;
+    texto.hidden = true;
+    ver.addEventListener("click", () => {
+      texto.hidden = !texto.hidden;
+      ver.textContent = texto.hidden ? "Ver el correo" : "Ocultar";
+    });
+
+    ficha.append(cuerpo, acciones, texto);
+    nodo.appendChild(ficha);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Exámenes realizados
+//
+// El bloque de remisiones ya muestra los exámenes de cada consulta, pero
+// metidos dentro de la visita que los pidió. Cuando un interno lleva varias
+// consultas, saber cuántos estudios se le han hecho obliga a abrirlas una
+// por una y contar. Esto los junta y dice, arriba, cuántos siguen esperando
+// resultado.
+// ---------------------------------------------------------------------
+
+async function pintarExamenes() {
+  const nodo = $("lista-examenes");
+  esqueleto(nodo, 2, true);
+  let datos;
+  try {
+    datos = await pedir(CONSULTAS + "/api/v1/reportes/examenes?pacienteId=" + estado.interno);
+  } catch (error) {
+    problema(nodo, error, "consultar los exámenes del interno", pintarExamenes);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  $("examenes-conteo").textContent = datos.total === 0
+    ? "ninguno"
+    : datos.total + (datos.total === 1 ? " examen · " : " exámenes · ") +
+      datos.conResultado + " con resultado";
+
+  nodo.textContent = "";
+  if (!datos.total) {
+    vacio(nodo, "A este interno todavía no se le ha hecho ningún examen",
+      "Los exámenes los indica el especialista durante la consulta, y el laboratorio " +
+      "carga el resultado después. Aparecerán aquí en cuanto se indique el primero.");
+    return;
+  }
+
+  for (const e of datos.examenes) {
+    const ficha = document.createElement("div");
+    ficha.className = "ficha ficha--" + e.estado;
+
+    const cuerpo = document.createElement("div");
+    const titulo = document.createElement("p");
+    titulo.className = "ficha__titulo";
+    titulo.textContent = e.nombre;
+
+    const dato = document.createElement("p");
+    dato.className = "ficha__dato";
+    // De qué consulta salió: un examen suelto no dice a qué pregunta responde.
+    dato.textContent = fechaLegible(e.fechaVisita) + " · " +
+      (e.especialidad || "sin especialidad") + " · " +
+      (e.medicoTratante || "sin médico asignado");
+    cuerpo.append(titulo, dato);
+
+    if (e.resultado) {
+      const resultado = document.createElement("p");
+      resultado.className = "ficha__resultado";
+      resultado.textContent = e.resultado;
+      cuerpo.appendChild(resultado);
+    }
+
+    const acciones = document.createElement("div");
+    acciones.className = "ficha__acciones";
+    acciones.appendChild(marbeteEstado(e.estado));
+
+    ficha.append(cuerpo, acciones);
+    nodo.appendChild(ficha);
+  }
+}
+
+
+// ---------------------------------------------------------------------
+// Ficha médica completa
+//
+// El expediente del interno en un solo documento: lo que trae el padrón
+// —psicopatologías y alergias— junto a lo que trae la cadena clínica —cada
+// consulta con su diagnóstico, sus exámenes y lo que se le recetó—. Es lo
+// que el médico querría tener impreso enfrente.
+// ---------------------------------------------------------------------
+
+let soltarFocoFicha = null;
+let abrioLaFicha = null;
+
+function lineaDato(rotulo, valor) {
+  const caja = document.createElement("div");
+  caja.className = "visita__campo";
+  const r = document.createElement("dt");
+  r.textContent = rotulo;
+  const v = document.createElement("dd");
+  if (valor) {
+    v.textContent = valor;
+  } else {
+    v.classList.add("visita__sinllenar");
+    v.textContent = "sin llenar";
+  }
+  caja.append(r, v);
+  return caja;
+}
+
+// null y [] no significan lo mismo: null es "el padrón no lo entregó" y [] es
+// "no tiene". Mostrar los dos igual haría leer una cosa por la otra, y en
+// alergias esa confusión es peligrosa.
+function comoLista(valores, vacioTexto) {
+  if (valores === null || valores === undefined) {
+    const p = document.createElement("p");
+    p.className = "parte";
+    p.textContent = "Este dato no se pudo traer del padrón.";
+    return p;
+  }
+  if (!valores.length) {
+    const p = document.createElement("p");
+    p.className = "parte";
+    p.textContent = vacioTexto;
+    return p;
+  }
+  const ul = document.createElement("ul");
+  ul.className = "lista-ficha";
+  for (const v of valores) {
+    const li = document.createElement("li");
+    li.textContent = v;
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
+function listaFicha(titulo, valores, vacioTexto) {
+  const seccion = document.createElement("section");
+  seccion.className = "bloque";
+  const cab = document.createElement("div");
+  cab.className = "bloque__cabecera";
+  const h = document.createElement("h3");
+  h.textContent = titulo;
+  cab.appendChild(h);
+  seccion.appendChild(cab);
+  seccion.appendChild(comoLista(valores, vacioTexto));
+  return seccion;
+}
+
+function sublistaFicha(titulo, valores, vacioTexto) {
+  const caja = document.createElement("div");
+  const h = document.createElement("p");
+  h.className = "ficha__rotulo";
+  h.textContent = titulo;
+  caja.append(h, comoLista(valores, vacioTexto));
+  return caja;
+}
+
+async function abrirFicha(evento) {
+  if (evento && evento.currentTarget) abrioLaFicha = evento.currentTarget;
+  const cuerpo = $("ficha-cuerpo");
+  $("ficha-pie").textContent = "";
+  esqueleto(cuerpo, 4, true);
+  $("cajon-ficha").hidden = false;
+  $("velo-ficha").hidden = false;
+  if (!soltarFocoFicha) soltarFocoFicha = atraparFoco($("cajon-ficha"));
+  $("cerrar-ficha").focus();
+
+  let f;
+  try {
+    f = await pedir(CONSULTAS + "/api/v1/reportes/ficha?pacienteId=" + estado.interno);
+  } catch (error) {
+    problema(cuerpo, error, "traer la ficha médica completa", () => abrirFicha());
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  cuerpo.textContent = "";
+  const id = f.identificacion || {};
+
+  // Quién la sacó y cuándo. Es un documento clínico: se firma.
+  $("ficha-pie").textContent = "Generada el " + fechaLegible(f.generadoEn) +
+    " a solicitud de " + f.consultadaPor + ".";
+
+  const datos = document.createElement("dl");
+  datos.className = "datos";
+  datos.append(
+    lineaDato("Interno", id.nombre || f.pacienteId),
+    lineaDato("Código", f.pacienteId),
+    lineaDato("Edad", id.edad ? id.edad + " años" : null),
+    lineaDato("Cama", id.cama),
+    lineaDato("Ingreso", id.ingreso),
+    lineaDato("Responsable", id.responsable),
+    lineaDato("Correo del responsable", id.correoResponsable)
+  );
+  cuerpo.appendChild(datos);
+
+  if (f.advertencia) {
+    const aviso = document.createElement("p");
+    aviso.className = "parte";
+    aviso.textContent = f.advertencia;
+    cuerpo.appendChild(aviso);
+  }
+
+  cuerpo.appendChild(listaFicha("Psicopatologías", f.psicopatologias,
+    "No se registran psicopatologías en el padrón."));
+  cuerpo.appendChild(listaFicha("Alergias", f.alergias,
+    "No se registran alergias en el padrón."));
+
+  const seccion = document.createElement("section");
+  seccion.className = "bloque";
+  const cab = document.createElement("div");
+  cab.className = "bloque__cabecera";
+  const h = document.createElement("h3");
+  h.textContent = "Historial de consultas";
+  const nota = document.createElement("span");
+  nota.className = "bloque__nota";
+  // El singular importa: "1 consultas · 2 exámenes · 1 medicamentos" se lee
+  // como un descuido, y esta es la cabecera de un documento clínico.
+  const cuenta = (n, uno, varios) => n + " " + (n === 1 ? uno : varios);
+  nota.textContent = [
+    cuenta(f.resumen.visitas, "consulta", "consultas"),
+    cuenta(f.resumen.examenes, "examen", "exámenes"),
+    cuenta(f.resumen.medicamentosIndicados, "medicamento", "medicamentos"),
+  ].join(" · ");
+  cab.append(h, nota);
+  seccion.appendChild(cab);
+
+  if (!f.visitas.length) {
+    const p = document.createElement("p");
+    p.className = "parte";
+    p.textContent = "Este interno todavía no ha sido atendido por ningún especialista.";
+    seccion.appendChild(p);
+  } else {
+    for (const v of f.visitas) {
+      const caja = document.createElement("article");
+      caja.className = "ficha ficha--documento ficha--" + v.estado;
+
+      const enc = document.createElement("p");
+      enc.className = "ficha__titulo";
+      enc.textContent = (v.especialidad || "Consulta") + " · " + fechaLegible(v.fechaVisita);
+      const quien = document.createElement("p");
+      quien.className = "ficha__dato";
+      quien.textContent = (v.medicoTratante || "sin médico asignado") + " · " + v.id;
+      caja.append(enc, quien);
+
+      const detalle = document.createElement("dl");
+      detalle.className = "datos";
+      detalle.append(
+        lineaDato("Motivo", v.motivo),
+        lineaDato("Diagnóstico", v.diagnostico),
+        lineaDato("Observaciones", v.observaciones)
+      );
+      caja.appendChild(detalle);
+
+      caja.appendChild(sublistaFicha("Exámenes", (v.examenes || []).map((e) =>
+        e.nombre + " — " + (e.resultado || "sin resultado todavía")),
+        "No se indicaron exámenes en esta consulta."));
+      caja.appendChild(sublistaFicha("Medicamentos", (v.indicaciones || []).map((i) =>
+        i.nombre + " " + i.dosisMg + " mg cada " + i.cadaHoras + " h por " +
+        i.duracionDias + " días" + (i.entregado ? " · entregado" : " · sin entregar")),
+        "No se recetó nada en esta consulta."));
+
+      seccion.appendChild(caja);
+    }
+  }
+  cuerpo.appendChild(seccion);
+}
+
+function cerrarFicha() {
+  if ($("cajon-ficha").hidden) return;
+  $("cajon-ficha").hidden = true;
+  $("velo-ficha").hidden = true;
+  if (soltarFocoFicha) { soltarFocoFicha(); soltarFocoFicha = null; }
+  if (abrioLaFicha && abrioLaFicha.focus && document.contains(abrioLaFicha)) {
+    abrioLaFicha.focus();
+  }
+  abrioLaFicha = null;
+}
+
+
+// ---------------------------------------------------------------------
+// Costo por consulta (administración)
+//
+// La caja no lleva el registro de visitas: no puede listar las consultas de
+// un interno por su cuenta. Pero cada cargo que nació de una consulta trae
+// encima de qué consulta salió, así que las visitas se sacan de los cargos
+// que ya están en pantalla y a la caja se le pide el total de cada una.
+// ---------------------------------------------------------------------
+
+async function pintarCostosPorVisita(cargos) {
+  const bloque = $("bloque-costos");
+  const nodo = $("lista-costos");
+
+  const visitas = [...new Set((cargos || []).map((c) => c.visitaId).filter(Boolean))];
+  if (!visitas.length) {
+    // Sin cargos nacidos de una consulta el bloque no aporta nada: se esconde
+    // en vez de mostrar un vacío que se leería como un error.
+    bloque.hidden = true;
+    return;
+  }
+  bloque.hidden = false;
+  $("costos-conteo").textContent =
+    visitas.length + (visitas.length === 1 ? " consulta" : " consultas");
+  esqueleto(nodo, visitas.length, true);
+
+  let reportes;
+  try {
+    reportes = await Promise.all(visitas.map((v) =>
+      pedir(CAJA + "/api/v1/reportes/costo-por-visita?visitaId=" + encodeURIComponent(v))));
+  } catch (error) {
+    problema(nodo, error, "calcular el costo de cada consulta",
+      () => pintarCostosPorVisita(cargos));
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  nodo.textContent = "";
+  for (const r of reportes) {
+    const caja = document.createElement("div");
+    caja.className = "ficha ficha--documento";
+
+    const titulo = document.createElement("p");
+    titulo.className = "ficha__titulo";
+    titulo.textContent = "Consulta " + r.visitaId;
+    caja.appendChild(titulo);
+
+    const desglose = document.createElement("dl");
+    desglose.className = "datos";
+    for (const categoria of ["CONSULTA", "LABORATORIO", "FARMACIA"]) {
+      const c = r.porCategoria[categoria];
+      desglose.appendChild(lineaDato(
+        categoria.charAt(0) + categoria.slice(1).toLowerCase(),
+        // "sin cargos" y no el "sin llenar" de la ficha clínica: aquí un cero
+        // no es un campo que alguien olvidó llenar, es que esa consulta no
+        // generó ese tipo de gasto.
+        c.cantidad
+          ? c.cantidad + (c.cantidad === 1 ? " cargo · Q " : " cargos · Q ") +
+            c.montoNeto.toFixed(2)
+          : "sin cargos"));
+    }
+    caja.appendChild(desglose);
+
+    const total = document.createElement("p");
+    total.className = "ficha__total";
+    total.textContent = "Q " + r.totales.montoNeto.toFixed(2) + " a cobrar · la fundación " +
+      "descontó Q " + r.totales.descuento.toFixed(2) + " de Q " +
+      r.totales.montoBruto.toFixed(2) + " · saldo Q " + r.totales.saldo.toFixed(2);
+    caja.appendChild(total);
+
+    nodo.appendChild(caja);
+  }
+}
+
+
+async function pintarSolicitudes() {
+  const nodo = $("lista-solicitudes");
+  esqueleto(nodo, 2, true);
+  let datos;
+  try {
+    datos = await pedir(CONSULTAS + "/api/v1/solicitudes?pacienteId=" + estado.interno);
+  } catch (error) {
+    problema(nodo, error, "consultar las remisiones", pintarSolicitudes);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  estadoConsultas.solicitudes = datos.solicitudes;
+  $("consultas-conteo").textContent =
+    datos.total + (datos.total === 1 ? " remisión" : " remisiones");
+  nodo.textContent = "";
+
+  if (!datos.total) {
+    vacio(nodo, "Este interno no tiene remisiones",
+      SESION.rol === "MEDICO"
+        ? "Cuando lo remita a una especialidad, la solicitud aparecerá aquí y la fundación le asignará médico y hora."
+        : "El médico general todavía no lo ha remitido a ninguna especialidad.",
+      SESION.rol === "MEDICO"
+        ? { texto: "Remitir a especialidad", alPulsar: abrirRemision } : null);
+    return;
+  }
+
+  for (const s of datos.solicitudes) {
+    const ficha = document.createElement("div");
+    ficha.className = "ficha ficha--" + s.estado;
+
+    const cuerpo = document.createElement("div");
+    const titulo = document.createElement("p");
+    titulo.className = "ficha__titulo";
+    titulo.textContent = s.especialidadAsignada || s.especialidadSolicitada || "Sin especialidad";
+    const dato = document.createElement("p");
+    dato.className = "ficha__dato";
+    dato.textContent = s.id + " · remitida el " + fechaLegible(s.creadaEn) +
+      " por " + (s.solicitadoPor || "—");
+    const motivo = document.createElement("p");
+    motivo.className = "ficha__texto";
+    motivo.textContent = s.motivo;
+    cuerpo.append(titulo, dato, motivo);
+
+    if (s.estado === "AGENDADA") {
+      const cita = document.createElement("p");
+      cita.className = "ficha__dato";
+      cita.textContent = "cita: " + fechaLegible(s.agendadaPara) +
+        " con " + (s.medicoAsignado || "—");
+      cuerpo.appendChild(cita);
+    }
+    if (s.enfermeroAcompanante) {
+      const acompana = document.createElement("p");
+      acompana.className = "ficha__dato";
+      acompana.textContent = "acompaña: " + s.enfermeroAcompanante;
+      cuerpo.appendChild(acompana);
+    }
+
+    const acciones = document.createElement("div");
+    acciones.className = "ficha__acciones";
+    acciones.appendChild(marbeteEstado(s.estado));
+
+    if (s.estado === "AGENDADA" && SESION.rol === "MEDICO") {
+      const boton = document.createElement("button");
+      boton.className = "accion";
+      boton.type = "button";
+      boton.textContent = "Atender";
+      boton.addEventListener("click", () => atender(s));
+      acciones.appendChild(boton);
+    }
+
+    ficha.append(cuerpo, acciones);
+    nodo.appendChild(ficha);
+  }
+}
+
+async function pintarHistorial() {
+  const nodo = $("historial");
+  esqueleto(nodo, 3, true);
+  let datos;
+  try {
+    datos = await pedir(CONSULTAS + "/api/v1/visitas?pacienteId=" + estado.interno);
+  } catch (error) {
+    problema(nodo, error, "consultar el historial clínico", pintarHistorial);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  estadoConsultas.visitas = datos.visitas;
+  $("historial-conteo").textContent =
+    datos.total + (datos.total === 1 ? " consulta" : " consultas");
+  nodo.textContent = "";
+
+  if (!datos.total) {
+    vacio(nodo, "Este interno todavía no tiene consultas",
+      "El historial se llena cuando la fundación agenda una remisión y el especialista atiende. " +
+      "Cada consulta guarda su diagnóstico, sus exámenes y lo que se recetó.");
+    return;
+  }
+
+  datos.visitas.forEach((v) => nodo.appendChild(tarjetaVisita(v)));
+}
+
+// La ficha médica del interno: una tarjeta por consulta.
+function tarjetaVisita(v) {
+  const caja = document.createElement("article");
+  caja.className = "visita visita--" + v.estado;
+
+  const cabecera = document.createElement("header");
+  cabecera.className = "visita__cabecera";
+
+  const izquierda = document.createElement("div");
+  const fecha = document.createElement("p");
+  fecha.className = "visita__fecha";
+  fecha.textContent = fechaLegible(v.fechaVisita);
+  const medico = document.createElement("p");
+  medico.className = "visita__medico";
+  medico.textContent = v.medicoTratante || "Sin médico asignado";
+  const especialidad = document.createElement("p");
+  especialidad.className = "visita__especialidad";
+  especialidad.textContent = (v.especialidad || "sin especialidad") + " · " + v.id;
+  izquierda.append(fecha, medico, especialidad);
+
+  const derecha = document.createElement("div");
+  derecha.className = "ficha__acciones";
+  derecha.appendChild(marbeteEstado(v.estado));
+  if (v.estado === "ABIERTA" && SESION.rol === "MEDICO") {
+    const seguir = document.createElement("button");
+    seguir.className = "accion-sec";
+    seguir.type = "button";
+    seguir.textContent = "Continuar la consulta";
+    seguir.addEventListener("click", () => abrirVisita(v));
+    derecha.appendChild(seguir);
+  }
+
+  cabecera.append(izquierda, derecha);
+
+  const cuerpo = document.createElement("div");
+  cuerpo.className = "visita__cuerpo";
+  cuerpo.appendChild(campoFicha("Motivo de la consulta", v.motivo));
+  cuerpo.appendChild(campoFicha("Diagnóstico", v.diagnostico, "visita__diagnostico"));
+  cuerpo.appendChild(campoFicha("Observaciones", v.observaciones));
+
+  // Los exámenes solo llegan si el rol puede verlos; si no, el campo no viene
+  // en la respuesta y el bloque no se dibuja.
+  if (v.examenes) cuerpo.appendChild(bloqueExamenes(v.examenes));
+  if (v.indicaciones) cuerpo.appendChild(bloqueIndicaciones(v.indicaciones));
+
+  caja.append(cabecera, cuerpo);
+  return caja;
+}
+
+function bloqueExamenes(examenes) {
+  const bloque = document.createElement("div");
+  bloque.className = "visita__campo";
+  const rotulo = document.createElement("p");
+  rotulo.className = "visita__rotulo";
+  rotulo.textContent = "Exámenes (" + examenes.length + ")";
+  bloque.appendChild(rotulo);
+
+  if (!examenes.length) {
+    const p = document.createElement("p");
+    p.className = "visita__observaciones visita__sinllenar";
+    p.textContent = "no se indicó ninguno";
+    bloque.appendChild(p);
+    return bloque;
+  }
+
+  const lista = document.createElement("ul");
+  lista.className = "visita__lista";
+  for (const e of examenes) {
+    const li = document.createElement("li");
+    li.className = "visita__linea";
+    const nombre = document.createElement("span");
+    nombre.className = "visita__nombre";
+    nombre.textContent = e.nombre;
+    li.append(nombre, marbeteEstado(e.estado));
+    if (e.resultado) {
+      const res = document.createElement("p");
+      res.className = "visita__resultado";
+      res.textContent = e.resultado + "  ·  " + (e.registradoPor || "") +
+        (e.resultadoEn ? ", " + fechaLegible(e.resultadoEn) : "");
+      li.appendChild(res);
+    }
+    lista.appendChild(li);
+  }
+  bloque.appendChild(lista);
+  return bloque;
+}
+
+function bloqueIndicaciones(indicaciones) {
+  const bloque = document.createElement("div");
+  bloque.className = "visita__campo";
+  const rotulo = document.createElement("p");
+  rotulo.className = "visita__rotulo";
+  rotulo.textContent = "Medicamentos recetados (" + indicaciones.length + ")";
+  bloque.appendChild(rotulo);
+
+  if (!indicaciones.length) {
+    const p = document.createElement("p");
+    p.className = "visita__observaciones visita__sinllenar";
+    p.textContent = "no se recetó ninguno";
+    bloque.appendChild(p);
+    return bloque;
+  }
+
+  const lista = document.createElement("ul");
+  lista.className = "visita__lista";
+  for (const i of indicaciones) {
+    const li = document.createElement("li");
+    li.className = "visita__linea";
+    const izq = document.createElement("div");
+    const nombre = document.createElement("span");
+    nombre.className = "visita__nombre";
+    nombre.textContent = i.nombre;
+    const pauta = document.createElement("p");
+    pauta.className = "visita__pauta";
+    pauta.textContent = i.dosisMg + " mg cada " + i.cadaHoras + " h · " +
+      i.duracionDias + " días";
+    izq.append(nombre, pauta);
+    li.append(izq, marbeteEstado(
+      i.entregado ? "RESULTADO_LISTO" : "SOLICITADO",
+      i.entregado ? "entregado" : "por entregar"));
+    if (i.comoTomarlo) {
+      const como = document.createElement("p");
+      como.className = "visita__comotomarlo";
+      como.textContent = i.comoTomarlo;
+      li.appendChild(como);
+    }
+    lista.appendChild(li);
+  }
+  bloque.appendChild(lista);
+  return bloque;
+}
+
+// ---------------------------------------------------------------------
+// Remitir a especialidad · cajón lateral, como el recetario
+// ---------------------------------------------------------------------
+
+let soltarFocoRemision = null;
+let abrioLaRemision = null;
+
+function abrirRemision() {
+  abrioLaRemision = document.activeElement;
+  $("cajon-remision").hidden = false;
+  $("velo-remision").hidden = false;
+  soltarFocoRemision = atraparFoco($("cajon-remision"));
+  $("remision-motivo").focus();
+}
+
+function cerrarRemision() {
+  if ($("cajon-remision").hidden) return;
+  $("cajon-remision").hidden = true;
+  $("velo-remision").hidden = true;
+  if (soltarFocoRemision) { soltarFocoRemision(); soltarFocoRemision = null; }
+  if (abrioLaRemision && abrioLaRemision.focus && document.contains(abrioLaRemision)) {
+    abrioLaRemision.focus();
+  }
+  abrioLaRemision = null;
+}
+
+$("abrir-remision").addEventListener("click", abrirRemision);
+$("cerrar-remision").addEventListener("click", cerrarRemision);
+$("velo-remision").addEventListener("click", cerrarRemision);
+
+$("formulario-remision").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const boton = $("enviar-remision");
+  const interno = INTERNOS[estado.interno];
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Enviando…";
+  try {
+    const solicitud = await pedir(CONSULTAS + "/api/v1/solicitudes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pacienteId: estado.interno,
+        motivo: $("remision-motivo").value.trim(),
+        especialidadSolicitada: $("remision-especialidad").value.trim() || null,
+        enfermeroAcompanante: $("remision-enfermero").value.trim() || null
+      })
+    });
+    $("formulario-remision").reset();
+    cerrarRemision();
+    // El servicio devuelve el aviso que genero, si lo consiguio generar.
+    const enviado = solicitud.avisoFamiliar;
+    aviso("Remisión enviada",
+      solicitud.id + " · " + interno.nombre + " queda a la espera de que la fundación " +
+      "le asigne médico y hora." +
+      (enviado ? "  Se avisó a " + (enviado.destinatario || "la familia") +
+                 " (" + (ETIQUETA_ESTADO_CADENA[enviado.estado] || enviado.estado) + ")." : ""),
+      "ok");
+    await Promise.all([pintarSolicitudes(), pintarCorreos(), pintarExamenes()]);
+  } catch (error) {
+    avisarError(error, "enviar la remisión");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+// ---------------------------------------------------------------------
+// Atender · crear la visita y llenar la ficha
+// ---------------------------------------------------------------------
+
+// Crear una visita convierte la remisión en un acto clínico y la marca como
+// atendida: se confirma antes, igual que administrar un medicamento.
+async function atender(solicitud) {
+  const interno = INTERNOS[solicitud.pacienteId];
+  const seguro = await confirmar({
+    titulo: "¿Iniciar la consulta?",
+    textoSi: "Sí, atender",
+    datos: [
+      ["Interno", (interno ? interno.nombre : solicitud.pacienteId) + " · " + solicitud.pacienteId],
+      ["Especialidad", solicitud.especialidadAsignada || "—"],
+      ["Médico", solicitud.medicoAsignado || "—"],
+      ["Cita", fechaLegible(solicitud.agendadaPara)]
+    ],
+    aviso: "La remisión quedará como atendida y se abrirá la ficha de la consulta, " +
+           "firmada a su nombre."
+  });
+  if (!seguro) return;
+
+  try {
+    const visita = await pedir(CONSULTAS + "/api/v1/visitas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ solicitudId: solicitud.id })
+    });
+    aviso("Consulta iniciada",
+      visita.id + " · " + (visita.medicoTratante || "") + " · " + (visita.especialidad || ""),
+      "ok");
+    await pintarSolicitudes();
+    await pintarHistorial();
+    abrirVisita(visita);
+  } catch (error) {
+    avisarError(error, "iniciar la consulta");
+  }
+}
+
+let soltarFocoVisita = null;
+let abrioLaVisita = null;
+
+function abrirVisita(visita) {
+  estadoConsultas.visitaAbierta = visita;
+  abrioLaVisita = document.activeElement;
+
+  const interno = INTERNOS[visita.pacienteId];
+  $("visita-titulo").textContent = "Consulta · " + (visita.especialidad || "sin especialidad");
+  const cabecera = $("visita-cabecera");
+  cabecera.textContent = "";
+  cabecera.append(
+    campo("Interno", interno ? interno.nombre : visita.pacienteId),
+    campo("Fecha", fechaLegible(visita.fechaVisita)),
+    campo("Médico tratante", visita.medicoTratante || "—"),
+    campo("Motivo", visita.motivo || "—")
+  );
+
+  $("visita-diagnostico").value = visita.diagnostico || "";
+  $("visita-observaciones").value = visita.observaciones || "";
+  $("dictamen-indicacion").textContent = "";
+  pintarDetalleVisita(visita);
+
+  $("cajon-visita").hidden = false;
+  $("velo-visita").hidden = false;
+  soltarFocoVisita = atraparFoco($("cajon-visita"));
+  $("visita-diagnostico").focus();
+}
+
+function cerrarVisita() {
+  if ($("cajon-visita").hidden) return;
+  $("cajon-visita").hidden = true;
+  $("velo-visita").hidden = true;
+  estadoConsultas.visitaAbierta = null;
+  if (soltarFocoVisita) { soltarFocoVisita(); soltarFocoVisita = null; }
+  if (abrioLaVisita && abrioLaVisita.focus && document.contains(abrioLaVisita)) {
+    abrioLaVisita.focus();
+  }
+  abrioLaVisita = null;
+}
+
+$("cerrar-visita").addEventListener("click", cerrarVisita);
+$("velo-visita").addEventListener("click", cerrarVisita);
+
+$("abrir-ficha").addEventListener("click", abrirFicha);
+$("cerrar-ficha").addEventListener("click", cerrarFicha);
+$("velo-ficha").addEventListener("click", cerrarFicha);
+
+// Exámenes e indicaciones ya cargados, dentro del cajón de la consulta.
+function pintarDetalleVisita(visita) {
+  const ex = $("visita-examenes");
+  ex.textContent = "";
+  $("visita-examenes-conteo").textContent = (visita.examenes || []).length + " indicados";
+  if ((visita.examenes || []).length) {
+    ex.appendChild(bloqueExamenes(visita.examenes));
+  }
+
+  const ind = $("visita-indicaciones");
+  ind.textContent = "";
+  $("visita-indicaciones-conteo").textContent = (visita.indicaciones || []).length + " recetados";
+  if ((visita.indicaciones || []).length) {
+    ind.appendChild(bloqueIndicaciones(visita.indicaciones));
+  }
+}
+
+async function refrescarVisitaAbierta() {
+  const abierta = estadoConsultas.visitaAbierta;
+  if (!abierta) return;
+  try {
+    const visita = await pedir(CONSULTAS + "/api/v1/visitas/" + abierta.id);
+    estadoConsultas.visitaAbierta = visita;
+    pintarDetalleVisita(visita);
+  } catch (_) { /* el aviso del error ya se mostró en la acción que falló */ }
+  await pintarHistorial();
+}
+
+$("formulario-visita").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const visita = estadoConsultas.visitaAbierta;
+  if (!visita) return;
+  const boton = $("guardar-visita");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Guardando…";
+  try {
+    await pedir(CONSULTAS + "/api/v1/visitas/" + visita.id, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        diagnostico: $("visita-diagnostico").value.trim(),
+        observaciones: $("visita-observaciones").value.trim()
+      })
+    });
+    aviso("Ficha guardada", "El diagnóstico y las observaciones quedaron en el historial.", "ok");
+    await refrescarVisitaAbierta();
+  } catch (error) {
+    avisarError(error, "guardar la ficha de la consulta");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+$("formulario-examen").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const visita = estadoConsultas.visitaAbierta;
+  if (!visita) return;
+  const boton = $("agregar-examen");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Agregando…";
+  try {
+    const examen = await pedir(CONSULTAS + "/api/v1/visitas/" + visita.id + "/examenes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nombre: $("examen-nombre").value.trim() })
+    });
+    $("formulario-examen").reset();
+    // El servicio avisa si no pudo crear el cargo: el examen se guarda igual.
+    if (examen.advertencia) {
+      aviso("Examen indicado, pero sin cobro", examen.advertencia, "aviso");
+    } else {
+      aviso("Examen indicado",
+        examen.nombre + " · queda esperando el resultado del laboratorio.", "ok");
+    }
+    await refrescarVisitaAbierta();
+  } catch (error) {
+    avisarError(error, "indicar el examen");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+$("formulario-indicacion").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const visita = estadoConsultas.visitaAbierta;
+  if (!visita) return;
+  const boton = $("agregar-indicacion");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Consultando a ms-vigia…";
+  esqueleto($("dictamen-indicacion"), 3);
+  try {
+    const indicacion = await pedir(CONSULTAS + "/api/v1/visitas/" + visita.id + "/indicaciones", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        principioActivo: $("indicacion-principio").value,
+        dosisMg: parseFloat($("indicacion-dosis").value),
+        cadaHoras: parseFloat($("indicacion-cada").value),
+        duracionDias: parseInt($("indicacion-dias").value, 10),
+        comoTomarlo: $("indicacion-como").value.trim() || null
+      })
+    });
+    // Aprobada: se pinta el dictamen con el mismo tratamiento del recetario.
+    pintarDictamen({
+      veredicto: indicacion.veredictoVigia,
+      folio: indicacion.folioValidacion,
+      puntajeRiesgo: 0,
+      resumen: "Receta guardada en la ficha de la consulta.",
+      hallazgos: indicacion.hallazgos || []
+    }, $("dictamen-indicacion"), false);
+    aviso("Medicamento recetado",
+      indicacion.nombre + " " + indicacion.dosisMg + " mg · queda pendiente de entrega en farmacia.",
+      "ok");
+    await refrescarVisitaAbierta();
+  } catch (error) {
+    // Bloqueado por farmacovigilancia: el dictamen completo, igual que en el
+    // recetario de la jornada. No es un error del sistema, es una decisión
+    // clínica y se muestra como tal.
+    if (error.estado === 409 && error.cuerpo && error.cuerpo.dictamen) {
+      pintarDictamen(error.cuerpo.dictamen, $("dictamen-indicacion"), false);
+      aviso("ms-vigia bloqueó la receta",
+        "No se guardó nada. El dictamen está debajo del formulario.", "error");
+    } else {
+      $("dictamen-indicacion").textContent = "";
+      avisarError(error, "recetar el medicamento");
+    }
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+// ---------------------------------------------------------------------
+// Vista de la FUNDACION · bandeja de remisiones por agendar
+// ---------------------------------------------------------------------
+
+async function pintarAgenda() {
+  const nodo = $("bandeja-agenda");
+  esqueleto(nodo, 3, true);
+  let datos;
+  try {
+    datos = await pedir(CONSULTAS + "/api/v1/solicitudes?estado=PENDIENTE");
+  } catch (error) {
+    problema(nodo, error, "consultar la bandeja de remisiones", pintarAgenda);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  $("agenda-conteo").textContent =
+    datos.total + (datos.total === 1 ? " remisión" : " remisiones");
+  nodo.textContent = "";
+
+  if (!datos.total) {
+    vacio(nodo, "No hay remisiones esperando cita",
+      "Cuando un médico general remita a un interno a una especialidad, la solicitud " +
+      "aparecerá aquí para asignarle médico, especialidad y hora.");
+    return;
+  }
+
+  for (const s of datos.solicitudes) {
+    const ficha = document.createElement("div");
+    ficha.className = "ficha ficha--PENDIENTE";
+
+    const cuerpo = document.createElement("div");
+    const titulo = document.createElement("p");
+    titulo.className = "ficha__titulo";
+    titulo.textContent = nombreDeInterno(s.pacienteId);
+    const dato = document.createElement("p");
+    dato.className = "ficha__dato";
+    dato.textContent = s.pacienteId + " · " + s.id + " · remitida el " +
+      fechaLegible(s.creadaEn) + " por " + (s.solicitadoPor || "—");
+    const especialidad = document.createElement("p");
+    especialidad.className = "ficha__dato";
+    especialidad.textContent = "especialidad pedida: " +
+      (s.especialidadSolicitada || "no indicada");
+    const motivo = document.createElement("p");
+    motivo.className = "ficha__texto";
+    motivo.textContent = s.motivo;
+    cuerpo.append(titulo, dato, especialidad, motivo);
+    if (s.enfermeroAcompanante) {
+      const acompana = document.createElement("p");
+      acompana.className = "ficha__dato";
+      acompana.textContent = "acompaña: " + s.enfermeroAcompanante;
+      cuerpo.appendChild(acompana);
+    }
+
+    const acciones = document.createElement("div");
+    acciones.className = "ficha__acciones";
+    acciones.appendChild(marbeteEstado(s.estado));
+    const abrir = document.createElement("button");
+    abrir.className = "accion";
+    abrir.type = "button";
+    abrir.textContent = "Asignar cita";
+    acciones.appendChild(abrir);
+
+    const formulario = formularioAgendar(s);
+    formulario.hidden = true;
+    abrir.addEventListener("click", () => {
+      formulario.hidden = !formulario.hidden;
+      abrir.textContent = formulario.hidden ? "Asignar cita" : "Cancelar";
+      if (!formulario.hidden) formulario.querySelector("input").focus();
+    });
+
+    ficha.append(cuerpo, acciones, formulario);
+    nodo.appendChild(ficha);
+  }
+}
+
+function formularioAgendar(solicitud) {
+  const formulario = document.createElement("form");
+  formulario.className = "formulario ficha__formulario";
+
+  const medico = campoDeTexto("Médico asignado", "text",
+    "Dra. Ingrid Barrios", true, "campo--ancho");
+  const especialidad = campoDeTexto("Especialidad", "text",
+    solicitud.especialidadSolicitada || "Cardiología", true, "campo--ancho");
+  if (solicitud.especialidadSolicitada) {
+    especialidad.querySelector("input").value = solicitud.especialidadSolicitada;
+  }
+  const cuando = campoDeTexto("Fecha y hora", "datetime-local", "", true, "campo--ancho");
+
+  const boton = document.createElement("button");
+  boton.className = "accion accion--ancha";
+  boton.type = "submit";
+  boton.textContent = "Confirmar la cita";
+
+  formulario.append(medico, especialidad, cuando, boton);
+
+  formulario.addEventListener("submit", async (evento) => {
+    evento.preventDefault();
+    boton.disabled = true;
+    const original = boton.textContent;
+    boton.textContent = "Agendando…";
+    try {
+      const actualizada = await pedir(
+        CONSULTAS + "/api/v1/solicitudes/" + solicitud.id + "/agendar", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            medicoAsignado: medico.querySelector("input").value.trim(),
+            especialidadAsignada: especialidad.querySelector("input").value.trim(),
+            agendadaPara: cuando.querySelector("input").value
+          })
+        });
+      aviso("Cita asignada",
+        nombreDeInterno(actualizada.pacienteId) + " · " + actualizada.especialidadAsignada +
+        " con " + actualizada.medicoAsignado + " el " + fechaLegible(actualizada.agendadaPara),
+        "ok");
+      await pintarAgenda();
+    } catch (error) {
+      avisarError(error, "asignar la cita");
+    } finally {
+      boton.disabled = false;
+      boton.textContent = original;
+    }
+  });
+
+  return formulario;
+}
+
+// Campo suelto, con la misma estructura que los del marcado.
+function campoDeTexto(rotulo, tipo, marcador, requerido, clase) {
+  const caja = document.createElement("div");
+  caja.className = "campo" + (clase ? " " + clase : "");
+  const id = "c-" + Math.random().toString(36).slice(2, 9);
+  const etiqueta = document.createElement("label");
+  etiqueta.setAttribute("for", id);
+  etiqueta.textContent = rotulo;
+  const entrada = document.createElement("input");
+  entrada.id = id;
+  entrada.type = tipo;
+  if (marcador) entrada.placeholder = marcador;
+  if (requerido) entrada.required = true;
+  caja.append(etiqueta, entrada);
+  return caja;
+}
+
+// ---------------------------------------------------------------------
+// Vista del LABORATORIO · exámenes esperando resultado
+// ---------------------------------------------------------------------
+
+async function pintarLaboratorio() {
+  const nodo = $("bandeja-laboratorio");
+  esqueleto(nodo, 3, true);
+  let examenes, visitas;
+  try {
+    // El motivo de la consulta vive en la visita, no en el examen: se piden
+    // las dos y se cruzan aquí. Laboratorio puede leer ambas cosas.
+    examenes = await pedir(CONSULTAS + "/api/v1/examenes?estado=SOLICITADO");
+    visitas = await pedir(CONSULTAS + "/api/v1/visitas");
+  } catch (error) {
+    problema(nodo, error, "consultar los exámenes solicitados", pintarLaboratorio);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  const motivoPorVisita = {};
+  visitas.visitas.forEach((v) => (motivoPorVisita[v.id] = v));
+
+  $("laboratorio-conteo").textContent =
+    examenes.total + (examenes.total === 1 ? " examen" : " exámenes");
+  nodo.textContent = "";
+
+  if (!examenes.total) {
+    vacio(nodo, "No hay exámenes esperando resultado",
+      "Cuando un especialista indique un examen durante una consulta, aparecerá aquí " +
+      "para que el laboratorio cargue el resultado.");
+    return;
+  }
+
+  for (const e of examenes.examenes) {
+    const visita = motivoPorVisita[e.visitaId] || {};
+    const ficha = document.createElement("div");
+    ficha.className = "ficha ficha--SOLICITADO";
+
+    const cuerpo = document.createElement("div");
+    const titulo = document.createElement("p");
+    titulo.className = "ficha__titulo";
+    titulo.textContent = e.nombre;
+    const dato = document.createElement("p");
+    dato.className = "ficha__dato";
+    dato.textContent = "interno " + e.pacienteId + " · " + e.id +
+      " · indicado el " + fechaLegible(e.indicadoEn);
+    const motivo = document.createElement("p");
+    motivo.className = "ficha__texto";
+    motivo.textContent = "Motivo de la consulta: " + (visita.motivo || "no disponible");
+    cuerpo.append(titulo, dato, motivo);
+    if (visita.medicoTratante) {
+      const medico = document.createElement("p");
+      medico.className = "ficha__dato";
+      medico.textContent = "lo indicó: " + visita.medicoTratante +
+        (visita.especialidad ? " (" + visita.especialidad + ")" : "");
+      cuerpo.appendChild(medico);
+    }
+
+    const acciones = document.createElement("div");
+    acciones.className = "ficha__acciones";
+    acciones.appendChild(marbeteEstado(e.estado));
+
+    const formulario = document.createElement("form");
+    formulario.className = "formulario ficha__formulario";
+    const resultado = campoDeTexto("Resultado del examen", "text",
+      "Ej. INR 4.8 (rango terapéutico 2.0-3.0). Prolongado.", true, "campo--ancho");
+    const boton = document.createElement("button");
+    boton.className = "accion accion--ancha";
+    boton.type = "submit";
+    boton.textContent = "Cargar el resultado";
+    formulario.append(resultado, boton);
+
+    formulario.addEventListener("submit", async (evento) => {
+      evento.preventDefault();
+      boton.disabled = true;
+      const original = boton.textContent;
+      boton.textContent = "Cargando…";
+      try {
+        await pedir(CONSULTAS + "/api/v1/examenes/" + e.id + "/resultado", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resultado: resultado.querySelector("input").value.trim() })
+        });
+        aviso("Resultado cargado",
+          e.nombre + " · interno " + e.pacienteId + " · ya está en la ficha médica.", "ok");
+        await pintarLaboratorio();
+      } catch (error) {
+        avisarError(error, "cargar el resultado");
+      } finally {
+        boton.disabled = false;
+        boton.textContent = original;
+      }
+    });
+
+    ficha.append(cuerpo, acciones, formulario);
+    nodo.appendChild(ficha);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Vista de la FARMACIA · medicamentos por entregar
+// ---------------------------------------------------------------------
+
+async function pintarFarmacia() {
+  const nodo = $("bandeja-farmacia");
+  esqueleto(nodo, 3, true);
+  let datos;
+  try {
+    // Farmacia lee las visitas con sus indicaciones anidadas; los exámenes no
+    // le llegan. De ahí se filtra lo que todavía no se entregó.
+    datos = await pedir(CONSULTAS + "/api/v1/visitas");
+  } catch (error) {
+    problema(nodo, error, "consultar los medicamentos por entregar", pintarFarmacia);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  const pendientes = [];
+  datos.visitas.forEach((v) => {
+    (v.indicaciones || []).forEach((i) => {
+      if (!i.entregado) pendientes.push({ indicacion: i, visita: v });
+    });
+  });
+
+  $("farmacia-conteo").textContent =
+    pendientes.length + (pendientes.length === 1 ? " medicamento" : " medicamentos");
+  nodo.textContent = "";
+
+  if (!pendientes.length) {
+    vacio(nodo, "No hay medicamentos por entregar",
+      "Cuando un especialista recete algo y ms-vigia lo apruebe, aparecerá aquí para " +
+      "entregárselo al interno.");
+    return;
+  }
+
+  for (const { indicacion, visita } of pendientes) {
+    const ficha = document.createElement("div");
+    ficha.className = "ficha ficha--SOLICITADO";
+
+    const cuerpo = document.createElement("div");
+    const titulo = document.createElement("p");
+    titulo.className = "ficha__titulo";
+    titulo.textContent = indicacion.nombre + " · " + indicacion.dosisMg + " mg";
+    const pauta = document.createElement("p");
+    pauta.className = "ficha__dato";
+    pauta.textContent = "cada " + indicacion.cadaHoras + " h durante " +
+      indicacion.duracionDias + " días · " + indicacion.id;
+    const interno = document.createElement("p");
+    interno.className = "ficha__dato";
+    interno.textContent = "interno " + visita.pacienteId +
+      " · recetado por " + (visita.medicoTratante || "—") +
+      " el " + fechaLegible(visita.fechaVisita);
+    cuerpo.append(titulo, pauta, interno);
+    if (indicacion.comoTomarlo) {
+      const como = document.createElement("p");
+      como.className = "ficha__texto";
+      como.textContent = "Cómo tomarlo: " + indicacion.comoTomarlo;
+      cuerpo.appendChild(como);
+    }
+
+    const acciones = document.createElement("div");
+    acciones.className = "ficha__acciones";
+    acciones.appendChild(marbeteEstado("SOLICITADO", "por entregar"));
+    const boton = document.createElement("button");
+    boton.className = "accion";
+    boton.type = "button";
+    boton.textContent = "Entregar";
+    boton.addEventListener("click", () => entregar(indicacion, visita));
+    acciones.appendChild(boton);
+
+    ficha.append(cuerpo, acciones);
+    nodo.appendChild(ficha);
+  }
+}
+
+// Entregar un medicamento le carga el costo a la familia del interno y no se
+// puede deshacer desde la estación: se confirma antes.
+async function entregar(indicacion, visita) {
+  const seguro = await confirmar({
+    titulo: "¿Entregar este medicamento?",
+    textoSi: "Sí, entregar",
+    datos: [
+      ["Interno", visita.pacienteId],
+      ["Medicamento", indicacion.nombre],
+      ["Dosis", indicacion.dosisMg + " mg cada " + indicacion.cadaHoras + " h"],
+      ["Duración", indicacion.duracionDias + " días"]
+    ],
+    aviso: "Queda firmado a su nombre y se le carga el costo a la cuenta del interno. " +
+           "Una entrega no se registra dos veces."
+  });
+  if (!seguro) return;
+
+  try {
+    const entregada = await pedir(
+      CONSULTAS + "/api/v1/indicaciones/" + indicacion.id + "/entregar", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+    if (entregada.advertencia) {
+      aviso("Entregado, pero sin cobro", entregada.advertencia, "aviso");
+    } else {
+      aviso("Medicamento entregado",
+        indicacion.nombre + " · interno " + visita.pacienteId +
+        " · firma " + entregada.entregadoPor, "ok");
+    }
+    await pintarFarmacia();
+  } catch (error) {
+    avisarError(error, "entregar el medicamento");
+  }
+}
+
 // ---------------------------------------------------------------------
 // Arranque
 // ---------------------------------------------------------------------
@@ -1593,9 +3016,10 @@ $("formulario-gasto").addEventListener("submit", (evento) => {
 let relojBarra;
 
 async function iniciarApp() {
-  const clinico = SESION.rol !== "ADMINISTRACION";
-  const hayPadron = await cargarInternos();
-  if (clinico) cargarVademecum();
+  // Fundacion, laboratorio y farmacia no leen ms-pastillero: pedirles el
+  // padron solo produciria un 403 y un bloque de error en pantalla.
+  const hayPadron = tienePadron() ? await cargarInternos() : true;
+  if (SESION.rol === "MEDICO" || SESION.rol === "ENFERMERIA") cargarVademecum();
 
   if (hayPadron) {
     // Se respeta a donde queria ir la persona antes del acceso. Si no

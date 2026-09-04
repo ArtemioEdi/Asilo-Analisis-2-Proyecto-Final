@@ -30,6 +30,20 @@ CREATE TABLE IF NOT EXISTS cargos (
     estado           VARCHAR(16)    NOT NULL DEFAULT 'PENDIENTE',
     registrado_por   VARCHAR(120),
     creado_en        DATETIME       NOT NULL,
+    -- La visita medica que origino el cargo, cuando lo origino una. Es lo que
+    -- permite responder "cuanto costo esta consulta" sumando el laboratorio y
+    -- la farmacia que salieron de ella.
+    --
+    -- Se guarda como texto suelto y NO como clave foranea a proposito: las
+    -- visitas viven en asilo_consultas, que es la base de OTRO microservicio.
+    -- usr_caja no tiene permiso para leerla, y asi debe seguir siendo. Un
+    -- microservicio no pone claves foraneas contra la base de otro; guarda la
+    -- referencia y confia en quien se la manda.
+    --
+    -- Queda NULA en los cargos que no nacen de una visita: la cuota mensual
+    -- de estadia, las donaciones en especie, cualquier cargo suelto que
+    -- administracion registre a mano.
+    visita_id        VARCHAR(24)    NULL,
 
     CONSTRAINT pk_cargos PRIMARY KEY (id),
     CONSTRAINT ck_cargos_categoria
@@ -41,7 +55,8 @@ CREATE TABLE IF NOT EXISTS cargos (
         CHECK (monto_bruto >= 0 AND monto_neto >= 0 AND monto_pagado >= 0),
 
     INDEX idx_cargos_paciente (paciente_id, creado_en),
-    INDEX idx_cargos_categoria (categoria)
+    INDEX idx_cargos_categoria (categoria),
+    INDEX idx_cargos_visita (visita_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

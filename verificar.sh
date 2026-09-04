@@ -3,7 +3,7 @@
 #  Asilo de Ancianos "Cabeza de Algodon"
 #  verificar.sh · Revision de seguridad, base de datos y estado del repositorio
 # ---------------------------------------------------------------------------
-#  QUE VERIFICA (54 comprobaciones, 17 bloques)
+#  QUE VERIFICA (81 comprobaciones, 19 bloques)
 #
 #    0-1  Que el stack este arriba y que ms-vigia, ms-pastillero y ms-caja NO
 #         publiquen puerto al equipo anfitrion: solo el 8080 y el 8090.
@@ -28,6 +28,12 @@
 #    14   Corre pruebas.sh entera y exige que pase.
 #    16   Aislamiento entre bases: que usr_caja NO pueda leer asilo_vigia.
 #    17   Que los nombres con tildes sobrevivan el viaje a MySQL y de vuelta.
+#    18   La matriz de los tres roles nuevos —fundacion, laboratorio y
+#         farmacia—: lo que si le toca a cada uno, que ninguno alcance el
+#         padron, la farmacovigilancia ni la caja, y que dentro de la cadena
+#         clinica el laboratorio no lea recetas ni la farmacia resultados.
+#    19   Que usr_consultas no pueda leer asilo_vigia, asilo_pastillero ni
+#         asilo_caja, ni alterar su propio esquema.
 #    15   El limite de intentos de login. Va al final a proposito: deja al
 #         usuario 'medico' bloqueado unos minutos.
 #
@@ -334,6 +340,128 @@ fi
 
 # El limite de intentos va al final a proposito: deja al usuario bloqueado
 # unos minutos y arruinaria las pruebas que vienen despues.
+
+titulo "18. Matriz de acceso de los tres roles nuevos"
+# La fundacion agenda, el laboratorio carga resultados y la farmacia entrega.
+# Ninguno de los tres tiene nada que hacer en el padron de internos, ni en la
+# farmacovigilancia, ni en la caja del asilo: son roles externos al asilo, de
+# la fundacion que presta el servicio. Cada linea de este bloque es una puerta
+# que se probo y quedo cerrada.
+TOK_FUN=$(login fundacion fundacion2026)
+TOK_LAB=$(login laboratorio laboratorio2026)
+TOK_FAR=$(login farmacia farmacia2026)
+
+if [ -z "$TOK_FUN" ] || [ -z "$TOK_LAB" ] || [ -z "$TOK_FAR" ]; then
+  rojo "alguno de los tres roles nuevos no pudo iniciar sesion"
+else
+  verde "los tres roles nuevos inician sesion"
+fi
+
+# --- Lo que SI le toca a cada uno ------------------------------------------
+espera "fundacion lee las remisiones por agendar"  200 \
+  "$(codigo GET "$GW/consultas/api/v1/solicitudes?estado=PENDIENTE" "$TOK_FUN")"
+espera "laboratorio lee los examenes"              200 \
+  "$(codigo GET "$GW/consultas/api/v1/examenes" "$TOK_LAB")"
+espera "farmacia lee las visitas para ver que entregar" 200 \
+  "$(codigo GET "$GW/consultas/api/v1/visitas" "$TOK_FAR")"
+
+# --- Ninguno de los tres toca los otros microservicios ----------------------
+for par in "fundacion:$TOK_FUN" "laboratorio:$TOK_LAB" "farmacia:$TOK_FAR"; do
+  ROL=${par%%:*}; TK=${par#*:}
+  espera "$ROL NO lee /pastillero (el padron del asilo)" 403 \
+    "$(codigo GET "$GW/pastillero/api/v1/internos" "$TK")"
+  espera "$ROL NO lee /vigia (la farmacovigilancia)"     403 \
+    "$(codigo GET "$GW/vigia/api/v1/vademecum" "$TK")"
+  espera "$ROL NO lee /caja (el dinero del asilo)"       403 \
+    "$(codigo GET "$GW/caja/api/v1/resumen" "$TK")"
+done
+
+# --- Y dentro de /consultas, cada uno solo lo suyo --------------------------
+# Una visita trae la ficha entera: examenes e indicaciones. Sin el filtro por
+# bloque, el laboratorio leeria las recetas y la farmacia los resultados de
+# laboratorio con solo pedir la visita. Estas dos lineas prueban que no.
+espera "laboratorio NO lee las indicaciones (recetas)"  403 \
+  "$(codigo GET "$GW/consultas/api/v1/indicaciones" "$TOK_LAB")"
+espera "farmacia NO lee los examenes (resultados de laboratorio)" 403 \
+  "$(codigo GET "$GW/consultas/api/v1/examenes" "$TOK_FAR")"
+espera "fundacion NO lee la ficha medica completa"      403 \
+  "$(codigo GET "$GW/consultas/api/v1/reportes/ficha?pacienteId=ASL-014" "$TOK_FUN")"
+espera "laboratorio NO lee la ficha medica completa"    403 \
+  "$(codigo GET "$GW/consultas/api/v1/reportes/ficha?pacienteId=ASL-014" "$TOK_LAB")"
+espera "farmacia NO lee la bitacora de avisos a la familia" 403 \
+  "$(codigo GET "$GW/consultas/api/v1/correos" "$TOK_FAR")"
+
+# --- Ni pueden hacer el paso del otro ---------------------------------------
+espera "laboratorio NO puede recetar"        403 \
+  "$(codigo POST "$GW/consultas/api/v1/visitas/VM-INVENTADA/indicaciones" "$TOK_LAB" \
+     '{"principioActivo":"paracetamol","dosisMg":500,"cadaHoras":8,"duracionDias":3}')"
+espera "farmacia NO puede indicar examenes"  403 \
+  "$(codigo POST "$GW/consultas/api/v1/visitas/VM-INVENTADA/examenes" "$TOK_FAR" \
+     '{"nombre":"El que yo quiera"}')"
+espera "fundacion NO puede atender consultas" 403 \
+  "$(codigo POST "$GW/consultas/api/v1/visitas" "$TOK_FUN" '{"solicitudId":"SOL-INVENTADA"}')"
+
+# --- Defensa en profundidad: sin el gateway adelante ------------------------
+# Que el gateway diga 403 no basta. Si alguien alcanza a ms-consultas desde la
+# red interna, el propio servicio tiene que negarse: la misma matriz esta
+# escrita dos veces a proposito.
+if command -v docker >/dev/null 2>&1; then
+  R=$(docker exec ms-gateway sh -c \
+      "wget -qS -O /dev/null --header='Authorization: Bearer $TOK_LAB' \
+       'http://ms-consultas:8084/api/v1/reportes/ficha?pacienteId=ASL-014' 2>&1 \
+       | grep -o 'HTTP/1.1 [0-9]*' | head -1 | awk '{print \$2}'" 2>/dev/null | tr -d '\r')
+  espera "saltandose el gateway, ms-consultas rechaza al laboratorio" 403 "$R"
+else
+  aviso "docker no disponible, salteo esta prueba"
+fi
+
+titulo "19. usr_consultas no alcanza las bases de los otros microservicios"
+# ms-consultas es el que mas conversa con los demas: le pide la ficha al
+# padron, el dictamen a la farmacovigilancia y el cobro a la caja. Todo eso
+# por HTTP y con token. En la base NO tiene nada: si pudiera leer asilo_caja
+# se saltaria la matriz de acceso de ms-caja por debajo, sin pasar por su
+# codigo. Cada linea de aqui es una base que el motor le niega.
+CLAVE_CONSULTAS=${BD_CLAVE_CONSULTAS:-$(grep -E '^BD_CLAVE_CONSULTAS=' .env 2>/dev/null | cut -d= -f2-)}
+if [ -z "$CLAVE_CONSULTAS" ]; then
+  rojo "no encontre BD_CLAVE_CONSULTAS en .env; no puedo probar el aislamiento"
+else
+  # base:tabla — se nombra una tabla real de cada base, porque un error de
+  # "tabla inexistente" no probaria nada sobre los permisos.
+  for par in asilo_vigia:validaciones asilo_pastillero:internos asilo_caja:cargos; do
+    BASE=${par%%:*}; TABLA=${par#*:}
+    FUGA=$(docker compose exec -T bd-asilo mysql -u usr_consultas -p"$CLAVE_CONSULTAS" \
+           -e "SELECT COUNT(*) FROM $BASE.$TABLA;" 2>&1)
+    if printf "%s" "$FUGA" | grep -qiE "denied|Unknown database"; then
+      verde "usr_consultas NO puede leer $BASE (el motor le niega el permiso)"
+    else
+      rojo "usr_consultas pudo leer $BASE — revisa los GRANT de sql/01"
+    fi
+  done
+
+  # Control positivo: sobre su propia base si tiene que poder, porque si no
+  # las tres lineas de arriba pasarian tambien con una clave equivocada.
+  PROPIA=$(docker compose exec -T bd-asilo mysql -u usr_consultas -p"$CLAVE_CONSULTAS" \
+           -e "SELECT COUNT(*) FROM asilo_consultas.solicitudes;" 2>&1)
+  if printf "%s" "$PROPIA" | grep -qi "denied"; then
+    rojo "usr_consultas tampoco puede leer su propia base asilo_consultas"
+  else
+    verde "usr_consultas SI puede leer su propia base asilo_consultas"
+  fi
+
+  # Y tampoco puede cambiar la forma de sus tablas: el esquema lo define
+  # sql/, no el servicio en caliente.
+  DDL=$(docker compose exec -T bd-asilo mysql -u usr_consultas -p"$CLAVE_CONSULTAS" \
+        -e "ALTER TABLE asilo_consultas.solicitudes ADD COLUMN colada_por_la_prueba INT NULL;" 2>&1)
+  if printf "%s" "$DDL" | grep -qi "denied"; then
+    verde "usr_consultas NO puede alterar su propio esquema (no tiene ALTER)"
+  else
+    rojo "usr_consultas pudo hacer ALTER TABLE — revisa los GRANT de sql/01"
+    docker compose exec -T bd-asilo mysql -u root \
+      -p"${BD_CLAVE_ROOT:-$(grep -E '^BD_CLAVE_ROOT=' .env | cut -d= -f2-)}" \
+      -e "ALTER TABLE asilo_consultas.solicitudes DROP COLUMN colada_por_la_prueba;" 2>/dev/null
+  fi
+fi
+
 titulo "15. Limite de intentos de login (deja 'medico' bloqueado un rato)"
 ULT=""
 for i in 1 2 3 4 5 6 7; do
