@@ -1,18 +1,8 @@
-/* =====================================================================
-   Estacion de enfermeria · Asilo Cabeza de Algodon
-   ---------------------------------------------------------------------
-   Quien usa esto esta de pie, apurado, en un turno de noche y frente a
-   un monitor que puede ser viejo. Las tres prioridades del diseño, en
-   este orden:
+/* Estacion de enfermeria · Asilo Cabeza de Algodon.
 
-     1. La hora y el estado de cada toma se leen de lejos.
-     2. "pendiente" y "vencida" no se pueden confundir.
-     3. El veredicto de ms-vigia domina la pantalla cuando aparece.
-
-   El estado NUNCA se codifica solo con color: cada uno lleva ademas una
-   forma y una palabra, porque una parte de la poblacion no distingue el
-   rojo del verde y porque en un monitor gastado los colores mienten.
-   ===================================================================== */
+   El estado NUNCA se codifica solo con color: cada uno lleva ademas una forma
+   y una palabra, porque una parte de la poblacion no distingue el rojo del
+   verde y porque en un monitor gastado los colores mienten. */
 
 :root {
   /* Paleta de seis. Todos los contrastes medidos contra --papel. */
@@ -31,10 +21,8 @@
   --linea:         #d7d5cf;
   --linea-suave:   #e7e5df;
 
-  /* Space Grotesk para lo que se lee; JetBrains Mono para lo que se
-     compara. Las horas en monoespaciada se alinean en columna y se
-     escanean de un vistazo, igual que en una hoja de administracion
-     de medicamentos en papel. */
+  /* Monoespaciada para lo que se compara: las horas se alinean en columna y
+     se escanean de un vistazo. */
   --titular: "Space Grotesk", system-ui, -apple-system, sans-serif;
   --dato:    "JetBrains Mono", ui-monospace, "Courier New", monospace;
 
@@ -44,17 +32,13 @@
 
 * { box-sizing: border-box; }
 
-/* El atributo hidden gana SIEMPRE. Sin esto, cualquier regla de clase que
-   traiga su propio display (.acceso es flex, .armazon es grid, .superior es
-   flex) le pasa por encima al display:none del navegador y el elemento
-   sigue ocupando la pantalla aunque este marcado como oculto. Con la
-   pantalla de acceso eso significaba que el formulario, ya invisible,
-   seguia tapando la aplicacion entera y se comia todos los clics. */
+/* hidden gana SIEMPRE: cualquier clase con display propio (.acceso es flex,
+   .armazon es grid) le pasa por encima al display:none del navegador, y el
+   elemento sigue tapando la pantalla y comiendose los clics. */
 [hidden] { display: none !important; }
 
-/* La barra superior es fija: todo salto de desplazamiento —anclas,
-   scrollIntoView, la fila resaltada tras registrar una toma— tiene que
-   dejar libre esa franja, o el contenido al que se salta queda debajo. */
+/* La barra superior es fija: todo salto de desplazamiento tiene que dejarle
+   libre esa franja o el contenido queda debajo. */
 html { scroll-behavior: smooth; scroll-padding-top: 76px; }
 
 body {
@@ -71,8 +55,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 700; letter-spacing: -.01em; }
 p { margin: 0; }
 button { font-family: inherit; }
 
-/* El foco se ve siempre, en todo lo enfocable. Doble anillo para que
-   destaque tanto sobre papel como sobre las tarjetas blancas. */
+/* Doble anillo: destaca tanto sobre el fondo hueso como sobre las tarjetas. */
 :focus-visible {
   outline: 3px solid var(--cobalto);
   outline-offset: 2px;
@@ -95,9 +78,7 @@ button { font-family: inherit; }
   margin-bottom: 4px;
 }
 
-/* ---------------------------------------------------------------------
-   Marbete de rol
---------------------------------------------------------------------- */
+/* Marbete de rol */
 .marbete {
   display: inline-block;
   font-family: var(--dato);
@@ -111,9 +92,7 @@ button { font-family: inherit; }
   white-space: nowrap;
 }
 
-/* =====================================================================
-   Acceso · pantalla completa, por encima de todo
-   ===================================================================== */
+/* Acceso · pantalla completa, por encima de todo */
 .acceso {
   position: fixed;
   inset: 0;
@@ -155,9 +134,7 @@ button { font-family: inherit; }
 }
 .acceso__ayuda b { font-family: var(--dato); font-weight: 500; color: var(--tinta); }
 
-/* =====================================================================
-   Campos de formulario
-   ===================================================================== */
+/* Campos de formulario */
 .campo { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
 .campo label {
   font-family: var(--dato);
@@ -188,9 +165,7 @@ button { font-family: inherit; }
 }
 .campo__error:empty { display: none; }
 
-/* =====================================================================
-   Acciones
-   ===================================================================== */
+/* Acciones */
 .accion {
   font: 500 14.5px var(--titular);
   background: var(--cobalto);
@@ -228,9 +203,7 @@ button { font-family: inherit; }
 }
 .cerrar:hover { color: var(--tinta); }
 
-/* =====================================================================
-   Barra superior fija
-   ===================================================================== */
+/* Barra superior fija */
 .superior {
   position: fixed;
   top: 0; left: 0; right: 0;
@@ -287,9 +260,7 @@ button { font-family: inherit; }
 .superior .accion-sec:hover { border-color: var(--papel); color: var(--blanco); }
 .superior :focus-visible { outline-color: #8fa3e8; }
 
-/* =====================================================================
-   Armazon
-   ===================================================================== */
+/* Armazon */
 .armazon {
   display: grid;
   grid-template-columns: 274px minmax(0, 1fr);
@@ -349,7 +320,7 @@ button { font-family: inherit; }
   color: var(--pizarra);
   margin-top: 2px;
 }
-/* El seleccionado se marca con fondo, barra lateral y peso: tres señales,
+/* Tres señales y no solo el color: fondo, barra lateral y peso;
    no solo el atributo aria. */
 .interno[aria-pressed="true"] {
   background: var(--cobalto-tenue);
@@ -370,10 +341,8 @@ button { font-family: inherit; }
 
 .principal { padding: 0 30px 40px; min-width: 0; overflow-x: hidden; }
 
-/* =====================================================================
-   Pestañas
-   ===================================================================== */
-/* Las pestañas NO son pegajosas. Viven al principio de la pagina y la barra
+/* Pestañas */
+/* NO pegajosas: la barra
    superior fija ya da el contexto permanente; dejarlas sticky dentro de un
    contenedor que ya trae padding por esa barra las desplazaba encima del
    encabezado y tapaba el boton de indicar un medicamento. */
@@ -402,9 +371,7 @@ button { font-family: inherit; }
   font-weight: 700;
 }
 
-/* =====================================================================
-   Encabezado del interno y ficha
-   ===================================================================== */
+/* Encabezado del interno y ficha */
 .encabezado {
   display: flex;
   align-items: flex-start;
@@ -564,9 +531,7 @@ button { font-family: inherit; }
 .alfiler__etiqueta { display: none; }
 .alfiler:hover .marca-estado { transform: scale(1.25); }
 
-/* =====================================================================
-   Parte del dia y filas de toma
-   ===================================================================== */
+/* Parte del dia y filas de toma */
 .parte {
   font-size: 14.5px;
   color: var(--pizarra);
@@ -664,9 +629,7 @@ button { font-family: inherit; }
   font-family: var(--dato); font-size: 11.5px; color: var(--pizarra);
 }
 
-/* =====================================================================
-   Estados de carga, vacio y error
-   ===================================================================== */
+/* Estados de carga, vacio y error */
 .esqueleto { display: grid; gap: 10px; }
 .esqueleto__linea {
   height: 16px;
@@ -700,9 +663,7 @@ button { font-family: inherit; }
 .problema__titulo { font-size: 15.5px; font-weight: 700; margin-bottom: 4px; }
 .problema__texto { font-size: 14px; color: var(--tinta); margin-bottom: 10px; }
 
-/* =====================================================================
-   Recetario (cajon lateral)
-   ===================================================================== */
+/* Recetario (cajon lateral) */
 .velo { position: fixed; inset: 0; background: rgba(20, 22, 26, .42); z-index: 60; }
 
 .cajon {
@@ -781,9 +742,7 @@ button { font-family: inherit; }
 .hallazgo p { margin: 4px 0 0; font-size: 14px; }
 .hallazgo__salida { color: var(--pizarra); font-size: 13.5px; }
 
-/* =====================================================================
-   Confirmacion de actos irreversibles
-   ===================================================================== */
+/* Confirmacion de actos irreversibles */
 .confirmar {
   position: fixed;
   z-index: 70;
@@ -812,9 +771,7 @@ button { font-family: inherit; }
 .confirmar__aviso { font-size: 13.5px; color: var(--pizarra); margin-top: 12px; }
 .confirmar__botones { display: flex; gap: 10px; justify-content: flex-end; }
 
-/* =====================================================================
-   Caja
-   ===================================================================== */
+/* Caja */
 .cargos { display: grid; gap: 1px; background: var(--linea-suave); border: 1px solid var(--linea); }
 .cargo {
   display: grid;
@@ -848,9 +805,7 @@ button { font-family: inherit; }
   padding: 18px 18px 16px; align-content: start;
 }
 
-/* =====================================================================
-   Barra de estado de los servicios
-   ===================================================================== */
+/* Barra de estado de los servicios */
 .barra {
   position: fixed;
   left: 0; right: 0; bottom: 0;
@@ -908,16 +863,14 @@ button { font-family: inherit; }
 }
 .aviso :focus-visible { outline-color: #8fa3e8; }
 
-/* =====================================================================
-   Pantallas angostas
-   ===================================================================== */
+/* Pantallas angostas */
 @media (max-width: 940px) {
   .armazon { grid-template-columns: 1fr; }
   .internos {
     border-right: none;
     border-bottom: 1px solid var(--linea);
     padding-bottom: 0;
-    /* Sin esto, la tira de internos (3 x 190px = 570px) estira la columna
+    /* Sin esto la tira de internos (3 x 190px) estira la columna
        del grid y toda la pagina se desborda a lo ancho: un elemento de
        grid no encoge por debajo de su contenido salvo que se le diga. */
     min-width: 0;
@@ -1011,9 +964,7 @@ button { font-family: inherit; }
   .barra__grupo { flex-wrap: nowrap; }
 }
 
-/* =====================================================================
-   Quien pidio menos movimiento, recibe menos movimiento.
-   ===================================================================== */
+/* Quien pidio menos movimiento, recibe menos movimiento. */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after {
@@ -1221,19 +1172,16 @@ button { font-family: inherit; }
 
 /* --- Reportes: examenes, ficha medica completa y costo por consulta ------ */
 
-/* Dos estados que faltaban en la escala de la ficha. El examen con resultado
-   y la consulta cerrada son lo mismo que "atendida": trabajo terminado, y se
-   marcan con el mismo cobalto para que la vista se lea igual en las tres. */
+/* Examen con resultado y consulta cerrada son trabajo terminado, igual que
+   "atendida": mismo cobalto en las tres. */
 .ficha--RESULTADO_LISTO { border-left-color: var(--cobalto); }
 .ficha--CERRADA         { border-left-color: var(--cobalto); }
 
-/* La ficha normal es una rejilla de dos columnas: contenido y acciones a la
-   derecha. Las tarjetas del expediente y las del costo no tienen acciones,
-   sino bloques que ocupan todo el ancho, asi que se salen de la rejilla. */
+/* La ficha normal es una rejilla de dos columnas. Estas no tienen acciones
+   sino bloques a todo lo ancho, asi que se salen de la rejilla. */
 .ficha--documento { display: block; }
 
-/* El resultado del laboratorio: es prosa, no un dato tabulado, asi que va en
-   la tipografia de lectura y con un filete que lo separe del encabezado. */
+/* Es prosa y no un dato tabulado: tipografia de lectura y filete separador. */
 .ficha__resultado {
   font-size: 14.5px;
   line-height: 1.45;
@@ -1253,9 +1201,8 @@ button { font-family: inherit; }
   margin: 12px 0 5px;
 }
 
-/* La linea del total. Va en monoespaciada porque son cifras que se comparan
-   entre una consulta y otra, y en cobalto porque es la conclusion de la
-   tarjeta: es el numero que administracion busca al abrir el bloque. */
+/* Monoespaciada porque son cifras que se comparan entre consultas, y en
+   cobalto porque es el numero que administracion busca. */
 .ficha__total {
   font-family: var(--dato);
   font-size: 13px;
@@ -1265,8 +1212,7 @@ button { font-family: inherit; }
   border-top: 1px solid var(--linea-suave);
 }
 
-/* Psicopatologias, alergias, examenes y medicamentos: listas cortas, sin
-   vinetas redondas, con un guion que no compita con el texto. */
+/* Listas cortas: un guion que no compita con el texto. */
 .lista-ficha {
   list-style: none;
   margin: 0;
@@ -1285,9 +1231,8 @@ button { font-family: inherit; }
   color: var(--pizarra);
 }
 
-/* Dos botones en el encabezado de una vista. En pantalla angosta se apilan
-   en vez de desbordar: min-width 0 para que el hijo de la rejilla pueda
-   encogerse, que es la trampa que ya nos costo una barra horizontal. */
+/* min-width 0 para que el hijo de la rejilla pueda encogerse: sin eso los
+   botones desbordan a lo ancho en pantalla angosta. */
 .encabezado__acciones {
   display: flex;
   gap: 10px;
@@ -1295,7 +1240,6 @@ button { font-family: inherit; }
   min-width: 0;
 }
 
-/* El cajon mide 480px: ahi el titulo del bloque y su nota no caben en una
-   sola linea y se aprietan uno contra otro. En la pagina, que es ancha, se
-   siguen viendo enfrentados como antes. */
+/* A 480px el titulo del bloque y su nota no caben en una linea. En la pagina,
+   que es ancha, se siguen viendo enfrentados. */
 .cajon .bloque__cabecera { flex-wrap: wrap; }

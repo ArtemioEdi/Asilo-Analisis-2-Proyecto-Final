@@ -1,40 +1,25 @@
 #!/bin/bash
-# ===========================================================================
-#  Asilo de Ancianos "Cabeza de Algodon"
-#  01 · Bases de datos, usuarios y permisos
-# ---------------------------------------------------------------------------
-#  Este archivo NO contiene ninguna clave: las toma del entorno del
-#  contenedor, que el compose llena desde el archivo .env (no versionado).
-#  Por eso es un .sh y no un .sql: MySQL ejecuta los .sql tal cual, sin
-#  expandir variables, y habria que escribir las claves dentro.
+# Bases de datos, usuarios y permisos del asilo Cabeza de Algodon.
 #
-#  El entrypoint de la imagen de MySQL corre todo lo que hay en
-#  /docker-entrypoint-initdb.d una sola vez: cuando el volumen de datos esta
-#  vacio. Para volver a ejecutarlo:
+# No contiene ninguna clave: las toma del entorno, que el compose llena desde
+# el .env. Por eso es un .sh y no un .sql: MySQL ejecuta los .sql tal cual, sin
+# expandir variables, y habria que escribir las claves dentro. El mismo modelo
+# de permisos, legible y con claves de marcador, esta en
+# 01-bases-y-usuarios.ejemplo.sql.
 #
-#      docker compose down -v && docker compose up -d
+# Corre UNA SOLA VEZ, con el volumen de datos vacio. Para repetirlo:
+#     docker compose down -v && docker compose up -d
 #
-#  Las sentencias que ejecuta estan documentadas, con claves de marcador, en
-#  01-bases-y-usuarios.ejemplo.sql, que es el que se lee para entender el
-#  modelo de permisos sin tener que leer shell.
+#     base                usuario           servicio
+#     -----------------   ---------------   --------------
+#     asilo_vigia         usr_vigia         ms-vigia
+#     asilo_pastillero    usr_pastillero    ms-pastillero
+#     asilo_caja          usr_caja          ms-caja
+#     asilo_consultas     usr_consultas     ms-consultas
 #
-#  Se conserva el patron "database per service": cada microservicio tiene su
-#  propia base y su propio usuario, y NINGUNO puede leer ni escribir la base
-#  de otro. Lo que se comparte es la instancia de MySQL, no los datos.
-#
-#      base                usuario           servicio
-#      -----------------   ---------------   --------------
-#      asilo_vigia         usr_vigia         ms-vigia
-#      asilo_pastillero    usr_pastillero    ms-pastillero
-#      asilo_caja          usr_caja          ms-caja
-#      asilo_consultas     usr_consultas     ms-consultas
-#
-#  Nota sobre como lo ejecuta el entrypoint: si el archivo tiene permiso de
-#  ejecucion lo corre como un proceso aparte; si no, lo carga con "." dentro
-#  de su propio shell. Por eso todo el trabajo va dentro de una funcion y no
-#  se usa "set -e" global: asi no se alteran las opciones del shell del
-#  entrypoint cuando el archivo se carga en vez de ejecutarse.
-# ===========================================================================
+# Todo el trabajo va dentro de una funcion y sin "set -e" global: si el archivo
+# no tiene permiso de ejecucion, el entrypoint lo carga con "." dentro de su
+# propio shell, y un "set -e" ahi le cambiaria las opciones.
 
 asilo_crear_bases_y_usuarios() {
     local faltantes=""

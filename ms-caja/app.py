@@ -14,10 +14,7 @@ from pymysql.cursors import DictCursor
 APP_NOMBRE = "ms-caja"
 APP_VERSION = "2.0.0"
 
-# ---------------------------------------------------------------------------
-# Conexion a MySQL. Todo por variables de entorno; si falta alguna, el
-# servicio no arranca, igual que con GATEWAY_SECRETO.
-# ---------------------------------------------------------------------------
+# Conexion a MySQL. Si falta alguna variable, el servicio no arranca.
 BD_HOST = os.environ.get("BD_HOST", "")
 BD_PUERTO = int(os.environ.get("BD_PUERTO", "3306"))
 BD_NOMBRE = os.environ.get("BD_NOMBRE", "")
@@ -36,10 +33,8 @@ if _faltantes:
         "Copie .env.ejemplo a .env." % ", ".join(_faltantes)
     )
 
-# ---------------------------------------------------------------------------
-# Secreto compartido con ms-gateway. No hay valor por defecto: si falta, el
-# servicio no arranca. Un secreto escrito en el codigo es un secreto publicado.
-# ---------------------------------------------------------------------------
+# Secreto compartido con ms-gateway. Sin valor por defecto a proposito: un
+# secreto escrito en el codigo es un secreto publicado.
 SECRETO = os.environ.get("GATEWAY_SECRETO", "")
 if len(SECRETO.strip()) < 16:
     raise RuntimeError(
@@ -48,44 +43,29 @@ if len(SECRETO.strip()) < 16:
         "un secreto con: openssl rand -hex 32"
     )
 
-# Matriz de acceso de este servicio. El movimiento de dinero del asilo, lo que
-# se le cobra a cada familia y lo que se le debe a la fundacion lo ve y lo
-# mueve administracion. Enfermeria no tiene por que conocerlo.
+# El dinero del asilo lo ve y lo mueve administracion.
 ROLES_LECTURA = ("ADMINISTRACION",)
 ROLES_ESCRITURA = ("ADMINISTRACION",)
 
-# Excepcion documentada: el medico puede consultar el estado de cuenta de un
-# interno concreto. Antes de indicar un estudio de laboratorio necesita saber
-# si el familiar responsable puede costearlo; sin ese dato terminaria
-# indicando examenes que nunca se van a hacer. La excepcion es solo de lectura
-# y solo de esta ruta: el medico no ve el resumen financiero del asilo, ni las
-# donaciones, ni los gastos, ni la cuenta con la fundacion.
+# Excepcion: el medico lee la cuenta de UN interno, porque antes de indicar un
+# laboratorio necesita saber si la familia puede costearlo. Solo lectura y solo
+# esta ruta: no ve el balance del asilo, ni donaciones, ni gastos, ni la cuenta
+# con la fundacion.
 CUENTA_DE_PACIENTE = re.compile(r"^/api/v1/pacientes/[^/]+/cuenta/?$")
 
-# Segunda excepcion, esta vez para otro servicio y no para una persona.
-#
-# Cuando el especialista manda un examen o farmacia entrega un medicamento,
-# ms-consultas tiene que dejar el cobro asentado aqui. Pero quien dispara esa
-# accion es un MEDICO o FARMACIA, y ninguno de los dos puede escribir en la
-# caja: eso es de ADMINISTRACION, y asi debe seguir siendo. Si se le abriera
-# la caja al medico para resolver esto, se perderia toda la separacion que
-# defiende el resto del sistema.
-#
-# La salida es un token de servicio: ms-consultas firma, con el mismo secreto
-# compartido, un token de un minuto que dice rol=SERVICIO y lleva el nombre
-# real de la persona que provoco el cobro, para que el cargo quede firmado por
-# ella y no por un robot. Aqui se acepta ese rol UNICAMENTE para crear cargos:
-# no puede pagar, ni donar, ni registrar gastos, ni leer nada.
+# Segunda excepcion, para otro servicio y no para una persona. El examen y la
+# entrega los dispara un MEDICO o FARMACIA, que no pueden escribir en la caja,
+# pero el cobro tiene que quedar asentado. ms-consultas firma un token de un
+# minuto con rol=SERVICIO que lleva el nombre real de quien provoco el cobro,
+# para que el cargo quede firmado por esa persona y no por un robot. Ese rol se
+# acepta UNICAMENTE para crear cargos: no paga, no dona, no lee nada.
 CREAR_CARGO = re.compile(r"^/api/v1/cargos/?$")
 ROLES_SERVICIO = ("SERVICIO",)
 
-# La sonda de vida no expone datos del asilo y la consulta Docker desde dentro
-# del contenedor, sin token.
+# La sonda de vida no expone datos y Docker la consulta sin token.
 RUTAS_LIBRES = ("/salud",)
 
-# MySQL devuelve DECIMAL como Decimal y DATETIME como datetime, y ninguno de
-# los dos sabe convertirse solo a JSON. Se traducen aqui, en un solo lugar,
-# para que ninguna respuesta cambie de forma respecto a la version con SQLite.
+# MySQL devuelve Decimal y datetime, y ninguno sabe convertirse solo a JSON.
 class ProveedorJSON(DefaultJSONProvider):
     @staticmethod
     def default(objeto):
@@ -103,8 +83,8 @@ app.json = ProveedorJSON(app)
 app.json.ensure_ascii = False
 
 
-# El tarifario es la base de datos de conocimiento del servicio, igual que
-# el vademecum lo es para ms-vigia: son datos, no logica de negocio.
+# El tarifario son datos, no logica de negocio: vive junto al codigo que lo
+# aplica, igual que el vademecum de ms-vigia.
 TARIFARIO = {
     "consulta-general":     {"nombre": "Consulta medico general",     "categoria": "CONSULTA",     "precioFundacion": 150.0, "descuentoPct": 60},
     "consulta-especialista":{"nombre": "Consulta con especialista",   "categoria": "CONSULTA",     "precioFundacion": 350.0, "descuentoPct": 55},
@@ -112,22 +92,16 @@ TARIFARIO = {
     "laboratorio-imagen":   {"nombre": "Estudio de imagen (Rx/US)",   "categoria": "LABORATORIO",  "precioFundacion": 420.0, "descuentoPct": 45},
     "farmacia-generico":    {"nombre": "Medicamento generico (caja)", "categoria": "FARMACIA",      "precioFundacion": 60.0,  "descuentoPct": 65},
     "farmacia-especializado":{"nombre": "Medicamento de marca / especializado", "categoria": "FARMACIA", "precioFundacion": 220.0, "descuentoPct": 40},
-    # La cuota de estadia es la excepcion del tarifario: no la cobra la
-    # fundacion, la paga el familiar directamente al asilo por tener a su
-    # interno aqui. Por eso tiene precio propio y no lleva descuento de la
-    # fundacion: no hay nada que descontar, el asilo es el que cobra.
-    # Antes valia 0.0 y solo el sembrado lo suplia con un 450.0 de respaldo,
-    # asi que toda cuota registrada desde la interfaz quedaba en Q0.00.
+    # La cuota no la cobra la fundacion sino el asilo, asi que no lleva
+    # descuento: no hay nada que descontar.
     "cuota-mensual":        {"nombre": "Cuota mensual de estadia",    "categoria": "CUOTA",        "precioFundacion": 450.0, "descuentoPct": 0},
 }
 
 CATEGORIAS_CARGO = {"CONSULTA", "LABORATORIO", "FARMACIA", "CUOTA", "OTRO"}
 
-# Que le debe el asilo a la fundacion. Solo lo que la fundacion presta como
-# servicio: consultas, laboratorio y farmacia. La CUOTA de estadia queda fuera
-# a proposito, porque es plata que el familiar le paga al asilo por tener a su
-# interno aqui; contarla como deuda con la fundacion inflaria las salidas con
-# un gasto que no existe. OTRO tambien queda fuera: es un cargo interno.
+# Solo lo que la fundacion presta. La CUOTA queda fuera porque es plata que el
+# familiar le paga al asilo: contarla como deuda inflaria las salidas con un
+# gasto que no existe. OTRO es un cargo interno.
 CATEGORIAS_QUE_COBRA_LA_FUNDACION = ("CONSULTA", "LABORATORIO", "FARMACIA")
 _EN_CLAUSULA_FUNDACION = "(" + ",".join("'%s'" % c for c in CATEGORIAS_QUE_COBRA_LA_FUNDACION) + ")"
 CATEGORIAS_DONANTE = {"EMPRESA", "GOBIERNO", "PARTICULAR"}
@@ -138,8 +112,7 @@ def abrir_conexion():
     return pymysql.connect(
         host=BD_HOST, port=BD_PUERTO, user=BD_USUARIO, password=BD_CLAVE,
         database=BD_NOMBRE, charset="utf8mb4", cursorclass=DictCursor,
-        # Nada se da por escrito hasta que la peticion lo confirma con
-        # commit(). Con SQLite cada execute() se guardaba solo.
+        # Nada queda escrito hasta el commit() de la peticion.
         autocommit=False, connect_timeout=5,
     )
 
@@ -204,18 +177,11 @@ def esperar_a_mysql(intentos=30, pausa=2):
 
 
 def revisar_el_esquema():
-    """Avisa si la base viene de una version anterior a cargos.visita_id.
+    """Avisa si la base no tiene cargos.visita_id, y dice como agregarla.
 
-    Este servicio NO se repara solo a proposito. usr_caja tiene unicamente
-    SELECT, INSERT, UPDATE y DELETE sobre su base: no tiene ALTER, igual que
-    los otros tres usuarios de servicio. Un microservicio que puede cambiar la
-    forma de sus propias tablas en caliente es un microservicio que, el dia
-    que lo comprometan, puede cambiarla para cualquier otra cosa. El esquema
-    lo define sql/04-esquema-caja.sql y lo aplica el arranque de bd-asilo.
-
-    En una instalacion nueva la columna ya viene creada y esta funcion no
-    dice nada. Solo habla cuando alguien levanta codigo nuevo sobre un volumen
-    viejo, y entonces dice exactamente que hacer.
+    No se repara solo a proposito: usr_caja no tiene ALTER. Un servicio que
+    puede cambiar la forma de sus tablas en caliente puede cambiarla para
+    cualquier otra cosa el dia que lo comprometan. El esquema lo define sql/.
     """
     try:
         bd = abrir_conexion()
@@ -253,20 +219,12 @@ def _folio(prefijo):
     return "%s-%s" % (prefijo, uuid.uuid4().hex[:8].upper())
 
 
-# ---------------------------------------------------------------------------
-# Verificacion de la sesion.
+# El gateway ya valido el token, pero aqui se vuelve a validar: defensa en
+# profundidad, por si alguien alcanza la red interna y llama directo. Sin esto
+# bastaria un POST a la caja para meter una donacion sin iniciar sesion.
 #
-# ms-gateway ya valida el token antes de reenviar la peticion, pero este
-# servicio lo vuelve a verificar por su cuenta: es defensa en profundidad. Si
-# alguien alcanza la red interna del stack y llama directo a ms-caja sin pasar
-# por el gateway, aqui se le vuelve a pedir quien es. Este era el agujero mas
-# visible del prototipo: bastaba un POST a localhost:8083 para meter una
-# donacion inventada en los libros del asilo, sin haber iniciado sesion nunca.
-#
-# Ya no hay encabezados Access-Control-Allow-Origin: este servicio no publica
-# puerto al host y ningun navegador le habla de forma directa. El unico origen
-# que atiende peticiones del navegador es ms-gateway.
-# ---------------------------------------------------------------------------
+# Sin encabezados CORS: este servicio no publica puerto y ningun navegador le
+# habla de forma directa.
 @app.before_request
 def exigir_sesion():
     if request.method == "OPTIONS" or request.path in RUTAS_LIBRES:
@@ -331,12 +289,8 @@ def listar_tarifas():
 
 
 def _cargo_json(fila):
-    # Las columnas de dinero son DECIMAL y MySQL las devuelve como Decimal.
-    # Se pasan a float aqui para que el resto del servicio siga haciendo
-    # aritmetica con los valores que llegan de la peticion, que son float, y
-    # para que la respuesta sea identica a la de la version con SQLite. La
-    # exactitud que importa —la de las sumas de los reportes— la da MySQL,
-    # que hace los SUM() sobre DECIMAL.
+    # De Decimal a float solo para la respuesta. La exactitud que importa —la
+    # de las sumas— la da MySQL, que hace los SUM() sobre DECIMAL.
     neto = float(fila["monto_neto"])
     pagado = float(fila["monto_pagado"])
     return {
@@ -345,9 +299,8 @@ def _cargo_json(fila):
         "pacienteNombre": fila["paciente_nombre"],
         "categoria": fila["categoria"],
         "concepto": fila["concepto"],
-        # Nulo en los cargos que no nacen de una consulta (la cuota mensual,
-        # por ejemplo). Es la unica forma que tiene la caja de agrupar por
-        # visita sin leer la base de ms-consultas.
+        # Nulo en los cargos que no nacen de una consulta. Es la unica forma
+        # de agrupar por visita sin leer la base de ms-consultas.
         "visitaId": fila["visita_id"],
         "referencia": fila["referencia"],
         "montoBruto": float(fila["monto_bruto"]),
@@ -425,8 +378,8 @@ def listar_cargos():
     estado = request.args.get("estado")
     desde = request.args.get("desde")
     hasta = request.args.get("hasta")
-    # Sin fechas centinela: '0000-00-00' y '9999-99-99' no son fechas validas
-    # en MySQL. Si no viene un rango, sencillamente no se agrega la condicion.
+    # Sin fechas centinela: '0000-00-00' no es valida en MySQL. Si no viene
+    # rango, no se agrega la condicion.
     sql = "SELECT * FROM cargos WHERE 1=1"
     params = []
     if desde:
@@ -488,8 +441,7 @@ def pagar_cargo(cargo_id):
     if fila["estado"] == "PAGADO":
         return jsonify({"error": "El cargo %s ya esta completamente cancelado." % cargo_id}), 409
 
-    # De Decimal a float: el monto que llega en la peticion es float y mezclar
-    # los dos tipos en una misma operacion es un error en Python.
+    # A float: mezclar Decimal y float en una misma operacion es un error.
     monto_neto = float(fila["monto_neto"])
     monto_pagado = float(fila["monto_pagado"])
     saldo = round(monto_neto - monto_pagado, 2)
@@ -506,9 +458,8 @@ def pagar_cargo(cargo_id):
     nuevo_estado = "PAGADO" if nuevo_pagado >= monto_neto - 0.01 else "ABONADO"
     ahora = datetime.now().replace(microsecond=0)
     pago_id = _folio("PG")
-    # Asentar el pago y actualizar el estado del cargo es una sola operacion
-    # contable: o pasan las dos cosas, o no pasa ninguna. Con SQLite podian
-    # quedar a medias y el libro dejaba de cuadrar.
+    # Asentar el pago y actualizar el cargo es una sola operacion contable: o
+    # pasan las dos cosas, o no pasa ninguna.
     try:
         ejecutar(
             """INSERT INTO pagos
@@ -688,8 +639,7 @@ def pagar_fundacion():
 @app.get("/api/v1/resumen")
 def resumen_general():
     """Panel de entradas y salidas para el reporte financiero general del asilo."""
-    # Los SUM() los hace MySQL sobre columnas DECIMAL, asi que son exactos al
-    # centavo; solo al final se pasan a float para la respuesta JSON.
+    # Los SUM() los hace MySQL sobre DECIMAL: exactos al centavo.
     donaciones = float(consultar_uno("SELECT COALESCE(SUM(monto),0) t FROM donaciones")["t"])
     cobrado = float(consultar_uno("SELECT COALESCE(SUM(monto_pagado),0) t FROM cargos")["t"])
     pendiente = float(consultar_uno(
@@ -697,9 +647,8 @@ def resumen_general():
         "WHERE estado != 'PAGADO'")["t"])
     gastos = float(consultar_uno("SELECT COALESCE(SUM(monto),0) t FROM gastos")["t"])
 
-    # Lo cobrado por cuota de estadia se desglosa aparte para dejar a la vista
-    # que es una ENTRADA del asilo y no una deuda con la fundacion: no aparece
-    # en adeudo_fundacion, que solo mira las categorias que la fundacion presta.
+    # La cuota se desglosa aparte: es una ENTRADA del asilo, no una deuda con
+    # la fundacion, y por eso no aparece en adeudo_fundacion.
     cuotas = float(consultar_uno(
         "SELECT COALESCE(SUM(monto_pagado),0) t FROM cargos WHERE categoria = 'CUOTA'")["t"])
     adeudo_fundacion = float(consultar_uno(
@@ -719,30 +668,15 @@ def resumen_general():
     })
 
 
-# ---------------------------------------------------------------------------
-# Reporte · cuanto costo una consulta
-# ---------------------------------------------------------------------------
-
 @app.get("/api/v1/reportes/costo-por-visita")
 def costo_por_visita():
     """Costo total de una consulta: la consulta mas su laboratorio y su farmacia.
 
-    Todo sale de la propia base de la caja. Esa fue la decision de diseño que
-    costo mas pensar, asi que conviene dejarla escrita:
-
-    La caja NO puede preguntarle a ms-consultas que examenes y que recetas
-    tuvo la visita. usr_caja no tiene permiso sobre asilo_consultas —el motor
-    se lo niega, y hay una prueba que lo comprueba— y abrirle ese permiso
-    tiraria abajo la separacion de bases que sostiene todo lo demas.
-
-    La alternativa era que la caja llamara por HTTP a ms-consultas cada vez
-    que alguien pide este reporte. Tambien se descarto: pondria a la caja a
-    depender de un servicio clinico para poder facturar, y un reporte de
-    dinero dejaria de funcionar cuando se cae un servicio que no maneja dinero.
-
-    Lo que se hizo es al reves: cuando ms-consultas manda a crear el cargo,
-    manda tambien de que visita salio, y la caja lo guarda en cargos.visita_id.
-    El reporte es entonces una consulta local, sin red de por medio.
+    Todo sale de la base de la caja. No le pregunta a ms-consultas: usr_caja no
+    tiene permiso sobre asilo_consultas, y abrirlo tiraria abajo la separacion
+    de bases. Tampoco le habla por HTTP, porque un reporte de dinero no puede
+    depender de que este arriba un servicio clinico. En vez de eso ms-consultas
+    manda de que visita salio cada cargo, y aqui se agrupa por visita_id.
     """
     visita = (request.args.get("visitaId") or "").strip()
     if not visita:
@@ -757,8 +691,7 @@ def costo_por_visita():
     )
     cargos = [_cargo_json(f) for f in filas]
 
-    # Los totales se suman en el motor y sobre DECIMAL, no en Python sobre
-    # float: es la misma razon por la que las columnas de dinero son DECIMAL.
+    # Se suman en el motor y sobre DECIMAL, no en Python sobre float.
     resumen = consultar_uno(
         """SELECT COALESCE(SUM(monto_bruto), 0)  AS bruto,
                   COALESCE(SUM(monto_neto), 0)   AS neto,
@@ -770,9 +703,8 @@ def costo_por_visita():
     neto = float(resumen["neto"])
     pagado = float(resumen["pagado"])
 
-    # Desglose por categoria. Se piden las tres siempre, aunque vengan en
-    # cero: un reporte que esconde las filas vacias obliga a adivinar si el
-    # examen no se cobro o si no hubo examen.
+    # Las tres categorias siempre, aunque vengan en cero: esconder las filas
+    # vacias obliga a adivinar si el examen no se cobro o si no hubo examen.
     porcategoria = {c: {"cantidad": 0, "montoBruto": 0.0, "montoNeto": 0.0, "montoPagado": 0.0}
                     for c in ("CONSULTA", "LABORATORIO", "FARMACIA")}
     for fila in consultar(
@@ -806,10 +738,9 @@ def costo_por_visita():
         "cargos": cargos,
     }
     if not cargos:
-        # Sin cargos hay dos explicaciones posibles y la caja no puede
-        # distinguirlas: no tiene la tabla de visitas para saber si el folio
-        # existe. Decirlo es mas util que devolver un 404 que seria mentira
-        # la mitad de las veces.
+        # La caja no tiene la tabla de visitas, asi que no puede distinguir
+        # entre "sin cargos" y "folio inexistente". Un 404 seria mentira la
+        # mitad de las veces.
         salida["nota"] = ("Esta visita no tiene ningun cargo asentado. Puede ser una "
                           "consulta sin examenes ni recetas, o un folio de visita que "
                           "no existe: la caja no lleva el registro de visitas y no "
@@ -877,19 +808,9 @@ def sembrar():
                  "Marta Solis, administracion", creado))
 
 
-    # -----------------------------------------------------------------------
-    # Los cargos de la consulta cerrada que siembra ms-consultas.
-    #
-    # Van aparte de la lista de arriba porque llevan visita_id: son los que
-    # hacen que el reporte de costo por consulta tenga algo que sumar en la
-    # demostracion. El folio de la visita y los de los cargos estan fijados
-    # en los dos servicios; si cambia uno hay que cambiar el otro (ver
-    # VISITA_DEMO en ms-consultas/app.py).
-    #
-    # El concepto se escribe con el mismo formato que produce el camino en
-    # vivo —"nombre (visita FOLIO)" y "nombre dosis mg (indicacion FOLIO)"—
-    # para que en pantalla no se distinga un cargo sembrado de uno real.
-    # -----------------------------------------------------------------------
+    # Los cargos de la consulta cerrada que siembra ms-consultas. Van aparte
+    # porque llevan visita_id. Los folios estan fijados en los dos servicios:
+    # si cambia uno hay que cambiar el otro (VISITA_DEMO en ms-consultas).
     VISITA_DEMO = "VM-2026-DEMO0022"
     atendida = hoy - timedelta(days=9)
     de_la_visita = [

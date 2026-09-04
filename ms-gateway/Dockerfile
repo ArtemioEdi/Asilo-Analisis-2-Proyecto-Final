@@ -7,12 +7,10 @@ RUN apk add --no-cache tzdata
 
 WORKDIR /app
 
-# Se copian los dos archivos de dependencias y se instala con "npm ci", que
-# instala EXACTAMENTE las versiones fijadas en package-lock.json y falla si
-# el lock no concuerda con package.json. "npm install" podia resolver
-# versiones distintas en cada maquina y en cada fecha: la imagen dejaba de
-# ser reproducible. Van antes que el codigo para que Docker reutilice la
-# capa de dependencias mientras el lock no cambie.
+# "npm ci" y no "npm install": instala exactamente las versiones del
+# package-lock.json y falla si no concuerda, para que la imagen sea
+# reproducible. Van antes que el codigo para reutilizar la capa de
+# dependencias mientras el lock no cambie.
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 

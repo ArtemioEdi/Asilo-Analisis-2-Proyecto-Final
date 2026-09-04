@@ -16,10 +16,7 @@ from pymysql.cursors import DictCursor
 APP_NOMBRE = "ms-pastillero"
 APP_VERSION = "2.0.0"
 
-# ---------------------------------------------------------------------------
-# Conexion a MySQL. Todo por variables de entorno; si falta alguna, el
-# servicio no arranca, igual que con GATEWAY_SECRETO.
-# ---------------------------------------------------------------------------
+# Conexion a MySQL. Si falta alguna variable, el servicio no arranca.
 BD_HOST = os.environ.get("BD_HOST", "")
 BD_PUERTO = int(os.environ.get("BD_PUERTO", "3306"))
 BD_NOMBRE = os.environ.get("BD_NOMBRE", "")
@@ -40,10 +37,8 @@ if _faltantes:
 VIGIA_URL = os.environ.get("VIGIA_URL", "http://ms-vigia:8081")
 TOLERANCIA_MIN = int(os.environ.get("TOLERANCIA_MIN", 60))
 
-# ---------------------------------------------------------------------------
-# Secreto compartido con ms-gateway. No hay valor por defecto: si falta, el
-# servicio no arranca. Un secreto escrito en el codigo es un secreto publicado.
-# ---------------------------------------------------------------------------
+# Secreto compartido con ms-gateway. Sin valor por defecto a proposito: un
+# secreto escrito en el codigo es un secreto publicado.
 SECRETO = os.environ.get("GATEWAY_SECRETO", "")
 if len(SECRETO.strip()) < 16:
     raise RuntimeError(
@@ -52,36 +47,24 @@ if len(SECRETO.strip()) < 16:
         "un secreto con: openssl rand -hex 32"
     )
 
-# Matriz de acceso de este servicio. El pastillero lo trabajan las dos manos
-# que tocan al interno: el medico prescribe el plan y enfermeria registra cada
-# toma administrada u omitida. Administracion no ve el tratamiento de nadie.
+# El medico prescribe el plan y enfermeria registra cada toma. Administracion
+# no ve el tratamiento de nadie.
 ROLES_LECTURA = ("MEDICO", "ENFERMERIA")
 ROLES_ESCRITURA = ("MEDICO", "ENFERMERIA")
 
-# Excepcion documentada, simetrica a la del medico en ms-caja: administracion
-# si puede leer el padron de internos, porque le cobra a la familia de cada uno
-# y necesita saber a quien tiene el asilo y quien es el familiar responsable.
-# Lo que NO recibe es la parte clinica de la ficha: las psicopatologias, las
-# alergias y la medicacion se omiten de la respuesta cuando quien pregunta es
-# ADMINISTRACION (ver ficha_json). Saber que Rosalia esta aqui es
+# Excepcion, simetrica a la del medico en ms-caja: administracion lee el
+# padron porque le cobra a la familia de cada interno, pero NO recibe la parte
+# clinica de la ficha (ver ficha_json). Saber que el interno esta aqui es
 # administrativo; saber que tiene demencia mixta es clinico.
 PADRON_DE_INTERNOS = re.compile(r"^/api/v1/internos(/[^/]+)?/?$")
 
-# Suspender un tratamiento queda reservado al MEDICO, aunque el resto del
-# pastillero lo escriban las dos manos.
-#
-# El criterio: suspender no es registrar lo que paso, es cambiar la
-# indicacion. Enfermeria puede decir que una toma no se dio y por que —eso es
-# consignar un hecho, y para eso esta "omitir", que exige motivo—, pero
-# retirarle el medicamento a un interno de aqui en adelante es revocar una
-# decision clinica, y esa la toma quien la firmo. Antes la interfaz solo le
-# mostraba el boton al medico mientras la API se lo permitia a enfermeria:
-# las dos partes decian cosas distintas, y la que mandaba era la API.
+# Suspender es solo del MEDICO: no es registrar lo que paso, es revocar una
+# decision clinica, y esa la toma quien la firmo. Enfermeria consigna hechos
+# con "omitir", que exige motivo.
 SUSPENDER_PLAN = re.compile(r"^/api/v1/planes/[^/]+/suspender/?$")
 ROLES_SUSPENDER = ("MEDICO",)
 
-# La sonda de vida no expone datos del asilo y la consulta Docker desde dentro
-# del contenedor, sin token.
+# La sonda de vida no expone datos y Docker la consulta sin token.
 RUTAS_LIBRES = ("/salud",)
 
 TURNOS = [
@@ -90,9 +73,7 @@ TURNOS = [
     {"clave": "nocturno", "nombre": "Nocturno", "desde": 22, "hasta": 6},
 ]
 
-# MySQL devuelve DECIMAL como Decimal y DATETIME como datetime, y ninguno de
-# los dos sabe convertirse solo a JSON. Se traducen aqui, en un solo lugar,
-# para que ninguna respuesta cambie de forma respecto a la version con SQLite.
+# MySQL devuelve Decimal y datetime, y ninguno sabe convertirse solo a JSON.
 class ProveedorJSON(DefaultJSONProvider):
     @staticmethod
     def default(objeto):
@@ -114,8 +95,7 @@ def abrir_conexion():
     return pymysql.connect(
         host=BD_HOST, port=BD_PUERTO, user=BD_USUARIO, password=BD_CLAVE,
         database=BD_NOMBRE, charset="utf8mb4", cursorclass=DictCursor,
-        # Nada se da por escrito hasta que la peticion lo confirma con
-        # commit(). Con SQLite cada execute() se guardaba solo.
+        # Nada queda escrito hasta el commit() de la peticion.
         autocommit=False, connect_timeout=5,
     )
 
@@ -196,8 +176,7 @@ def estado_efectivo(fila, ahora=None):
     ahora = ahora or datetime.now()
     if fila["estado"] != "PENDIENTE":
         return fila["estado"]
-    # La columna es DATETIME: MySQL la devuelve ya como datetime, no hay
-    # texto ISO que interpretar.
+    # La columna es DATETIME: llega como datetime, no hay texto que interpretar.
     if ahora - fila["programado_para"] > timedelta(minutes=TOLERANCIA_MIN):
         return "VENCIDA"
     return "PENDIENTE"
@@ -212,8 +191,7 @@ def toma_json(fila, plan=None):
         "principioActivo": plan["principio_activo"] if plan else fila["principio_activo"],
         "dosisMg": plan["dosis_mg"] if plan else fila["dosis_mg"],
         "via": plan["via"] if plan else fila["via"],
-        # Se devuelven como texto ISO para que la respuesta sea identica a la
-        # de la version con SQLite: la interfaz hace new Date(programadoPara).
+        # Texto ISO: la interfaz hace new Date(programadoPara).
         "programadoPara": fila["programado_para"].isoformat(timespec="minutes"),
         "hora": fila["programado_para"].strftime("%H:%M"),
         "turno": fila["turno"],
@@ -246,18 +224,11 @@ def consultar_dictamen(folio):
         return None, "MS-VIGIA respondio con codigo %d." % r.status_code
     return r.json(), None
 
-# ---------------------------------------------------------------------------
-# Verificacion de la sesion.
+# El gateway ya valido el token, pero aqui se vuelve a validar: defensa en
+# profundidad, por si alguien alcanza la red interna y llama directo.
 #
-# ms-gateway ya valida el token antes de reenviar la peticion, pero este
-# servicio lo vuelve a verificar por su cuenta: es defensa en profundidad. Si
-# alguien alcanza la red interna del stack y llama directo a ms-pastillero sin
-# pasar por el gateway, aqui se le vuelve a pedir quien es.
-#
-# Ya no hay encabezados Access-Control-Allow-Origin: este servicio no publica
-# puerto al host y ningun navegador le habla de forma directa. El unico origen
-# que atiende peticiones del navegador es ms-gateway.
-# ---------------------------------------------------------------------------
+# Sin encabezados CORS: este servicio no publica puerto y ningun navegador le
+# habla de forma directa.
 @app.before_request
 def exigir_sesion():
     if request.method == "OPTIONS" or request.path in RUTAS_LIBRES:
@@ -322,16 +293,12 @@ def salud():
     })
 
 
-# ---------------------------------------------------------------------------
 # Padron de internos.
 #
-# Esta ficha estaba quemada en el JavaScript de la estacion web, o sea que
-# vivia en el navegador. Como ms-vigia decide si bloquea un medicamento con la
-# edad, las alergias y las psicopatologias, cualquiera podia abrir las
-# herramientas de desarrollo, vaciar el arreglo de alergias y conseguir que el
-# sistema aprobara furosemida a una paciente alergica a las sulfas. El dato del
-# que depende la seguridad del paciente ahora vive aqui, del lado del servidor.
-# ---------------------------------------------------------------------------
+# La ficha vive aqui, del lado del servidor, y no en el navegador: ms-vigia
+# bloquea medicamentos con la edad, las alergias y las psicopatologias. Si el
+# cliente la enviara, bastaria vaciar el arreglo de alergias para que el
+# sistema aprobara furosemida a una paciente alergica a las sulfas.
 
 def ficha_json(fila, incluir_clinico=True):
     """Ficha del interno. Sin la parte clinica si quien pregunta no es clinico."""
@@ -340,12 +307,11 @@ def ficha_json(fila, incluir_clinico=True):
         "nombre": fila["nombre"],
         "edad": fila["edad"],
         "cama": fila["cama"],
-        # La columna es DATE; se presenta como dd/mm/aaaa, que es como la
-        # lee el personal del asilo.
+        # La columna es DATE; el personal la lee en dd/mm/aaaa.
         "ingreso": fila["ingreso"].strftime("%d/%m/%Y") if fila["ingreso"] else None,
         "responsable": fila["responsable"],
-        # Dato de contacto, no clinico: lo necesita ms-consultas para avisarle
-        # al familiar, y administracion para cobrarle.
+        # De contacto, no clinico: ms-consultas avisa al familiar y
+        # administracion le cobra.
         "correoResponsable": fila["correo_responsable"],
     }
     if incluir_clinico:
@@ -385,9 +351,8 @@ def obtener_interno(paciente_id):
     clinico = puede_ver_lo_clinico()
     ficha = ficha_json(fila, clinico)
     if clinico:
-        # La medicacion activa viaja con la ficha porque es justo lo que
-        # ms-vigia necesita para buscar interacciones y duplicidades: asi
-        # arma la ficha completa con una sola llamada.
+        # Viaja con la ficha para que ms-vigia busque interacciones y
+        # duplicidades con una sola llamada.
         ficha["medicacionActual"] = [
             {
                 "principioActivo": p["principio_activo"],
@@ -503,9 +468,8 @@ def crear_plan():
     plan_id = "PL-" + uuid.uuid4().hex[:8].upper()
     farmaco = cuerpo.get("farmaco") or cuerpo["principioActivo"].replace("_", " ").capitalize()
     bd = conexion()
-    # El plan y sus tomas son una sola cosa: un plan sin tomas no sirve de
-    # nada y unas tomas sin plan son huerfanas. Van en una transaccion, y si
-    # algo falla a media escritura no queda nada a medias.
+    # El plan y sus tomas van en una transaccion: un plan sin tomas no sirve y
+    # unas tomas sin plan son huerfanas.
     try:
         ejecutar(
             """INSERT INTO planes (id, paciente_id, paciente_nombre, principio_activo,
@@ -593,8 +557,7 @@ def suspender_plan(plan_id):
     if plan is None:
         return jsonify({"error": "No existe el plan %s." % plan_id}), 404
     ahora = datetime.now().replace(microsecond=0)
-    # Suspender toca dos tablas: el plan y todas sus tomas futuras. O cambian
-    # las dos, o no cambia ninguna.
+    # Toca el plan y sus tomas futuras: o cambian las dos tablas, o ninguna.
     try:
         ejecutar("UPDATE planes SET estado='SUSPENDIDO' WHERE id = %s", (plan_id,))
         ejecutar(
@@ -614,7 +577,7 @@ def tomas_paciente(paciente_id):
     """Tomas de un dia. Es la hoja de trabajo del turno de enfermeria."""
     fecha = request.args.get("fecha") or datetime.now().strftime("%Y-%m-%d")
     turno = request.args.get("turno")
-    # La columna es DATETIME: se filtra con DATE(), no recortando texto.
+    # DATETIME: se filtra con DATE(), no recortando texto.
     filas = consultar(
         """SELECT t.*, p.farmaco, p.principio_activo, p.dosis_mg, p.via, p.indicacion
            FROM tomas t JOIN planes p ON p.id = t.plan_id
@@ -737,7 +700,7 @@ def sembrar_internos():
             bd.close()
             return
 
-    # El ingreso se guarda como DATE (aaaa-mm-dd) y se presenta en dd/mm/aaaa.
+    # El ingreso se guarda como DATE y se presenta en dd/mm/aaaa.
     internos = [
         ("ASL-014", "Rosalía Menchú Coy", 84, "Pabellón A, cama 3", "2023-05-11",
          ["Demencia mixta", "Insomnio crónico"], ["penicilina"],
@@ -819,9 +782,8 @@ def sembrar():
                     if momento < base or momento > base + timedelta(days=dias):
                         continue
                     toma_id = "TM-" + uuid.uuid4().hex[:10].upper()
-                    # Las tomas de hoy que ya pasaron se dan por administradas
-                    # en el turno, para que la demostracion arranque con una
-                    # jornada a medio andar y no en blanco.
+                    # Las tomas de hoy ya pasadas se dan por administradas: la
+                    # jornada arranca a medio andar y no en blanco.
                     if momento < ahora - timedelta(minutes=TOLERANCIA_MIN) and momento >= base:
                         cursor.execute(
                             """INSERT INTO tomas

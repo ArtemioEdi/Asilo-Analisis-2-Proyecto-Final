@@ -1,8 +1,5 @@
-// =====================================================================
-// Estacion de enfermeria · Asilo Cabeza de Algodon
-// Consume ms-vigia, ms-pastillero y ms-caja siempre a traves de
-// ms-gateway, que es el unico origen que conoce el navegador.
-// =====================================================================
+// Estacion de enfermeria · Asilo Cabeza de Algodon.
+// Todo pasa por ms-gateway: es el unico origen que conoce el navegador.
 
 const AUTH = "/api/auth";
 const CONFIG = "/api/config";
@@ -11,11 +8,8 @@ const PASTILLERO = "/pastillero";
 const CAJA = "/caja";
 const CONSULTAS = "/consultas";
 
-// Las fichas de los internos ya NO viven aqui. Estaban quemadas en este
-// archivo, o sea en el navegador, y son los tres datos —edad, alergias y
-// psicopatologias— con los que ms-vigia decide si bloquea un medicamento.
-// Ahora el padron vive en ms-pastillero y esto es solo una cache de
-// presentacion: alterarla no cambia ningun dictamen, porque ms-vigia arma
+// Cache de presentacion, no fuente de verdad: el padron vive en
+// ms-pastillero. Alterar esto no cambia ningun dictamen, porque ms-vigia arma
 // la ficha por su cuenta y del cliente solo recibe el pacienteId.
 const INTERNOS = {};
 
@@ -23,16 +17,12 @@ const SESION = { token: null, usuario: null, nombre: null, rol: null };
 const estado = { interno: null, medicacion: [], dictamen: null, receta: null };
 let TARIFAS_CAJA = [];
 
-// A donde queria ir la persona antes de que le pidieran iniciar sesion.
-// Se guarda para devolverla ahi despues de entrar, en vez de dejarla en
-// una vista cualquiera.
+// A donde queria ir antes de que le pidieran iniciar sesion, para devolverla
+// ahi despues de entrar.
 let rutaPretendida = location.hash || "";
 
 const $ = (id) => document.getElementById(id);
 
-// ---------------------------------------------------------------------
-// Peticiones
-// ---------------------------------------------------------------------
 
 function servicioDe(url) {
   if (url.startsWith(VIGIA)) return "ms-vigia";
@@ -50,7 +40,7 @@ async function pedir(url, opciones) {
   try {
     respuesta = await fetch(url, Object.assign({}, opciones, { headers: encabezados }));
   } catch (_) {
-    // Ni siquiera se pudo hablar con la estacion: no hay respuesta que leer.
+    // Ni se pudo hablar con la estacion: no hay respuesta que leer.
     const caido = new Error("sin-red");
     caido.red = true;
     caido.servicio = servicioDe(url);
@@ -71,13 +61,8 @@ async function pedir(url, opciones) {
   return cuerpo;
 }
 
-// ---------------------------------------------------------------------
-// Traduccion de errores.
-//
-// Nunca se le muestra a la persona el mensaje crudo del servidor: se
-// distingue "el servicio no responde" de "la peticion fue rechazada", y
-// se dice que hacer en cada caso.
-// ---------------------------------------------------------------------
+// Nunca se muestra el mensaje crudo del servidor: se distingue "no responde"
+// de "fue rechazada", y se dice que hacer en cada caso.
 
 const NOMBRE_ROL = {
   MEDICO: "medicina",
@@ -166,12 +151,8 @@ function explicarError(error, accion) {
   }
 }
 
-// ---------------------------------------------------------------------
-// Avisos
-//
-// Los errores se quedan hasta que la persona los cierre. Los demas se
-// van solos a los 6 segundos. Todo se anuncia por la region aria-live.
-// ---------------------------------------------------------------------
+// Los errores se quedan hasta que se cierren; los demas se van a los 6
+// segundos. Todo se anuncia por la region aria-live.
 
 function aviso(titulo, texto, tipo, alReintentar) {
   const caja = $("avisos");
@@ -211,7 +192,7 @@ function aviso(titulo, texto, tipo, alReintentar) {
   nodo.append(cuerpo, cerrar);
   caja.appendChild(nodo);
 
-  // Solo lo que no es un error desaparece solo.
+  // Solo lo que no es error desaparece solo.
   if (tipo !== "error") setTimeout(() => nodo.remove(), 6000);
   return nodo;
 }
@@ -225,9 +206,6 @@ function avisarError(error, accion, alReintentar) {
         e.reintentar ? alReintentar : null);
 }
 
-// ---------------------------------------------------------------------
-// Foco atrapado dentro de un dialogo
-// ---------------------------------------------------------------------
 
 const ENFOCABLES =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
@@ -250,9 +228,6 @@ function atraparFoco(nodo) {
   return () => nodo.removeEventListener("keydown", alTabular);
 }
 
-// ---------------------------------------------------------------------
-// Confirmacion de actos irreversibles
-// ---------------------------------------------------------------------
 
 function confirmar(opciones) {
   return new Promise((resolver) => {
@@ -315,9 +290,6 @@ function confirmar(opciones) {
   });
 }
 
-// ---------------------------------------------------------------------
-// Esqueletos de carga
-// ---------------------------------------------------------------------
 
 function esqueleto(nodo, filas, altas) {
   nodo.textContent = "";
@@ -378,18 +350,13 @@ function problema(nodo, error, accion, alReintentar) {
   nodo.appendChild(caja);
 }
 
-// ---------------------------------------------------------------------
-// Enrutado por hash
-//
-// Las vistas son enlazables (#/jornada, #/caja, #/interno/ASL-014) y el
-// boton de atras del navegador funciona.
-// ---------------------------------------------------------------------
+// Enrutado por hash: las vistas son enlazables (#/jornada, #/caja,
+// #/interno/ASL-014) y el boton de atras funciona.
 
 const VISTAS = ["jornada", "caja", "consultas", "agenda", "laboratorio", "farmacia"];
 
-// Que vista puede abrir cada rol. Es el reflejo exacto de la matriz que hacen
-// cumplir el gateway y los microservicios: si aqui apareciera una vista de mas,
-// la persona pulsaria y recibiria un 403.
+// Reflejo exacto de la matriz del gateway: una vista de mas aqui solo
+// conseguiria que la persona pulse y reciba un 403.
 const VISTAS_POR_ROL = {
   MEDICO:         ["jornada", "consultas", "caja"],
   ENFERMERIA:     ["jornada", "consultas"],
@@ -400,7 +367,7 @@ const VISTAS_POR_ROL = {
 };
 
 // Los tres roles operativos no tienen internos a cargo: su pantalla es una
-// bandeja de trabajo, sin barra lateral y sin interno seleccionado.
+// bandeja, sin barra lateral.
 const ROLES_SIN_PADRON = ["FUNDACION", "LABORATORIO", "FARMACIA"];
 
 function vistasDelRol() { return VISTAS_POR_ROL[SESION.rol] || []; }
@@ -420,8 +387,7 @@ let rutaActual = { vista: null, interno: null };
 
 function normalizarRuta(destino) {
   let vista = destino.vista && vistaPermitida(destino.vista) ? destino.vista : vistaPorDefecto();
-  // Las bandejas de fundacion, laboratorio y farmacia no cuelgan de un
-  // interno: su ruta es solo la vista.
+  // Las bandejas no cuelgan de un interno: su ruta es solo la vista.
   if (!tienePadron()) return { vista, interno: null };
   let interno = destino.interno && INTERNOS[destino.interno] ? destino.interno : estado.interno;
   if (!INTERNOS[interno]) interno = Object.keys(INTERNOS)[0] || null;
@@ -473,9 +439,6 @@ document.querySelectorAll(".pestana").forEach((boton) => {
   boton.addEventListener("click", () => irA({ vista: boton.dataset.vista, interno: estado.interno }));
 });
 
-// ---------------------------------------------------------------------
-// Sesion
-// ---------------------------------------------------------------------
 
 function guardarSesion(datos) {
   SESION.token = datos.token;
@@ -499,13 +462,13 @@ function mostrarAcceso(mensajeReanudar) {
   $("armazon").hidden = true;
   $("barra").hidden = true;
   $("acceso-clave").value = "";
-  // El usuario escrito NO se borra: solo la clave.
+  // Se borra la clave, no el usuario escrito.
   $("acceso-usuario").focus();
   $("acceso-usuario").select();
 }
 
-// La sesion vencio. No se expulsa de golpe: se avisa, se guarda donde
-// estaba la persona y se la devuelve ahi cuando vuelva a entrar.
+// No se expulsa de golpe: se avisa y se guarda donde estaba, para devolverla
+// ahi cuando vuelva a entrar.
 function sesionExpirada() {
   if (!SESION.token) return;
   rutaPretendida = location.hash || "";
@@ -521,9 +484,8 @@ function sesionExpirada() {
 }
 
 async function cerrarSesion() {
-  // Se le avisa al gateway para que meta el token en la lista de
-  // revocacion. Sin esto, borrar la sesion del navegador no invalida
-  // nada: el token sigue sirviendo hasta que venza.
+  // El gateway mete el token en la lista de revocacion. Sin esto, borrar la
+  // sesion del navegador no invalida nada: el token sigue sirviendo.
   const token = SESION.token;
   if (token) pedir(AUTH + "/logout", { method: "POST" }).catch(() => { });
   limpiarSesion();
@@ -595,11 +557,8 @@ function aplicarPermisos() {
   $("abrir-cajon").hidden = SESION.rol !== "MEDICO";
   $("caja-admin").hidden = SESION.rol !== "ADMINISTRACION";
 
-  // La pestaña de caja no significa lo mismo para los dos roles que la ven.
-  // Administración entra al módulo completo; el médico entra únicamente al
-  // estado de cuenta del interno, que es la excepción de lectura que se le
-  // concedió. Se le nombra por lo que de verdad puede hacer, para que nadie
-  // pulse esperando un balance que su rol no puede leer.
+  // La pestaña se nombra por lo que cada rol puede hacer: administración entra
+  // al módulo completo, el médico solo al estado de cuenta del interno.
   const esAdmin = SESION.rol === "ADMINISTRACION";
   $("pestana-caja-texto").textContent = esAdmin ? "Caja y donaciones" : "Cuenta del interno";
   $("caja-titulo").textContent = esAdmin ? "Caja y donaciones" : "Cuenta del interno";
@@ -607,12 +566,11 @@ function aplicarPermisos() {
   $("pestana-jornada").hidden = !vistaPermitida("jornada");
   $("pestana-caja").hidden = !vistaPermitida("caja");
   $("pestana-consultas").hidden = !vistaPermitida("consultas");
-  // Enfermeria lee la cadena clinica pero no escribe en ella: ve la pestaña
-  // sin el boton de remitir.
+  // Enfermeria lee la cadena clinica pero no escribe: sin boton de remitir.
   $("abrir-remision").hidden = SESION.rol !== "MEDICO";
   // Los tres roles operativos no tienen internos a cargo: fuera la lateral.
   $("armazon").classList.toggle("armazon--sin-lateral", !tienePadron());
-  // Y con una sola vista, la barra de pestañas no aporta nada.
+  // Con una sola vista, la barra de pestañas no aporta nada.
   $("pestanas").hidden = vistasDelRol().length < 2;
   $("sesion-nombre").textContent = SESION.nombre;
   $("sesion-rol").textContent = SESION.rol;
@@ -630,9 +588,8 @@ function actualizarSuperior() {
 
 async function mostrarApp() {
   aplicarPermisos();
-  // La vista del rol se elige ANTES de descubrir la pantalla. Si no, se
-  // alcanza a ver un instante la jornada de medicacion incluso cuando la
-  // sesion es de administracion, que no deberia verla nunca.
+  // La vista se elige ANTES de descubrir la pantalla: si no, administracion
+  // alcanza a ver un instante la jornada de medicacion.
   pintarVista(vistaPorDefecto());
   $("acceso").hidden = true;
   $("superior").hidden = false;
@@ -642,9 +599,6 @@ async function mostrarApp() {
   await iniciarApp();
 }
 
-// ---------------------------------------------------------------------
-// Barra de estado de los servicios
-// ---------------------------------------------------------------------
 
 async function refrescarBarra() {
   const nodoGw = document.querySelector('.barra span[data-servicio="gateway"]');
@@ -670,7 +624,7 @@ async function refrescarBarra() {
     }
   }
 
-  // El turno lo sirve ms-pastillero, que solo leen medicina y enfermeria.
+  // El turno lo sirve ms-pastillero, que solo lee el personal clinico.
   if (SESION.rol === "MEDICO" || SESION.rol === "ENFERMERIA") {
     try {
       const t = await pedir(PASTILLERO + "/api/v1/turnos");
@@ -680,9 +634,6 @@ async function refrescarBarra() {
   }
 }
 
-// ---------------------------------------------------------------------
-// Padron de internos
-// ---------------------------------------------------------------------
 
 async function cargarInternos() {
   const lista = $("lista-internos");
@@ -757,9 +708,6 @@ function marcarInternoSeleccionado() {
 
 $("buscador-campo").addEventListener("input", pintarInternos);
 
-// ---------------------------------------------------------------------
-// Ficha del interno
-// ---------------------------------------------------------------------
 
 function campo(rotulo, contenido) {
   const div = document.createElement("div");
@@ -788,8 +736,7 @@ function pintarFicha() {
   const datos = $("datos-interno");
   datos.textContent = "";
 
-  // A administracion el servicio le devuelve la ficha sin la parte
-  // clinica, asi que esos campos llegan sin definir.
+  // A administracion el servicio le devuelve la ficha sin la parte clinica.
   const oculto = "No visible para administración";
 
   datos.appendChild(campo("Psicopatología",
@@ -819,9 +766,8 @@ function listaMedicacion(oculto) {
     texto.className = "medicacion__pauta";
     texto.textContent = m.farmaco + " " + m.dosisMg + " mg cada " + m.cadaHoras + " h";
     linea.appendChild(texto);
-    // Suspender un tratamiento es revocar una decision clinica: solo el
-    // medico, y con confirmacion. La misma regla la hacen cumplir el gateway
-    // y ms-pastillero, asi que la interfaz y la API dicen lo mismo.
+    // Suspender es revocar una decision clinica: solo el medico. La misma
+    // regla la hacen cumplir el gateway y ms-pastillero.
     if (SESION.rol === "MEDICO" && m.planId) {
       const boton = document.createElement("button");
       boton.className = "accion-sec accion-sec--suave medicacion__accion";
@@ -882,9 +828,6 @@ async function cargarInterno() {
   await pintarJornada();
 }
 
-// ---------------------------------------------------------------------
-// Jornada de medicacion
-// ---------------------------------------------------------------------
 
 const ETIQUETA_ESTADO = {
   ADMINISTRADA: "administrada",
@@ -972,9 +915,8 @@ function dibujarRegla(regla, tomas) {
     alfiler.setAttribute("aria-label",
       t.hora + ", " + t.farmaco + " " + t.dosisMg + " miligramos, " + ETIQUETA_ESTADO[t.estado]);
 
-    // La etiqueta viaja en el DOM aunque en pantalla ancha no se vea: en
-    // pantalla angosta la regla se vuelve linea de tiempo vertical y esto
-    // es lo que se lee.
+    // Viaja en el DOM aunque en pantalla ancha no se vea: en angosta la regla
+    // se vuelve linea de tiempo y esto es lo que se lee.
     const etiqueta = document.createElement("span");
     etiqueta.className = "alfiler__etiqueta";
     const hora = document.createElement("span");
@@ -1087,8 +1029,7 @@ function filaToma(t) {
   marbete.appendChild(palabra);
   acciones.appendChild(marbete);
 
-  // Registrar o ausentar una toma es tarea clinica: solo medico o
-  // enfermeria, igual que exige el gateway del lado del servidor.
+  // Registrar u omitir una toma es tarea clinica, igual que exige el gateway.
   const puedeRegistrar = SESION.rol === "MEDICO" || SESION.rol === "ENFERMERIA";
   if (!cerrada && puedeRegistrar) {
     const dar = document.createElement("button");
@@ -1118,8 +1059,7 @@ function senalarToma(tomaId) {
   fila.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
-// Administrar un medicamento es un acto clinico irreversible: se
-// confirma mostrando a quien, que, cuanto y a que hora.
+// Acto clinico irreversible: se confirma mostrando a quien, que y cuando.
 async function pedirConfirmacionAdministrar(t) {
   const ficha = INTERNOS[estado.interno];
   const seguro = await confirmar({
@@ -1173,7 +1113,7 @@ async function registrar(t, accion, cuerpo) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cuerpo)
     });
-    // Se dice exactamente que cambio, y la fila afectada queda resaltada.
+    // Se dice que cambio y la fila afectada queda resaltada.
     const puntual = respuesta.puntual ? "a tiempo" :
       "con " + Math.abs(respuesta.desfaseMinutos) + " min de desfase";
     aviso(
@@ -1188,18 +1128,14 @@ async function registrar(t, accion, cuerpo) {
   }
 }
 
-// ---------------------------------------------------------------------
-// Recetario (cajon lateral)
-// ---------------------------------------------------------------------
 
 const cajon = $("cajon");
 const velo = $("velo");
 let soltarFocoCajon = null;
 let abrioElCajon = null;
 
-// El vademecum alimenta DOS desplegables: el del recetario de la jornada y el
-// de la consulta del especialista. Se piden juntos y se llenan los dos con la
-// misma respuesta, para no consultar ms-vigia dos veces.
+// Alimenta DOS desplegables —el recetario y la consulta del especialista— con
+// una sola consulta a ms-vigia.
 async function cargarVademecum() {
   const destinos = [$("principioActivo"), $("indicacion-principio")].filter(Boolean);
   try {
@@ -1275,9 +1211,8 @@ $("formulario").addEventListener("submit", async (evento) => {
   esqueleto($("dictamen"), 3);
 
   try {
-    // Se manda UNICAMENTE a quien se le va a recetar y que. La edad, las
-    // alergias, las psicopatologias y la medicacion activa las busca
-    // ms-vigia por su cuenta en ms-pastillero.
+    // Se manda solo a quien se le receta y que. La edad, las alergias y la
+    // medicacion las busca ms-vigia por su cuenta en ms-pastillero.
     const dictamen = await pedir(VIGIA + "/api/v1/validaciones", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1304,8 +1239,8 @@ $("formulario").addEventListener("submit", async (evento) => {
 
 const SIMBOLO_VEREDICTO = { BLOQUEADO: "⛔", ADVERTENCIA: "⚠", APROBADO: "✓" };
 
-// Todo el contenido de aqui viene del servidor, asi que se construye con
-// nodos y textContent: nunca se concatena en innerHTML.
+// Contenido del servidor: se construye con nodos y textContent, nunca con
+// innerHTML.
 function pintarDictamen(d, contenedor, conBotonProgramar) {
   const caja = contenedor || $("dictamen");
   caja.textContent = "";
@@ -1358,8 +1293,8 @@ function pintarDictamen(d, contenedor, conBotonProgramar) {
     caja.appendChild(bloque);
   }
 
-  // El boton de programar solo aplica al recetario de la jornada. En la
-  // consulta del especialista la receta ya quedo guardada por ms-consultas.
+  // Solo aplica al recetario de la jornada: en la consulta del especialista la
+  // receta ya quedo guardada por ms-consultas.
   if (d.veredicto !== "BLOQUEADO" && conBotonProgramar !== false) {
     const boton = document.createElement("button");
     boton.className = "accion accion--ancha";
@@ -1409,9 +1344,6 @@ async function programar(boton) {
   }
 }
 
-// ---------------------------------------------------------------------
-// Caja y donaciones
-// ---------------------------------------------------------------------
 
 async function pintarCaja() {
   const interno = INTERNOS[estado.interno];
@@ -1423,8 +1355,8 @@ async function pintarCaja() {
 
   const resumenNodo = $("caja-resumen");
   resumenNodo.textContent = "";
-  // El estado financiero del asilo es solo de administracion. El medico
-  // entra aqui unicamente por el estado de cuenta del interno.
+  // El balance del asilo es solo de administracion: el medico entra aqui
+  // unicamente por el estado de cuenta del interno.
   if (SESION.rol === "ADMINISTRACION") {
     esqueleto(resumenNodo, 4);
     try {
@@ -1457,8 +1389,7 @@ async function pintarCaja() {
     } else {
       cuenta.cargos.forEach((c) => cargosNodo.appendChild(filaCargo(c)));
     }
-    // Solo administracion: la caja no se le abre a nadie mas, y el reporte
-    // por consulta tampoco.
+    // Solo administracion, igual que el resto de la caja.
     if (SESION.rol === "ADMINISTRACION") await pintarCostosPorVisita(cuenta.cargos);
   } catch (error) {
     $("caja-saldo").textContent = "";
@@ -1510,7 +1441,7 @@ function filaCargo(c) {
   return fila;
 }
 
-// Registrar un pago tambien mueve dinero de una familia: se confirma.
+// Mueve dinero de una familia: se confirma.
 async function pagarCargo(c) {
   const interno = INTERNOS[estado.interno];
   const seguro = await confirmar({
@@ -1634,13 +1565,8 @@ $("formulario-gasto").addEventListener("submit", (evento) => {
 });
 
 
-// =====================================================================
-// Consultas · la cadena clinica
-// ---------------------------------------------------------------------
-// Cuatro pantallas sobre el mismo servicio, una por rol. Todas reusan los
-// mismos esqueletos de carga, estados vacios y bloques de error que el
-// resto de la estacion.
-// =====================================================================
+// Consultas · la cadena clinica. Cuatro pantallas sobre el mismo servicio,
+// una por rol.
 
 const estadoConsultas = { visitaAbierta: null, solicitudes: [], visitas: [] };
 
@@ -1695,9 +1621,6 @@ function campoFicha(rotulo, valor, clase) {
   return caja;
 }
 
-// ---------------------------------------------------------------------
-// Vista del MEDICO · remisiones e historial
-// ---------------------------------------------------------------------
 
 async function pintarConsultas() {
   const interno = INTERNOS[estado.interno];
@@ -1707,14 +1630,6 @@ async function pintarConsultas() {
   await Promise.all([pintarSolicitudes(), pintarCorreos(), pintarExamenes(), pintarHistorial()]);
 }
 
-// ---------------------------------------------------------------------
-// Avisos a la familia
-//
-// El enunciado pide avisarle al familiar cuando se remite al interno. Sin
-// servidor de correo el mensaje no sale a Internet, pero se genera igual y
-// queda guardado: acá se muestra completo, con asunto y cuerpo, que es lo
-// que permite demostrar el requisito en la defensa.
-// ---------------------------------------------------------------------
 
 async function pintarCorreos() {
   const nodo = $("lista-correos");
@@ -1731,8 +1646,7 @@ async function pintarCorreos() {
   $("correos-conteo").textContent =
     datos.total + (datos.total === 1 ? " aviso" : " avisos");
 
-  // Se explica por qué el estado dice "registrado" y no "enviado", en vez de
-  // dejar a quien lo vea adivinando si el correo salió o no.
+  // Se explica por qué el estado dice "registrado" y no "enviado".
   const nota = $("correos-nota");
   nota.textContent = datos.smtpConfigurado
     ? "Hay un servidor de correo configurado: los avisos salen de verdad."
@@ -1784,15 +1698,6 @@ async function pintarCorreos() {
   }
 }
 
-// ---------------------------------------------------------------------
-// Exámenes realizados
-//
-// El bloque de remisiones ya muestra los exámenes de cada consulta, pero
-// metidos dentro de la visita que los pidió. Cuando un interno lleva varias
-// consultas, saber cuántos estudios se le han hecho obliga a abrirlas una
-// por una y contar. Esto los junta y dice, arriba, cuántos siguen esperando
-// resultado.
-// ---------------------------------------------------------------------
 
 async function pintarExamenes() {
   const nodo = $("lista-examenes");
@@ -1830,7 +1735,7 @@ async function pintarExamenes() {
 
     const dato = document.createElement("p");
     dato.className = "ficha__dato";
-    // De qué consulta salió: un examen suelto no dice a qué pregunta responde.
+    // De qué consulta salió: suelto no dice a qué pregunta responde.
     dato.textContent = fechaLegible(e.fechaVisita) + " · " +
       (e.especialidad || "sin especialidad") + " · " +
       (e.medicoTratante || "sin médico asignado");
@@ -1853,14 +1758,8 @@ async function pintarExamenes() {
 }
 
 
-// ---------------------------------------------------------------------
-// Ficha médica completa
-//
-// El expediente del interno en un solo documento: lo que trae el padrón
-// —psicopatologías y alergias— junto a lo que trae la cadena clínica —cada
-// consulta con su diagnóstico, sus exámenes y lo que se le recetó—. Es lo
-// que el médico querría tener impreso enfrente.
-// ---------------------------------------------------------------------
+// Ficha médica completa: junta lo del padrón —psicopatologías y alergias— con
+// lo de la cadena clínica.
 
 let soltarFocoFicha = null;
 let abrioLaFicha = null;
@@ -1881,9 +1780,8 @@ function lineaDato(rotulo, valor) {
   return caja;
 }
 
-// null y [] no significan lo mismo: null es "el padrón no lo entregó" y [] es
-// "no tiene". Mostrar los dos igual haría leer una cosa por la otra, y en
-// alergias esa confusión es peligrosa.
+// null es "el padrón no lo entregó" y [] es "no tiene". Mostrarlos igual, en
+// alergias, es peligroso.
 function comoLista(valores, vacioTexto) {
   if (valores === null || valores === undefined) {
     const p = document.createElement("p");
@@ -1951,7 +1849,7 @@ async function abrirFicha(evento) {
   cuerpo.textContent = "";
   const id = f.identificacion || {};
 
-  // Quién la sacó y cuándo. Es un documento clínico: se firma.
+  // Es un documento clínico: se firma con quién lo sacó y cuándo.
   $("ficha-pie").textContent = "Generada el " + fechaLegible(f.generadoEn) +
     " a solicitud de " + f.consultadaPor + ".";
 
@@ -1988,8 +1886,7 @@ async function abrirFicha(evento) {
   h.textContent = "Historial de consultas";
   const nota = document.createElement("span");
   nota.className = "bloque__nota";
-  // El singular importa: "1 consultas · 2 exámenes · 1 medicamentos" se lee
-  // como un descuido, y esta es la cabecera de un documento clínico.
+  // El singular importa: es la cabecera de un documento clínico.
   const cuenta = (n, uno, varios) => n + " " + (n === 1 ? uno : varios);
   nota.textContent = [
     cuenta(f.resumen.visitas, "consulta", "consultas"),
@@ -2052,14 +1949,9 @@ function cerrarFicha() {
 }
 
 
-// ---------------------------------------------------------------------
-// Costo por consulta (administración)
-//
-// La caja no lleva el registro de visitas: no puede listar las consultas de
-// un interno por su cuenta. Pero cada cargo que nació de una consulta trae
-// encima de qué consulta salió, así que las visitas se sacan de los cargos
-// que ya están en pantalla y a la caja se le pide el total de cada una.
-// ---------------------------------------------------------------------
+// La caja no lleva registro de visitas y no puede listarlas. Pero cada cargo
+// trae de qué consulta salió, así que las visitas se sacan de los cargos que
+// ya están en pantalla.
 
 async function pintarCostosPorVisita(cargos) {
   const bloque = $("bloque-costos");
@@ -2067,8 +1959,8 @@ async function pintarCostosPorVisita(cargos) {
 
   const visitas = [...new Set((cargos || []).map((c) => c.visitaId).filter(Boolean))];
   if (!visitas.length) {
-    // Sin cargos nacidos de una consulta el bloque no aporta nada: se esconde
-    // en vez de mostrar un vacío que se leería como un error.
+    // Sin cargos de consulta el bloque se esconde: un vacío se leería como
+    // un error.
     bloque.hidden = true;
     return;
   }
@@ -2104,9 +1996,8 @@ async function pintarCostosPorVisita(cargos) {
       const c = r.porCategoria[categoria];
       desglose.appendChild(lineaDato(
         categoria.charAt(0) + categoria.slice(1).toLowerCase(),
-        // "sin cargos" y no el "sin llenar" de la ficha clínica: aquí un cero
-        // no es un campo que alguien olvidó llenar, es que esa consulta no
-        // generó ese tipo de gasto.
+        // "sin cargos" y no "sin llenar": el cero no es un campo olvidado,
+        // es que la consulta no generó ese gasto.
         c.cantidad
           ? c.cantidad + (c.cantidad === 1 ? " cargo · Q " : " cargos · Q ") +
             c.montoNeto.toFixed(2)
@@ -2229,7 +2120,7 @@ async function pintarHistorial() {
   datos.visitas.forEach((v) => nodo.appendChild(tarjetaVisita(v)));
 }
 
-// La ficha médica del interno: una tarjeta por consulta.
+// Una tarjeta por consulta.
 function tarjetaVisita(v) {
   const caja = document.createElement("article");
   caja.className = "visita visita--" + v.estado;
@@ -2269,8 +2160,7 @@ function tarjetaVisita(v) {
   cuerpo.appendChild(campoFicha("Diagnóstico", v.diagnostico, "visita__diagnostico"));
   cuerpo.appendChild(campoFicha("Observaciones", v.observaciones));
 
-  // Los exámenes solo llegan si el rol puede verlos; si no, el campo no viene
-  // en la respuesta y el bloque no se dibuja.
+  // Si el rol no puede verlos, el campo no viene y el bloque no se dibuja.
   if (v.examenes) cuerpo.appendChild(bloqueExamenes(v.examenes));
   if (v.indicaciones) cuerpo.appendChild(bloqueIndicaciones(v.indicaciones));
 
@@ -2361,9 +2251,6 @@ function bloqueIndicaciones(indicaciones) {
   return bloque;
 }
 
-// ---------------------------------------------------------------------
-// Remitir a especialidad · cajón lateral, como el recetario
-// ---------------------------------------------------------------------
 
 let soltarFocoRemision = null;
 let abrioLaRemision = null;
@@ -2411,7 +2298,7 @@ $("formulario-remision").addEventListener("submit", async (evento) => {
     });
     $("formulario-remision").reset();
     cerrarRemision();
-    // El servicio devuelve el aviso que genero, si lo consiguio generar.
+    // El servicio devuelve el aviso que generó, si lo consiguió.
     const enviado = solicitud.avisoFamiliar;
     aviso("Remisión enviada",
       solicitud.id + " · " + interno.nombre + " queda a la espera de que la fundación " +
@@ -2428,12 +2315,7 @@ $("formulario-remision").addEventListener("submit", async (evento) => {
   }
 });
 
-// ---------------------------------------------------------------------
-// Atender · crear la visita y llenar la ficha
-// ---------------------------------------------------------------------
-
-// Crear una visita convierte la remisión en un acto clínico y la marca como
-// atendida: se confirma antes, igual que administrar un medicamento.
+// Convierte la remisión en un acto clínico y la marca atendida: se confirma.
 async function atender(solicitud) {
   const interno = INTERNOS[solicitud.pacienteId];
   const seguro = await confirmar({
@@ -2622,7 +2504,7 @@ $("formulario-indicacion").addEventListener("submit", async (evento) => {
         comoTomarlo: $("indicacion-como").value.trim() || null
       })
     });
-    // Aprobada: se pinta el dictamen con el mismo tratamiento del recetario.
+    // Aprobada: mismo tratamiento visual que el recetario.
     pintarDictamen({
       veredicto: indicacion.veredictoVigia,
       folio: indicacion.folioValidacion,
@@ -2635,9 +2517,8 @@ $("formulario-indicacion").addEventListener("submit", async (evento) => {
       "ok");
     await refrescarVisitaAbierta();
   } catch (error) {
-    // Bloqueado por farmacovigilancia: el dictamen completo, igual que en el
-    // recetario de la jornada. No es un error del sistema, es una decisión
-    // clínica y se muestra como tal.
+    // Bloqueado por farmacovigilancia: no es un error del sistema sino una
+    // decisión clínica, y se muestra como tal.
     if (error.estado === 409 && error.cuerpo && error.cuerpo.dictamen) {
       pintarDictamen(error.cuerpo.dictamen, $("dictamen-indicacion"), false);
       aviso("ms-vigia bloqueó la receta",
@@ -2652,9 +2533,6 @@ $("formulario-indicacion").addEventListener("submit", async (evento) => {
   }
 });
 
-// ---------------------------------------------------------------------
-// Vista de la FUNDACION · bandeja de remisiones por agendar
-// ---------------------------------------------------------------------
 
 async function pintarAgenda() {
   const nodo = $("bandeja-agenda");
@@ -2797,17 +2675,14 @@ function campoDeTexto(rotulo, tipo, marcador, requerido, clase) {
   return caja;
 }
 
-// ---------------------------------------------------------------------
-// Vista del LABORATORIO · exámenes esperando resultado
-// ---------------------------------------------------------------------
 
 async function pintarLaboratorio() {
   const nodo = $("bandeja-laboratorio");
   esqueleto(nodo, 3, true);
   let examenes, visitas;
   try {
-    // El motivo de la consulta vive en la visita, no en el examen: se piden
-    // las dos y se cruzan aquí. Laboratorio puede leer ambas cosas.
+    // El motivo vive en la visita, no en el examen: se piden las dos y se
+    // cruzan aquí.
     examenes = await pedir(CONSULTAS + "/api/v1/examenes?estado=SOLICITADO");
     visitas = await pedir(CONSULTAS + "/api/v1/visitas");
   } catch (error) {
@@ -2896,17 +2771,14 @@ async function pintarLaboratorio() {
   }
 }
 
-// ---------------------------------------------------------------------
-// Vista de la FARMACIA · medicamentos por entregar
-// ---------------------------------------------------------------------
 
 async function pintarFarmacia() {
   const nodo = $("bandeja-farmacia");
   esqueleto(nodo, 3, true);
   let datos;
   try {
-    // Farmacia lee las visitas con sus indicaciones anidadas; los exámenes no
-    // le llegan. De ahí se filtra lo que todavía no se entregó.
+    // Farmacia lee las visitas con sus indicaciones; los exámenes no le
+    // llegan.
     datos = await pedir(CONSULTAS + "/api/v1/visitas");
   } catch (error) {
     problema(nodo, error, "consultar los medicamentos por entregar", pintarFarmacia);
@@ -2972,8 +2844,7 @@ async function pintarFarmacia() {
   }
 }
 
-// Entregar un medicamento le carga el costo a la familia del interno y no se
-// puede deshacer desde la estación: se confirma antes.
+// Le carga el costo a la familia y no se puede deshacer: se confirma.
 async function entregar(indicacion, visita) {
   const seguro = await confirmar({
     titulo: "¿Entregar este medicamento?",
@@ -3009,22 +2880,18 @@ async function entregar(indicacion, visita) {
   }
 }
 
-// ---------------------------------------------------------------------
-// Arranque
-// ---------------------------------------------------------------------
 
 let relojBarra;
 
 async function iniciarApp() {
-  // Fundacion, laboratorio y farmacia no leen ms-pastillero: pedirles el
-  // padron solo produciria un 403 y un bloque de error en pantalla.
+  // Los roles operativos no leen ms-pastillero: pedir el padron solo daria un
+  // 403 y un bloque de error en pantalla.
   const hayPadron = tienePadron() ? await cargarInternos() : true;
   if (SESION.rol === "MEDICO" || SESION.rol === "ENFERMERIA") cargarVademecum();
 
   if (hayPadron) {
-    // Se respeta a donde queria ir la persona antes del acceso. Si no
-    // queria ir a ningun lado, o su rol no lo permite, entra en la vista
-    // que le corresponde.
+    // Se respeta a donde queria ir antes del acceso; si no, la vista que le
+    // corresponde a su rol.
     const destino = parsearHash(rutaPretendida);
     rutaPretendida = "";
     rutaActual = { vista: null, interno: null };
@@ -3037,22 +2904,21 @@ async function iniciarApp() {
   relojBarra = setInterval(refrescarBarra, 30000);
 }
 
-// Las credenciales de demostración solo se imprimen si el gateway dice que
-// la bandera MOSTRAR_USUARIOS_DEMO está encendida. Apagada por defecto: tener
-// las tres claves escritas en la pantalla de acceso contradice el resto del
-// trabajo de seguridad. El endpoint es público y no devuelve credenciales,
-// solo el sí o el no.
+// Solo si el gateway dice que MOSTRAR_USUARIOS_DEMO está encendida. Apagada
+// por defecto: las claves escritas en la pantalla de acceso contradicen el
+// resto del trabajo de seguridad. El endpoint devuelve el sí o el no, nunca
+// las credenciales.
 (async function ajustarAyudaDeAcceso() {
   try {
     const config = await pedir(CONFIG);
     $("acceso-ayuda").hidden = !config.mostrarUsuariosDemo;
   } catch (_) {
-    // Si no se puede preguntar, se queda oculto: el valor seguro por defecto.
+    // Si no se puede preguntar, oculto: el valor seguro por defecto.
   }
 })();
 
-// Si ya habia una sesion guardada en esta pestaña, se valida contra el
-// gateway antes de saltarse la pantalla de acceso.
+// Una sesion guardada se valida contra el gateway antes de saltarse la
+// pantalla de acceso.
 (async function intentarSesionGuardada() {
   $("acceso-usuario").focus();
   const guardada = sessionStorage.getItem("sesionAsilo");

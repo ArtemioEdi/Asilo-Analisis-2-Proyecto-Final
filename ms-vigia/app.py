@@ -17,10 +17,7 @@ import vademecum as vd
 APP_NOMBRE = "ms-vigia"
 APP_VERSION = "2.0.0"
 
-# ---------------------------------------------------------------------------
-# Conexion a MySQL. Todo por variables de entorno; si falta alguna, el
-# servicio no arranca, igual que con GATEWAY_SECRETO.
-# ---------------------------------------------------------------------------
+# Conexion a MySQL. Si falta alguna variable, el servicio no arranca.
 BD_HOST = os.environ.get("BD_HOST", "")
 BD_PUERTO = int(os.environ.get("BD_PUERTO", "3306"))
 BD_NOMBRE = os.environ.get("BD_NOMBRE", "")
@@ -39,14 +36,12 @@ if _faltantes:
         "Copie .env.ejemplo a .env." % ", ".join(_faltantes)
     )
 
-# ms-pastillero es el dueño del padron de internos. Este servicio le pregunta
-# la ficha clinica en vez de creerle al cliente: ver consultar_ficha().
+# El padron es de ms-pastillero: la ficha se le pregunta a el, no se le cree
+# al cliente. Ver consultar_ficha().
 PASTILLERO_URL = os.environ.get("PASTILLERO_URL", "http://ms-pastillero:8082")
 
-# ---------------------------------------------------------------------------
-# Secreto compartido con ms-gateway. No hay valor por defecto: si falta, el
-# servicio no arranca. Un secreto escrito en el codigo es un secreto publicado.
-# ---------------------------------------------------------------------------
+# Secreto compartido con ms-gateway. Sin valor por defecto a proposito: un
+# secreto escrito en el codigo es un secreto publicado.
 SECRETO = os.environ.get("GATEWAY_SECRETO", "")
 if len(SECRETO.strip()) < 16:
     raise RuntimeError(
@@ -55,23 +50,19 @@ if len(SECRETO.strip()) < 16:
         "un secreto con: openssl rand -hex 32"
     )
 
-# Matriz de acceso de este servicio. La bitacora de farmacovigilancia es
-# informacion clinica: la leen medicina y enfermeria, y la escribe unicamente
-# el medico, que es quien firma la prescripcion.
+# La bitacora es informacion clinica: la escribe solo el medico, que es quien
+# firma la prescripcion.
 ROLES_LECTURA = ("MEDICO", "ENFERMERIA")
 ROLES_ESCRITURA = ("MEDICO",)
 
-# La sonda de vida no expone datos del asilo y la consulta Docker desde dentro
-# del contenedor, sin token.
+# La sonda de vida no expone datos y Docker la consulta sin token.
 RUTAS_LIBRES = ("/salud",)
 
-# Puntaje a partir del cual un dictamen deja de ser APROBADO y pasa a
-# ADVERTENCIA. Equivale a un solo hallazgo de severidad MEDIA. Ver dictaminar().
+# Desde aqui un dictamen pasa de APROBADO a ADVERTENCIA: equivale a un solo
+# hallazgo de severidad MEDIA.
 UMBRAL_ADVERTENCIA = 8
 
-# MySQL devuelve DECIMAL como Decimal y DATETIME como datetime, y ninguno de
-# los dos sabe convertirse solo a JSON. Se traducen aqui, en un solo lugar,
-# para que ninguna respuesta cambie de forma respecto a la version con SQLite.
+# MySQL devuelve Decimal y datetime, y ninguno sabe convertirse solo a JSON.
 class ProveedorJSON(DefaultJSONProvider):
     @staticmethod
     def default(objeto):
@@ -93,8 +84,7 @@ def abrir_conexion():
     return pymysql.connect(
         host=BD_HOST, port=BD_PUERTO, user=BD_USUARIO, password=BD_CLAVE,
         database=BD_NOMBRE, charset="utf8mb4", cursorclass=DictCursor,
-        # Nada se da por escrito hasta que la peticion lo confirma con
-        # commit(). Con SQLite cada execute() se guardaba solo.
+        # Nada queda escrito hasta el commit() de la peticion.
         autocommit=False, connect_timeout=5,
     )
 
@@ -330,8 +320,7 @@ def consultar_ficha(paciente_id):
 
     ficha = r.json()
     if "alergias" not in ficha:
-        # Respuesta sin la parte clinica: quien pregunta no tiene rol clinico.
-        # No se puede evaluar una prescripcion con media ficha.
+        # Sin la parte clinica no se puede dictaminar: media ficha no sirve.
         return None, ("La ficha recibida no trae los datos clinicos del interno. "
                       "No se dictamina sin alergias ni psicopatologias."), 503
     return ficha, None, 200
@@ -371,18 +360,11 @@ def validar_peticion(cuerpo):
     return errores
 
 
-# ---------------------------------------------------------------------------
-# Verificacion de la sesion.
+# El gateway ya valido el token, pero aqui se vuelve a validar: defensa en
+# profundidad, por si alguien alcanza la red interna y llama directo.
 #
-# ms-gateway ya valida el token antes de reenviar la peticion, pero este
-# servicio lo vuelve a verificar por su cuenta: es defensa en profundidad. Si
-# alguien alcanza la red interna del stack y llama directo a ms-vigia sin
-# pasar por el gateway, aqui se le vuelve a pedir quien es.
-#
-# Ya no hay encabezados Access-Control-Allow-Origin: este servicio no publica
-# puerto al host y ningun navegador le habla de forma directa. El unico origen
-# que atiende peticiones del navegador es ms-gateway.
-# ---------------------------------------------------------------------------
+# Sin encabezados CORS: este servicio no publica puerto y ningun navegador le
+# habla de forma directa.
 @app.before_request
 def exigir_sesion():
     if request.method == "OPTIONS" or request.path in RUTAS_LIBRES:
@@ -464,10 +446,9 @@ def crear_validacion():
         "cadaHoras": float(prop["cadaHoras"]),
         "viaAdministracion": (prop.get("viaAdministracion") or "oral").lower(),
     }
-    # La ficha NO se lee del cuerpo de la peticion: se le pide a ms-pastillero,
-    # que es el dueño del padron de internos. El cliente solo dice a quien se
-    # le va a recetar; con que condiciones cuenta ese interno lo dice el
-    # servidor. Ver consultar_ficha().
+    # La ficha NO viene del cuerpo de la peticion: se le pide a ms-pastillero.
+    # El cliente dice a quien se le receta; con que condiciones cuenta ese
+    # interno lo dice el servidor.
     ficha, problema, codigo = consultar_ficha(cuerpo["pacienteId"])
     if problema:
         return jsonify({"error": problema, "pacienteId": cuerpo["pacienteId"]}), codigo
@@ -487,9 +468,8 @@ def crear_validacion():
         "puntajeRiesgo": puntaje,
         "hallazgos": hallazgos,
         "resumen": _resumen(veredicto, hallazgos),
-        # Queda escrito en el dictamen con que ficha se evaluo y de donde
-        # salio. Es lo que permite auditar despues por que se bloqueo o se
-        # aprobo un medicamento, y deja claro que el dato no vino del cliente.
+        # Con que ficha se evaluo y de donde salio: es lo que permite auditar
+        # despues por que se bloqueo o se aprobo.
         "fichaEvaluada": {
             "nombre": ficha.get("nombre"),
             "edad": ficha.get("edad"),
@@ -502,8 +482,8 @@ def crear_validacion():
         },
         "evaluadoEn": evaluado_en.isoformat(timespec="seconds"),
     }
-    # Columnas explicitas y no VALUES posicional: con el esquema en un archivo
-    # aparte, el orden de las columnas se rompe en silencio.
+    # Columnas explicitas: con el esquema en otro archivo, el orden posicional
+    # se rompe en silencio.
     try:
         ejecutar(
             """INSERT INTO validaciones

@@ -26,10 +26,7 @@ from pymysql.cursors import DictCursor
 APP_NOMBRE = "ms-consultas"
 APP_VERSION = "1.0.0"
 
-# ---------------------------------------------------------------------------
-# Conexion a MySQL. Todo por variables de entorno; si falta alguna, el
-# servicio no arranca, igual que con GATEWAY_SECRETO.
-# ---------------------------------------------------------------------------
+# Conexion a MySQL. Si falta alguna variable, el servicio no arranca.
 BD_HOST = os.environ.get("BD_HOST", "")
 BD_PUERTO = int(os.environ.get("BD_PUERTO", "3306"))
 BD_NOMBRE = os.environ.get("BD_NOMBRE", "")
@@ -53,27 +50,17 @@ PASTILLERO_URL = os.environ.get("PASTILLERO_URL", "http://ms-pastillero:8082")
 VIGIA_URL = os.environ.get("VIGIA_URL", "http://ms-vigia:8081")
 CAJA_URL = os.environ.get("CAJA_URL", "http://ms-caja:8083")
 
-# ---------------------------------------------------------------------------
-# Correo al familiar responsable.
-#
-# El enunciado pide avisarle a la familia cuando se remite al interno. La
-# configuracion es opcional a proposito: si no hay servidor de correo, el
-# aviso NO se pierde ni hace fallar la remision. Se escribe completo en la
-# bitacora del contenedor y se guarda en la tabla correos_enviados con estado
-# REGISTRADO, y la estacion lo muestra en pantalla. Asi el requisito se
-# demuestra sin depender de un servidor externo que en una defensa puede no
-# estar disponible.
-# ---------------------------------------------------------------------------
+# Correo al familiar. La configuracion es opcional a proposito: sin servidor
+# de correo el aviso no se pierde ni tumba la remision, queda en la bitacora y
+# en la tabla correos_enviados con estado REGISTRADO.
 SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
 SMTP_PUERTO = int(os.environ.get("SMTP_PUERTO", "587") or "587")
 SMTP_USUARIO = os.environ.get("SMTP_USUARIO", "").strip()
 SMTP_CLAVE = os.environ.get("SMTP_CLAVE", "")
 SMTP_DE = os.environ.get("SMTP_DE", "").strip() or "asilo@cabezadealgodon.local"
 
-# ---------------------------------------------------------------------------
-# Secreto compartido con ms-gateway. No hay valor por defecto: si falta, el
-# servicio no arranca. Un secreto escrito en el codigo es un secreto publicado.
-# ---------------------------------------------------------------------------
+# Secreto compartido con ms-gateway. Sin valor por defecto a proposito: un
+# secreto escrito en el codigo es un secreto publicado.
 SECRETO = os.environ.get("GATEWAY_SECRETO", "")
 if len(SECRETO.strip()) < 16:
     raise RuntimeError(
@@ -82,22 +69,12 @@ if len(SECRETO.strip()) < 16:
         "un secreto con: openssl rand -hex 32"
     )
 
-# ---------------------------------------------------------------------------
-# Matriz de acceso.
+# Matriz de acceso, ruta por ruta y no en bloque: cada eslabon de la cadena lo
+# mueve un rol distinto. La misma matriz, mas gruesa, la aplica ms-gateway
+# antes de reenviar; que este repetida es defensa en profundidad.
 #
-# Este servicio la aplica ruta por ruta y no en bloque, porque cada eslabon de
-# la cadena lo mueve un rol distinto: el medico remite y atiende, la fundacion
-# agenda, laboratorio carga resultados y farmacia entrega. Cada regla es
-# (metodo, patron de ruta) -> roles que pueden.
-#
-# La misma matriz, mas gruesa, la hace cumplir ms-gateway antes de reenviar.
-# Que este repetida es defensa en profundidad, igual que en los otros tres
-# servicios.
-# ---------------------------------------------------------------------------
-# Que puede LEER cada rol, por recurso. Nadie lee la cadena entera salvo
-# medicina y enfermeria: la fundacion solo necesita la agenda, el laboratorio
-# solo lo suyo y la farmacia solo lo suyo. ADMINISTRACION no aparece en
-# ninguna linea: la cadena clinica no es informacion administrativa.
+# ADMINISTRACION no aparece: la cadena clinica no es informacion
+# administrativa.
 REGLAS_LECTURA = (
     (re.compile(r"^/api/v1/solicitudes"),
      ("MEDICO", "ENFERMERIA", "FUNDACION")),
@@ -107,27 +84,22 @@ REGLAS_LECTURA = (
      ("MEDICO", "ENFERMERIA", "LABORATORIO")),
     (re.compile(r"^/api/v1/indicaciones"),
      ("MEDICO", "ENFERMERIA", "FARMACIA")),
-    # La bitacora de avisos a la familia la ve quien lleva la parte clinica.
+    # Los avisos a la familia los ve quien lleva la parte clinica.
     (re.compile(r"^/api/v1/correos"),
      ("MEDICO", "ENFERMERIA")),
-    # La ficha medica completa reune TODO lo del interno: psicopatologias,
-    # alergias, diagnosticos, examenes y recetas. Es el documento mas
-    # sensible del sistema y se queda en manos clinicas. El laboratorio y la
-    # farmacia siguen viendo lo suyo por /api/v1/visitas, que ya les filtra
-    # el bloque que no les toca; darles la ficha entera desharia ese filtro
-    # por la puerta de atras.
+    # La ficha completa es el documento mas sensible y se queda en manos
+    # clinicas: darsela al laboratorio o a la farmacia desharia por la puerta
+    # de atras el filtro por bloque de /api/v1/visitas.
     (re.compile(r"^/api/v1/reportes/ficha"),
      ("MEDICO", "ENFERMERIA")),
-    # El reporte de examenes si lo ve el laboratorio: son los estudios que
-    # el mismo realiza, y ya los lee uno por uno en su pantalla.
+    # El laboratorio si ve este: son los estudios que el mismo realiza.
     (re.compile(r"^/api/v1/reportes/examenes"),
      ("MEDICO", "ENFERMERIA", "LABORATORIO")),
 )
 
-# Quien puede ver cada bloque anidado dentro de una visita. Una visita trae la
-# ficha completa —examenes e indicaciones—, asi que sin esto el laboratorio
-# leeria las recetas y la farmacia los resultados de laboratorio con solo
-# pedir la visita. Cada uno ve el suyo.
+# Una visita trae examenes e indicaciones juntos. Sin este filtro el
+# laboratorio leeria las recetas y la farmacia los resultados de laboratorio
+# con solo pedir la visita.
 ROLES_VEN_EXAMENES = ("MEDICO", "ENFERMERIA", "LABORATORIO")
 ROLES_VEN_INDICACIONES = ("MEDICO", "ENFERMERIA", "FARMACIA")
 
@@ -144,13 +116,11 @@ REGLAS_ESCRITURA = (
     ("PUT",  re.compile(r"^/api/v1/indicaciones/[^/]+/entregar/?$"), ("FARMACIA",)),
 )
 
-# La sonda de vida no expone datos del asilo y la consulta Docker desde dentro
-# del contenedor, sin token.
+# La sonda de vida no expone datos y Docker la consulta sin token.
 RUTAS_LIBRES = ("/salud",)
 
 
-# MySQL devuelve DECIMAL como Decimal y DATETIME como datetime, y ninguno de
-# los dos sabe convertirse solo a JSON. Se traducen aqui, en un solo lugar.
+# MySQL devuelve Decimal y datetime, y ninguno sabe convertirse solo a JSON.
 class ProveedorJSON(DefaultJSONProvider):
     @staticmethod
     def default(objeto):
@@ -168,9 +138,6 @@ app.json = ProveedorJSON(app)
 app.json.ensure_ascii = False
 
 
-# ---------------------------------------------------------------------------
-# Base de datos
-# ---------------------------------------------------------------------------
 
 def abrir_conexion():
     return pymysql.connect(
@@ -237,14 +204,8 @@ def esperar_a_mysql(intentos=30, pausa=2):
     )
 
 
-# ---------------------------------------------------------------------------
-# Verificacion de la sesion
-#
-# ms-gateway ya valida el token antes de reenviar la peticion, pero este
-# servicio lo vuelve a verificar por su cuenta: es defensa en profundidad. Si
-# alguien alcanza la red interna del stack y llama directo a ms-consultas sin
-# pasar por el gateway, aqui se le vuelve a pedir quien es.
-# ---------------------------------------------------------------------------
+# El gateway ya valido el token, pero aqui se vuelve a validar: defensa en
+# profundidad, por si alguien alcanza la red interna y llama directo.
 @app.before_request
 def exigir_sesion():
     if request.method == "OPTIONS" or request.path in RUTAS_LIBRES:
@@ -330,9 +291,6 @@ def autorizacion_del_cliente():
     return {"Authorization": request.headers.get("Authorization", "")}
 
 
-# ---------------------------------------------------------------------------
-# Llamadas a los otros microservicios
-# ---------------------------------------------------------------------------
 
 def existe_el_interno(paciente_id):
     """Devuelve (ficha, error, codigo). Nunca lanza excepcion.
@@ -355,8 +313,7 @@ def existe_el_interno(paciente_id):
     if r.status_code != 200:
         return None, ("MS-PASTILLERO respondio con codigo %d al consultar el "
                       "padron." % r.status_code), 503
-    # La ficha trae el nombre del interno y el correo de su familiar
-    # responsable: los dos hacen falta para redactar el aviso.
+    # De la ficha salen el nombre del interno y el correo del familiar.
     return r.json(), None, 200
 
 
@@ -429,9 +386,6 @@ def crear_cargo(paciente_id, categoria, concepto, tarifa, visita_id=None):
     return r.json().get("id"), None
 
 
-# ---------------------------------------------------------------------------
-# Aviso al familiar responsable
-# ---------------------------------------------------------------------------
 
 def redactar_aviso(ficha, solicitud):
     """El texto del correo. Dice en que estado quedo y a donde se le remitio."""
@@ -498,8 +452,8 @@ def registrar_aviso(solicitud, ficha):
         else:
             estado = enviar_por_smtp(destinatario, asunto, cuerpo)
 
-        # Al log SIEMPRE, con asunto y cuerpo completos: es la prueba de que
-        # el aviso se genero aunque no haya servidor de correo.
+        # Al log siempre y completo: es la prueba de que el aviso se genero
+        # aunque no haya servidor de correo.
         print(
             "\n[%s] ===== AVISO AL FAMILIAR (%s) =====\n"
             "De     : %s\n"
@@ -528,8 +482,7 @@ def registrar_aviso(solicitud, ficha):
         return {"id": correo_id, "estado": estado, "destinatario": destinatario,
                 "asunto": asunto}
     except Exception as error:
-        # Ni siquiera se pudo dejar constancia. Se anota y se sigue: la
-        # remision ya esta guardada y es lo que importa.
+        # Ni siquiera se pudo dejar constancia. La remision ya esta guardada.
         print("[%s] no se pudo registrar el aviso al familiar: %s"
               % (APP_NOMBRE, error), flush=True)
         return None
@@ -549,8 +502,8 @@ def enviar_por_smtp(destinatario, asunto, cuerpo):
                 servidor.starttls()
                 servidor.ehlo()
             except smtplib.SMTPException:
-                # Servidor sin TLS: se sigue en claro. Es lo normal en un
-                # servidor de pruebas dentro de la propia red.
+                # Servidor sin TLS: se sigue en claro, normal en un servidor
+                # de pruebas dentro de la propia red.
                 pass
             if SMTP_USUARIO:
                 servidor.login(SMTP_USUARIO, SMTP_CLAVE)
@@ -562,9 +515,6 @@ def enviar_por_smtp(destinatario, asunto, cuerpo):
         return "FALLIDO"
 
 
-# ---------------------------------------------------------------------------
-# Utilidades
-# ---------------------------------------------------------------------------
 
 def folio(prefijo):
     return "%s-%s-%s" % (prefijo, datetime.now().year, uuid.uuid4().hex[:8].upper())
@@ -651,9 +601,8 @@ def visita_json(fila, con_detalle=True):
         "creadaEn": iso(fila["creada_en"]),
     }
     if con_detalle:
-        # Cada bloque solo si el rol de quien pregunta puede verlo. El
-        # laboratorio no lee las recetas y la farmacia no lee los resultados
-        # de laboratorio, aunque los dos puedan abrir la visita.
+        # Cada bloque solo si el rol puede verlo: los dos pueden abrir la
+        # visita, pero no leer lo del otro.
         rol = g.sesion.get("rol") if "sesion" in g else None
         if rol in ROLES_VEN_EXAMENES:
             visita["examenes"] = [
@@ -670,9 +619,6 @@ def visita_json(fila, con_detalle=True):
     return visita
 
 
-# ---------------------------------------------------------------------------
-# Sonda de vida
-# ---------------------------------------------------------------------------
 
 @app.get("/salud")
 def salud():
@@ -692,9 +638,6 @@ def salud():
     })
 
 
-# ---------------------------------------------------------------------------
-# Solicitudes · el medico general remite
-# ---------------------------------------------------------------------------
 
 @app.post("/api/v1/solicitudes")
 def crear_solicitud():
@@ -729,9 +672,8 @@ def crear_solicitud():
         bd.rollback()
         raise
 
-    # El aviso al familiar va DESPUES del commit y en su propia transaccion:
-    # la remision es el acto clinico y no puede depender de que el correo
-    # salga. Si el correo falla, la remision ya quedo guardada.
+    # El aviso va DESPUES del commit y en su propia transaccion: la remision
+    # es el acto clinico y no puede depender de que el correo salga.
     fila = consultar_uno("SELECT * FROM solicitudes WHERE id = %s", (solicitud_id,))
     aviso = registrar_aviso(fila, ficha)
 
@@ -851,16 +793,12 @@ def listar_correos():
     ]
     return jsonify({
         "total": len(correos),
-        # Para que la pantalla pueda explicar por que el estado es REGISTRADO
-        # y no ENVIADO, sin tener que adivinarlo.
+        # La pantalla lo usa para explicar por que el estado es REGISTRADO.
         "smtpConfigurado": bool(SMTP_HOST),
         "correos": correos,
     })
 
 
-# ---------------------------------------------------------------------------
-# Visitas · el especialista atiende y llena la ficha medica
-# ---------------------------------------------------------------------------
 
 @app.post("/api/v1/visitas")
 def crear_visita():
@@ -893,8 +831,8 @@ def crear_visita():
 
     visita_id = folio("VM")
     bd = conexion()
-    # Crear la visita y marcar la solicitud como atendida es una sola cosa:
-    # una visita sin su solicitud cerrada dejaria la agenda mintiendo.
+    # Crear la visita y marcar la solicitud atendida van juntas: si no, la
+    # agenda queda mintiendo.
     try:
         ejecutar(
             """INSERT INTO visitas
@@ -989,9 +927,6 @@ def cerrar_visita(visita_id):
         consultar_uno("SELECT * FROM visitas WHERE id = %s", (visita_id,))))
 
 
-# ---------------------------------------------------------------------------
-# Examenes
-# ---------------------------------------------------------------------------
 
 @app.post("/api/v1/visitas/<visita_id>/examenes")
 def indicar_examen(visita_id):
@@ -1010,7 +945,7 @@ def indicar_examen(visita_id):
                      % visita_id,
         }), 409
 
-    # El cobro se intenta ANTES de guardar, pero su fallo no impide guardar:
+    # El cobro se intenta antes de guardar, pero su fallo no impide guardar:
     # el examen es el dato clinico y no se pierde por un problema de caja.
     cargo_id, advertencia = crear_cargo(
         visita["paciente_id"], "LABORATORIO",
@@ -1097,9 +1032,6 @@ def listar_examenes():
     return jsonify({"total": len(salida), "examenes": salida})
 
 
-# ---------------------------------------------------------------------------
-# Indicaciones
-# ---------------------------------------------------------------------------
 
 @app.post("/api/v1/visitas/<visita_id>/indicaciones")
 def recetar(visita_id):
@@ -1228,13 +1160,6 @@ def entregar_indicacion(indicacion_id):
     return jsonify(salida)
 
 
-# ---------------------------------------------------------------------------
-# Reportes
-#
-# Los dos reportes de esta seccion no agregan datos nuevos: releen los que ya
-# estan y los presentan juntos. Existen porque en la defensa hay preguntas que
-# hoy solo se contestan abriendo cuatro pantallas y sumando a mano.
-# ---------------------------------------------------------------------------
 
 @app.get("/api/v1/reportes/examenes")
 def reporte_examenes():
@@ -1265,8 +1190,7 @@ def reporte_examenes():
     examenes = []
     for fila in filas:
         examen = examen_json(fila)
-        # De que consulta salio. Sin esto el reporte es una lista de estudios
-        # sueltos y no se sabe cual respondia a que.
+        # De que consulta salio: sin esto son estudios sueltos.
         examen["pacienteId"] = fila["paciente_id"]
         examen["fechaVisita"] = iso(fila["fecha_visita"])
         examen["medicoTratante"] = fila["medico_tratante"]
@@ -1332,8 +1256,7 @@ def reporte_ficha():
     salida = {
         "pacienteId": paciente,
         "generadoEn": iso(ahora()),
-        # Quien pidio la ficha queda dicho en la respuesta: es un documento
-        # clinico y se imprime con el nombre de quien lo saco.
+        # Es un documento clinico: se imprime con el nombre de quien lo saco.
         "consultadaPor": firmante(),
         "identificacion": None,
         "psicopatologias": None,
@@ -1357,9 +1280,8 @@ def reporte_ficha():
             "responsable": ficha.get("responsable"),
             "correoResponsable": ficha.get("correoResponsable"),
         }
-        # Vienen solo si ms-pastillero considera clinico a quien pregunta.
-        # Si faltan, se dice que faltan en vez de mostrarlas vacias, que se
-        # leeria como "este interno no tiene alergias".
+        # Solo si ms-pastillero considera clinico a quien pregunta. Si faltan
+        # se dice que faltan: vacias se leerian como "no tiene alergias".
         salida["psicopatologias"] = ficha.get("psicopatologias")
         salida["alergias"] = ficha.get("alergias")
         if ficha.get("psicopatologias") is None:
@@ -1376,35 +1298,19 @@ def reporte_ficha():
     return jsonify(salida)
 
 
-# ---------------------------------------------------------------------------
-# Sembrado del escenario de demostracion
+# Sembrado del escenario de demostracion.
 #
-# Deja la cadena clinica en un estado desde el que se puede recorrer el
-# sistema completo sin crear nada a mano: una remision esperando a la
-# fundacion, una cita esperando al especialista y una consulta ya cerrada
-# que llena la ficha medica.
-#
-# Los folios son FIJOS y llevan la palabra DEMO. No es un descuido:
-#
-#   1. Se ven distintos de los que genera folio(), que son aleatorios. En la
-#      defensa se distingue de un vistazo lo que venia sembrado de lo que se
-#      acaba de crear en vivo.
-#   2. ms-caja necesita nombrar la visita de la que salieron sus cargos para
-#      que el reporte de costo por consulta tenga algo que sumar. Los dos
-#      servicios tienen bases distintas y no se hablan al arrancar, asi que
-#      el unico modo de que coincidan es que los dos sepan el folio de
-#      antemano. Si cambia VISITA_DEMO aqui, hay que cambiarlo tambien en el
-#      sembrado de ms-caja.
-# ---------------------------------------------------------------------------
+# Los folios son FIJOS y llevan DEMO por dos razones: se distinguen a simple
+# vista de los aleatorios que genera folio(), y ms-caja necesita nombrar la
+# visita de sus cargos. Las dos bases no se hablan al arrancar, asi que el
+# folio tiene que estar escrito en los dos lados: si cambia VISITA_DEMO aqui,
+# cambiarlo tambien en el sembrado de ms-caja.
 
 VISITA_DEMO = "VM-2026-DEMO0022"
 
-# Copia de lo que ms-pastillero siembra para estos tres internos. Se repite
-# aqui a proposito: el sembrado corre al arrancar, cuando ms-pastillero
-# todavia puede no estar listo, y un sembrado que depende de que otro
-# servicio responda es un sembrado que a veces no ocurre. Solo se usa para
-# redactar el correo al familiar con el mismo texto que produciria el
-# sistema en vivo.
+# Copia de lo que siembra ms-pastillero. Se repite a proposito: el sembrado
+# corre al arrancar, cuando ms-pastillero puede no estar listo todavia, y un
+# sembrado que depende de otro servicio es uno que a veces no ocurre.
 FICHAS_SEMBRADAS = {
     "ASL-014": {"nombre": "Rosalía Menchú Coy", "responsable": "María Coy, hija",
                 "correoResponsable": "maria.coy@ejemplo.gt"},
@@ -1425,16 +1331,12 @@ def sembrar():
                 return
 
         hoy = datetime.now().replace(microsecond=0)
-        # Se corta a la hora en punto para que las fechas de la demostracion
-        # se lean parejas y no con los minutos del momento del arranque.
+        # A la hora en punto: las fechas se leen parejas en la demostracion.
         base = hoy.replace(minute=0, second=0)
 
         solicitudes = [
-            # ---------------------------------------------------------------
-            # 1 · PENDIENTE. Es la que la fundacion agenda en vivo.
-            #     Transito Xicara tiene hipertension arterial y ya toma
-            #     enalapril: la remision es el siguiente paso de eso mismo.
-            # ---------------------------------------------------------------
+            # PENDIENTE: la que la fundacion agenda en vivo. Transito Xicara
+            # ya toma enalapril por hipertension.
             {
                 "id": "SOL-2026-DEMO0007",
                 "paciente_id": "ASL-007",
@@ -1450,10 +1352,8 @@ def sembrar():
                 "agendada_para": None,
                 "agendada_por": None,
             },
-            # ---------------------------------------------------------------
-            # 2 · AGENDADA. Es la que el medico atiende en vivo.
-            #     Rosalia Menchu tiene demencia mixta e insomnio cronico.
-            # ---------------------------------------------------------------
+            # AGENDADA: la que el medico atiende en vivo. Rosalia Menchu tiene
+            # demencia mixta e insomnio cronico.
             {
                 "id": "SOL-2026-DEMO0014",
                 "paciente_id": "ASL-014",
@@ -1469,10 +1369,8 @@ def sembrar():
                 "agendada_para": (base + timedelta(days=1)).replace(hour=9),
                 "agendada_por": "Fundación Manos Unidas",
             },
-            # ---------------------------------------------------------------
-            # 3 · ATENDIDA. Ya produjo la visita cerrada de abajo.
-            #     Bernardo Puac tiene fibrilacion auricular y toma warfarina.
-            # ---------------------------------------------------------------
+            # ATENDIDA: ya produjo la visita cerrada de abajo. Bernardo Puac
+            # tiene fibrilacion auricular y toma warfarina.
             {
                 "id": "SOL-2026-DEMO0022",
                 "paciente_id": "ASL-022",
@@ -1504,12 +1402,9 @@ def sembrar():
                  s["agendada_para"], s["agendada_por"]),
             )
 
-            # Toda solicitud creada por el sistema genera su aviso al familiar.
-            # Una solicitud sembrada sin su correo seria un estado que el
-            # sistema en marcha no puede producir, y en la pantalla del medico
-            # se leeria como que el aviso fallo. Se redacta con la MISMA
-            # funcion que usa el camino en vivo, para que el texto no se
-            # separe nunca del real.
+            # Toda solicitud genera su aviso: una sembrada sin correo seria un
+            # estado que el sistema en marcha no puede producir. Se redacta con
+            # la MISMA funcion del camino en vivo para que no se separen.
             ficha = FICHAS_SEMBRADAS.get(s["paciente_id"], {})
             asunto, cuerpo = redactar_aviso(ficha, s)
             destinatario = ficha.get("correoResponsable")
@@ -1519,17 +1414,12 @@ def sembrar():
                    VALUES (%s,%s,%s,%s,%s,%s,%s)""",
                 ("CO-2026-DEMO" + s["id"][-4:], s["id"], destinatario, asunto, cuerpo,
                  s["creada_en"],
-                 # Mismo criterio que registrar_aviso(): sin SMTP configurado
-                 # el correo queda REGISTRADO, no ENVIADO.
+                 # Mismo criterio que registrar_aviso().
                  "SIN_DESTINATARIO" if not destinatario
                  else ("ENVIADO" if SMTP_HOST else "REGISTRADO")),
             )
 
-        # -------------------------------------------------------------------
-        # La consulta cerrada de Bernardo Puac. Es la que llena la ficha
-        # medica completa: diagnostico, observaciones, dos examenes con su
-        # resultado y un medicamento ya entregado.
-        # -------------------------------------------------------------------
+        # La consulta cerrada que llena la ficha medica completa.
         atendida = base - timedelta(days=9)
         cursor.execute(
             """INSERT INTO visitas
@@ -1549,10 +1439,8 @@ def sembrar():
              "CERRADA", atendida),
         )
 
-        # Los cargo_id apuntan a cargos que ms-caja siembra por su cuenta con
-        # esos mismos folios. No es una clave foranea —viven en otra base, de
-        # otro servicio— sino la misma referencia suelta que deja el camino
-        # en vivo.
+        # Los cargo_id apuntan a cargos que ms-caja siembra con esos mismos
+        # folios. No es clave foranea: viven en la base de otro servicio.
         examenes = [
             ("EX-2026-DEMO0001", "Tiempo de protrombina e INR",
              "INR 2.4, dentro del rango terapeutico de 2.0 a 3.0. Sin ajuste de dosis.",
@@ -1571,16 +1459,12 @@ def sembrar():
                  resultado, atendida.replace(hour=14), "Lab. Clínico Central", cargo),
             )
 
-        # Warfarina 5 mg cada 24 h: es la receta del mes del anticoagulante
-        # que el interno ya toma, que es justo lo que concluye esta consulta.
-        # Se eligio despues de preguntarle a ms-vigia, que la dictamina
-        # APROBADA y sin hallazgos para este interno: sembrar algo que la
-        # propia farmacovigilancia del sistema marcaria seria contradecirse
-        # en la demostracion.
+        # Warfarina 5 mg: ms-vigia la dictamina APROBADA sin hallazgos para
+        # este interno. Sembrar algo que la propia farmacovigilancia marcaria
+        # seria contradecirse en la demostracion.
         #
-        # La dosis tambien pesó en la eleccion. dosis_mg es DECIMAL(10,2), asi
-        # que una digoxina de 0.125 mg se guardaria como 0.13 y la ficha
-        # mostraria una dosis que nadie receto. Con 5.00 mg no hay redondeo.
+        # La dosis tambien pesa: dosis_mg es DECIMAL(10,2), asi que 0.125 mg se
+        # guardaria como 0.13 y la ficha mostraria una dosis que nadie receto.
         cursor.execute(
             """INSERT INTO indicaciones
                    (id, visita_id, principio_activo, nombre, dosis_mg, cada_horas,
@@ -1598,8 +1482,7 @@ def sembrar():
               % (APP_NOMBRE, VISITA_DEMO), flush=True)
     except Exception as error:
         bd.rollback()
-        # Que falle el sembrado no puede impedir que arranque el servicio: se
-        # avisa fuerte y se sigue con la base vacia.
+        # Que falle el sembrado no puede impedir que arranque el servicio.
         print("[%s] no se pudo sembrar el escenario de demostracion: %s"
               % (APP_NOMBRE, error), flush=True)
     finally:

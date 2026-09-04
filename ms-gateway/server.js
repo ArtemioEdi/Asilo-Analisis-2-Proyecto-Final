@@ -38,14 +38,12 @@ app.disable("x-powered-by");
 
 app.use(cors({ origin: ORIGEN_PERMITIDO }));
 
-// OJO: express.json() NO se registra de forma global. Si consumieramos el
-// cuerpo de la peticion aqui, el proxy hacia los microservicios se quedaria
-// esperando un cuerpo que ya fue leido y la peticion se cuelga. Por eso el
-// parser de JSON solo se monta en las rutas propias del gateway (login).
+// express.json() NO va global: si se consume el cuerpo aqui, el proxy queda
+// esperando un cuerpo ya leido y la peticion se cuelga. Solo en las rutas
+// propias del gateway.
 
-// Quien abre http://localhost:8080 en el navegador no esta buscando un error:
-// esta buscando el sistema. La raiz explica que es esto, que rutas hay, y
-// sobre todo que la aplicacion del asilo vive en el 8090.
+// Quien abre el 8080 en el navegador busca el sistema, no un error: la raiz
+// le dice que la aplicacion vive en el 8090.
 app.get("/", (_req, res) => {
   res.json({
     servicio: APP_NOMBRE,
@@ -89,11 +87,9 @@ app.get("/", (_req, res) => {
   });
 });
 
-// Lo que la estacion web necesita saber ANTES de que alguien inicie sesion.
-// Es publico a proposito y no revela ninguna credencial: solo dice si las
-// credenciales de demostracion deben imprimirse en la pantalla de acceso.
-// Va bajo /api porque es el prefijo que nginx reenvia al gateway; la raiz del
-// 8090 la sirve la propia estacion web.
+// Publico a proposito: no revela credenciales, solo dice si las de
+// demostracion se imprimen en la pantalla de acceso. Va bajo /api porque es el
+// prefijo que nginx reenvia al gateway.
 app.get("/api/config", (_req, res) => {
   res.json({ mostrarUsuariosDemo: MOSTRAR_USUARIOS_DEMO });
 });
@@ -111,14 +107,12 @@ app.get("/salud", (_req, res) => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Limite de intentos de acceso.
-// Cinco fallos del mismo usuario en cinco minutos y la cuenta queda en espera.
-// Para el prototipo el contador vive en memoria del proceso; en produccion
-// esto va en Redis, porque con varias instancias del gateway cada una llevaria
-// su propia cuenta y el limite se multiplicaria por el numero de instancias
-// (y ademas se perderia en cada reinicio).
-// ---------------------------------------------------------------------------
+// Limite de intentos: cinco fallos del mismo usuario en cinco minutos.
+//
+// El contador vive en memoria del proceso, que alcanza para una sola
+// instancia. En produccion va en Redis: con varias instancias cada una
+// llevaria su propia cuenta y el limite se multiplicaria, ademas de perderse
+// en cada reinicio.
 const MAX_INTENTOS = 5;
 const VENTANA_MS = 5 * 60 * 1000;
 const intentos = new Map(); // usuario -> { fallos, desde }
@@ -144,12 +138,9 @@ function anotarFallo(usuario) {
   registro.fallos += 1;
 }
 
-// ---------------------------------------------------------------------------
-// Lista de revocacion: tokens a los que se les cerro la sesion antes de que
-// venzan. Se guarda el identificador (jti) y no el token completo. Igual que
-// el contador de intentos, en produccion va en Redis y compartida entre
-// instancias; aqui alcanza con la memoria del proceso.
-// ---------------------------------------------------------------------------
+// Tokens a los que se les cerro la sesion antes de vencer. Se guarda el jti y
+// no el token completo. En produccion va en Redis, igual que el contador de
+// intentos.
 const revocados = new Map(); // jti -> instante (ms) en que vence el token
 
 function limpiarRevocados() {
@@ -159,9 +150,6 @@ function limpiarRevocados() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Autenticacion
-// ---------------------------------------------------------------------------
 
 app.post("/api/auth/login", express.json(), (req, res) => {
   const { usuario, clave } = req.body || {};
@@ -180,10 +168,8 @@ app.post("/api/auth/login", express.json(), (req, res) => {
   }
 
   const persona = USUARIOS.find((u) => u.usuario === nombreUsuario);
-  // Se compara SIEMPRE contra un hash, exista o no la persona, para que un
-  // login fallido tarde lo mismo en los dos casos. Si solo se comparara
-  // cuando el usuario existe, cronometrar la respuesta revelaria que
-  // usuarios estan dados de alta en el asilo.
+  // Siempre contra un hash, exista o no la persona: si solo se comparara
+  // cuando existe, cronometrar la respuesta revelaria que usuarios hay.
   const claveCorrecta = bcrypt.compareSync(
     String(clave),
     persona ? persona.claveHash : HASH_SENUELO
@@ -231,18 +217,14 @@ app.get("/api/auth/me", requiereSesion, (req, res) => {
 
 app.post("/api/auth/logout", requiereSesion, (req, res) => {
   if (req.usuario.jti) {
-    // exp viene en segundos. Basta recordar el token hasta que venza solo:
-    // despues de eso jwt.verify ya lo rechaza por su cuenta.
+    // exp viene en segundos. Basta recordarlo hasta que venza: despues
+    // jwt.verify lo rechaza solo.
     revocados.set(req.usuario.jti, (req.usuario.exp || 0) * 1000);
   }
   res.json({ cerrada: true, usuario: req.usuario.usuario });
 });
 
-// ---------------------------------------------------------------------------
-// Autorizacion por rol.
-//
-// Se controla la LECTURA y no solo la escritura. En un sistema de salud saber
-// quien puede leer que es tan importante como saber quien puede escribir:
+// Autorizacion por rol. Se controla la LECTURA y no solo la escritura:
 // administracion no tiene por que ver la bitacora clinica de un interno, ni
 // enfermeria el estado financiero del asilo.
 //
@@ -251,43 +233,28 @@ app.post("/api/auth/logout", requiereSesion, (req, res) => {
 //   ms-pastillero   MEDICO, ENFERMERIA      MEDICO, ENFERMERIA
 //   ms-caja         ADMINISTRACION          ADMINISTRACION
 //
-// La misma matriz esta repetida dentro de cada microservicio. No es
-// duplicacion por descuido: es defensa en profundidad. Si alguien alcanza la
-// red interna y esquiva el gateway, el microservicio vuelve a preguntarle
-// quien es.
-// ---------------------------------------------------------------------------
+// La misma matriz esta repetida dentro de cada microservicio: defensa en
+// profundidad, por si alguien esquiva el gateway desde la red interna.
 
-// Excepcion documentada: el medico puede consultar el estado de cuenta de un
-// interno aunque no vea el resto de la caja. Antes de indicar un estudio de
-// laboratorio necesita saber si el familiar responsable puede costearlo; sin
-// ese dato terminaria indicando examenes que nunca se hacen. La excepcion
-// alcanza solo la cuenta de un paciente concreto, nunca el resumen financiero
-// del asilo ni el listado de donaciones y gastos.
+// Excepcion: el medico lee la cuenta de UN interno, porque antes de indicar un
+// laboratorio necesita saber si la familia puede costearlo. Nunca el balance
+// del asilo, ni donaciones, ni gastos.
 const CUENTA_DE_PACIENTE = /^\/api\/v1\/pacientes\/[^/]+\/cuenta\/?$/;
 
-// La excepcion simetrica: administracion si puede leer el padron de internos
-// de ms-pastillero, porque le cobra a la familia de cada uno y necesita saber
-// a quien tiene el asilo y quien es el familiar responsable. ms-pastillero le
-// responde la ficha SIN la parte clinica: sin alergias, sin psicopatologias y
-// sin medicacion. Saber que Rosalia esta aqui es administrativo; saber que
-// tiene demencia mixta es clinico.
+// La simetrica: administracion lee el padron porque le cobra a la familia,
+// pero ms-pastillero le responde la ficha SIN la parte clinica.
 const PADRON_DE_INTERNOS = /^\/api\/v1\/internos(\/[^/]+)?\/?$/;
 
-// Suspender un tratamiento queda reservado al MEDICO, aunque el resto del
-// pastillero lo escriban las dos manos. El criterio: suspender no es
-// registrar lo que paso, es cambiar la indicacion. Enfermeria puede consignar
-// que una toma no se dio y por que —para eso esta "omitir", que exige
-// motivo—, pero retirarle el medicamento a un interno de aqui en adelante es
-// revocar una decision clinica, y esa la toma quien la firmo. La misma regla
-// esta repetida dentro de ms-pastillero, igual que el resto de la matriz.
+// Suspender es solo del MEDICO: no es registrar lo que paso, es revocar una
+// decision clinica, y esa la toma quien la firmo. Enfermeria consigna hechos
+// con "omitir". La misma regla esta repetida dentro de ms-pastillero.
 const SUSPENDER_PLAN = /^\/api\/v1\/planes\/[^/]+\/suspender\/?$/;
 
 function autorizar(rolesLectura, rolesEscritura) {
   return (req, res, next) => {
     if (req.method === "OPTIONS") return next();
 
-    // La sonda de vida no expone ningun dato del asilo: la consulta la barra
-    // de estado de la estacion web con cualquiera de los tres roles.
+    // La sonda de vida no expone datos: la consulta la barra de estado.
     if (req.path === "/salud") return next();
 
     const escribe = req.method !== "GET" && req.method !== "HEAD";
@@ -313,10 +280,8 @@ function autorizar(rolesLectura, rolesEscritura) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// La matriz de /consultas no es de dos columnas como la de los otros tres
-// servicios: cada eslabon de la cadena clinica lo mueve un rol distinto, y
-// cada rol lee solo su parte. Se declara ruta por ruta.
+// La matriz de /consultas va ruta por ruta y no por servicio: cada eslabon de
+// la cadena lo mueve un rol distinto y cada uno lee solo su parte.
 //
 //   MEDICO       lee todo; escribe solicitudes, visitas, examenes e indicaciones
 //   ENFERMERIA   lee todo; no escribe nada
@@ -325,23 +290,18 @@ function autorizar(rolesLectura, rolesEscritura) {
 //   FARMACIA     lee visitas e indicaciones; escribe solo la entrega
 //   ADMINISTRACION  sin acceso: la cadena clinica no es informacion suya
 //
-// La misma matriz esta repetida dentro de ms-consultas. Es defensa en
-// profundidad, igual que en los otros tres servicios.
-// ---------------------------------------------------------------------------
+// Repetida tambien dentro de ms-consultas: defensa en profundidad.
 const LECTURA_CONSULTAS = [
   [/^\/api\/v1\/solicitudes/, ["MEDICO", "ENFERMERIA", "FUNDACION"]],
   [/^\/api\/v1\/visitas/, ["MEDICO", "ENFERMERIA", "LABORATORIO", "FARMACIA"]],
   [/^\/api\/v1\/examenes/, ["MEDICO", "ENFERMERIA", "LABORATORIO"]],
   [/^\/api\/v1\/indicaciones/, ["MEDICO", "ENFERMERIA", "FARMACIA"]],
-  // La bitacora de avisos a la familia la ve quien lleva la parte clinica.
+  // Los avisos a la familia los ve quien lleva la parte clinica.
   [/^\/api\/v1\/correos/, ["MEDICO", "ENFERMERIA"]],
-  // La ficha medica completa reune psicopatologias, alergias, diagnosticos,
-  // examenes y recetas en un solo documento. Se queda en manos clinicas: al
-  // laboratorio y a la farmacia ya se les filtra el bloque ajeno cuando leen
-  // una visita, y darles la ficha entera desharia ese filtro por otra puerta.
+  // La ficha completa se queda en manos clinicas: darsela al laboratorio o a
+  // la farmacia desharia por otra puerta el filtro por bloque de las visitas.
   [/^\/api\/v1\/reportes\/ficha/, ["MEDICO", "ENFERMERIA"]],
-  // El reporte de examenes si lo ve el laboratorio: son los estudios que el
-  // mismo realiza y que ya lee uno por uno en su pantalla.
+  // El laboratorio si ve este: son los estudios que el mismo realiza.
   [/^\/api\/v1\/reportes\/examenes/, ["MEDICO", "ENFERMERIA", "LABORATORIO"]],
 ];
 
@@ -395,9 +355,8 @@ function montarProxy(ruta, destino, rolesLectura, rolesEscritura, autorizador) {
       changeOrigin: true,
       pathRewrite: { ["^" + ruta]: "" },
       onProxyReq: (proxyReq, req) => {
-        // El encabezado Authorization viaja tal cual hacia el microservicio,
-        // que vuelve a verificar el token por su cuenta. Estos dos
-        // encabezados son solo informativos, para la bitacora de acceso.
+        // Authorization viaja tal cual: el microservicio vuelve a verificarlo.
+        // Estos dos son informativos, para la bitacora de acceso.
         proxyReq.setHeader("X-Usuario", req.usuario.usuario);
         proxyReq.setHeader("X-Rol", req.usuario.rol);
       },
@@ -412,12 +371,11 @@ montarProxy("/vigia", VIGIA_URL, ["MEDICO", "ENFERMERIA"], ["MEDICO"]);
 montarProxy("/pastillero", PASTILLERO_URL, ["MEDICO", "ENFERMERIA"], ["MEDICO", "ENFERMERIA"]);
 montarProxy("/caja", CAJA_URL, ["ADMINISTRACION"], ["ADMINISTRACION"]);
 
-// /consultas lleva su propio autorizador, declarado arriba: la matriz de la
-// cadena clinica es por ruta y no por servicio.
+// /consultas lleva su propio autorizador: su matriz es por ruta.
 montarProxy("/consultas", CONSULTAS_URL, null, null, autorizarConsultas);
 
-// El 404 dice QUE se pidio y COMO, para que se vea de un vistazo si el error
-// fue el metodo, un prefijo mal escrito o una ruta que no existe.
+// El 404 dice que se pidio y con que metodo, para distinguir un prefijo mal
+// escrito de una ruta que no existe.
 app.use((req, res) => {
   res.status(404).json({
     error: "Ruta no encontrada en ms-gateway.",

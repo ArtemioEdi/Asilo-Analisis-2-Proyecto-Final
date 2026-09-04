@@ -1,5 +1,7 @@
 Flask==3.1.0
 PyJWT==2.9.0
 PyMySQL==1.1.1
+# Lo exige PyMySQL para hablar con MySQL 8.4, que autentica con
+# caching_sha2_password. Sin esto la conexion falla al arrancar.
 cryptography==43.0.3
 gunicorn==23.0.0

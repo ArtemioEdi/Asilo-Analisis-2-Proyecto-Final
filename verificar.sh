@@ -259,7 +259,7 @@ grep -q "FICHAS *= *{" estacion-web/app.js 2>/dev/null \
 grep -rq "Access-Control-Allow-Origin.*\*" ms-vigia ms-pastillero ms-caja 2>/dev/null \
   && rojo "algun microservicio sigue con CORS abierto (*)" \
   || verde "los microservicios ya no abren CORS"
-# Migrado a MySQL: ya no hay SQLite, ni WAL, ni archivos .db.
+# No debe quedar rastro de SQLite: ni WAL, ni archivos .db.
 grep -rq "sqlite3" ms-vigia ms-pastillero ms-caja 2>/dev/null \
   && rojo "todavia queda codigo de SQLite en algun microservicio" \
   || verde "no queda rastro de SQLite en los microservicios"
@@ -290,9 +290,8 @@ else
 fi
 
 titulo "16. Aislamiento entre las bases de cada microservicio"
-# usr_caja solo tiene permisos sobre asilo_caja. Que NO pueda leer la base de
-# ms-vigia es parte de la entrega: el patron "database per service" no es solo
-# tener tres esquemas, es que ninguno alcance al del otro.
+# "database per service" no es solo tener un esquema por servicio: es que
+# ninguno alcance al del otro.
 CLAVE_CAJA=${BD_CLAVE_CAJA:-$(grep -E '^BD_CLAVE_CAJA=' .env 2>/dev/null | cut -d= -f2-)}
 FUGA=$(docker compose exec -T bd-asilo mysql -u usr_caja -p"$CLAVE_CAJA" \
        -e "SELECT COUNT(*) FROM asilo_vigia.validaciones;" 2>&1)
@@ -329,7 +328,7 @@ if grep -q "Fundación Amigos del Adulto Mayor" /tmp/v_cuerpo.json; then
 else
   rojo "el nombre con tildes volvio roto — revisa la codificacion utf8mb4"
 fi
-# El interno sembrado tambien lleva tildes, y viene de los datos de ejemplo.
+# El interno sembrado tambien lleva tildes.
 TOK_MED=$(login medico medico2026)
 codigo GET "$GW/pastillero/api/v1/internos/ASL-007" "$TOK_MED" > /dev/null
 if grep -q "Tránsito Xicará Tzoc" /tmp/v_cuerpo.json; then
@@ -342,11 +341,8 @@ fi
 # unos minutos y arruinaria las pruebas que vienen despues.
 
 titulo "18. Matriz de acceso de los tres roles nuevos"
-# La fundacion agenda, el laboratorio carga resultados y la farmacia entrega.
-# Ninguno de los tres tiene nada que hacer en el padron de internos, ni en la
-# farmacovigilancia, ni en la caja del asilo: son roles externos al asilo, de
-# la fundacion que presta el servicio. Cada linea de este bloque es una puerta
-# que se probo y quedo cerrada.
+# Los tres son externos al asilo: no tienen nada que hacer en el padron, ni en
+# la farmacovigilancia, ni en la caja. Cada linea es una puerta cerrada.
 TOK_FUN=$(login fundacion fundacion2026)
 TOK_LAB=$(login laboratorio laboratorio2026)
 TOK_FAR=$(login farmacia farmacia2026)
@@ -377,9 +373,8 @@ for par in "fundacion:$TOK_FUN" "laboratorio:$TOK_LAB" "farmacia:$TOK_FAR"; do
 done
 
 # --- Y dentro de /consultas, cada uno solo lo suyo --------------------------
-# Una visita trae la ficha entera: examenes e indicaciones. Sin el filtro por
-# bloque, el laboratorio leeria las recetas y la farmacia los resultados de
-# laboratorio con solo pedir la visita. Estas dos lineas prueban que no.
+# Una visita trae examenes e indicaciones juntos: sin el filtro por bloque el
+# laboratorio leeria las recetas y la farmacia los resultados.
 espera "laboratorio NO lee las indicaciones (recetas)"  403 \
   "$(codigo GET "$GW/consultas/api/v1/indicaciones" "$TOK_LAB")"
 espera "farmacia NO lee los examenes (resultados de laboratorio)" 403 \
@@ -402,9 +397,8 @@ espera "fundacion NO puede atender consultas" 403 \
   "$(codigo POST "$GW/consultas/api/v1/visitas" "$TOK_FUN" '{"solicitudId":"SOL-INVENTADA"}')"
 
 # --- Defensa en profundidad: sin el gateway adelante ------------------------
-# Que el gateway diga 403 no basta. Si alguien alcanza a ms-consultas desde la
-# red interna, el propio servicio tiene que negarse: la misma matriz esta
-# escrita dos veces a proposito.
+# Que el gateway diga 403 no basta: el propio servicio tiene que negarse a
+# quien lo alcance desde la red interna.
 if command -v docker >/dev/null 2>&1; then
   R=$(docker exec ms-gateway sh -c \
       "wget -qS -O /dev/null --header='Authorization: Bearer $TOK_LAB' \
@@ -416,11 +410,9 @@ else
 fi
 
 titulo "19. usr_consultas no alcanza las bases de los otros microservicios"
-# ms-consultas es el que mas conversa con los demas: le pide la ficha al
-# padron, el dictamen a la farmacovigilancia y el cobro a la caja. Todo eso
-# por HTTP y con token. En la base NO tiene nada: si pudiera leer asilo_caja
-# se saltaria la matriz de acceso de ms-caja por debajo, sin pasar por su
-# codigo. Cada linea de aqui es una base que el motor le niega.
+# ms-consultas habla con los otros tres por HTTP y con token. En la base no
+# tiene nada: si pudiera leer asilo_caja se saltaria la matriz de ms-caja por
+# debajo, sin pasar por su codigo.
 CLAVE_CONSULTAS=${BD_CLAVE_CONSULTAS:-$(grep -E '^BD_CLAVE_CONSULTAS=' .env 2>/dev/null | cut -d= -f2-)}
 if [ -z "$CLAVE_CONSULTAS" ]; then
   rojo "no encontre BD_CLAVE_CONSULTAS en .env; no puedo probar el aislamiento"

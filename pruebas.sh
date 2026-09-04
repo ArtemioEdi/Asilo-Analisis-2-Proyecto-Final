@@ -175,8 +175,7 @@ comprobar "token manipulado responde 401" "401" \
   "$(codigo GET "$GATEWAY/vigia/api/v1/vademecum" "$TOKEN_ROTO")"
 
 # Token vencido: se firma uno a mano con el mismo secreto y exp en el pasado.
-# El secreto se lee de .env, que es el archivo de esta instalacion. No es
-# trampa: la prueba corre en el equipo del desarrollador, que ya lo tiene.
+# El secreto sale del .env de esta instalacion.
 if [ -f "$ARCHIVO_ENV" ]; then
   SECRETO=$(grep -E "^GATEWAY_SECRETO=" "$ARCHIVO_ENV" | head -1 | cut -d= -f2- | tr -d "\r\"'")
 else
@@ -231,7 +230,7 @@ comprobar "el medico NO lee el resumen financiero de /caja (403)" "403" \
 comprobar "enfermeria NO lee el resumen financiero de /caja (403)" "403" \
   "$(codigo GET "$GATEWAY/caja/api/v1/resumen" "$TOKEN_ENFERMERIA")"
 
-# La excepcion documentada del plan.
+# La excepcion de lectura del medico.
 comprobar "el medico SI lee la cuenta de un interno (200, excepcion)" "200" \
   "$(codigo GET "$GATEWAY/caja/api/v1/pacientes/ASL-014/cuenta" "$TOKEN_MEDICO")"
 detalle "saldo pendiente del interno: Q $(cat "$TEMPORAL/respuesta.json" | campo saldoPendiente)"
@@ -289,10 +288,9 @@ comprobar "administracion sigue SIN poder leer las tomas (403)" "403" \
 # ---------------------------------------------------------------------------
 titulo "8. El cliente ya no puede mentir sobre las alergias"
 # ---------------------------------------------------------------------------
-# Se pide furosemida para Transito Xicara, que es alergica a las sulfas, y en
-# el cuerpo se manda la mentira: sin alergias y con 30 anios de edad. Antes el
-# sistema le creia al navegador y aprobaba. Ahora ms-vigia arma la ficha
-# preguntandole a ms-pastillero y la mentira no cambia nada.
+# Furosemida para Transito Xicara, que es alergica a las sulfas, mintiendo en
+# el cuerpo: sin alergias y con 30 anios. ms-vigia arma la ficha preguntandole
+# a ms-pastillero, asi que la mentira no cambia nada.
 MENTIRA=$(cuerpo POST "$GATEWAY/vigia/api/v1/validaciones" "$TOKEN_MEDICO" '{
   "pacienteId":"ASL-007","edad":30,"alergias":[],"psicopatologias":[],"medicacionActual":[],
   "propuesta":{"principioActivo":"furosemida","dosisMg":40,"cadaHoras":24}}')
@@ -314,11 +312,10 @@ detalle "$(cat "$TEMPORAL/respuesta.json" | campo error)"
 # ---------------------------------------------------------------------------
 titulo "9. Folios unicos bajo concurrencia"
 # ---------------------------------------------------------------------------
-# Diez validaciones a la vez. Con el folio viejo (SELECT COUNT(*) + 1) varias
-# leian el mismo total, armaban el mismo folio y el INSERT reventaba contra el
-# PRIMARY KEY. Cada peticion escribe su propio archivo: en Git Bash sobre
-# Windows, diez procesos agregando al mismo archivo con >> se pisan entre si y
-# se pierden lineas, que es un problema del script y no del servicio.
+# Diez validaciones a la vez: ninguna puede repetir folio.
+#
+# Cada peticion escribe su propio archivo porque en Git Bash sobre Windows diez
+# procesos agregando al mismo archivo con >> se pisan y se pierden lineas.
 mkdir -p "$TEMPORAL/folios"
 for i in $(seq 10); do
   cuerpo POST "$GATEWAY/vigia/api/v1/validaciones" "$TOKEN_MEDICO" \
@@ -335,9 +332,8 @@ detalle "ejemplo de folio: $(cat "$TEMPORAL/folios/1.txt")"
 # ---------------------------------------------------------------------------
 titulo "10. Farmacovigilancia: ibuprofeno a un interno anticoagulado con warfarina"
 # ---------------------------------------------------------------------------
-# Ya no se manda ficha en el cuerpo: solo a quien y que. La warfarina que
-# dispara la interaccion la encuentra ms-vigia en la medicacion activa que le
-# reporta ms-pastillero.
+# En el cuerpo solo van a quien y que. La warfarina que dispara la interaccion
+# la encuentra ms-vigia en la medicacion que le reporta ms-pastillero.
 BLOQUEADO=$(cuerpo POST "$GATEWAY/vigia/api/v1/validaciones" "$TOKEN_MEDICO" '{
   "pacienteId":"ASL-022",
   "propuesta":{"principioActivo":"ibuprofeno","dosisMg":400,"cadaHoras":8,"viaAdministracion":"oral"}}')
@@ -348,7 +344,7 @@ comprobar "ms-vigia dictamina BLOQUEADO" "BLOQUEADO" "$VEREDICTO"
 detalle "folio $FOLIO_BLOQUEADO · $(printf '%s' "$BLOQUEADO" | campo resumen)"
 detalle "$(printf '%s' "$BLOQUEADO" | campo hallazgos.0.mensaje)"
 
-# El dictamen queda firmado con el nombre del token, no con lo que mande el cliente.
+# El dictamen se firma con el nombre del token, no con el del cuerpo.
 comprobar "el dictamen lo firma quien inicio sesion" "Dr. Angel Maltez" \
   "$(printf '%s' "$BLOQUEADO" | campo solicitadoPor)"
 
