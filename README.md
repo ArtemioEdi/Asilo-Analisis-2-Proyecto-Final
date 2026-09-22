@@ -439,8 +439,9 @@ resuelve las dependencias de Node y de Python.
 | <http://localhost:8080/vigia/salud> | Estado de ms-vigia (con sesión iniciada) |
 | <http://localhost:8080/pastillero/salud> | Estado de ms-pastillero (con sesión iniciada) |
 | <http://localhost:8080/caja/salud> | Estado de ms-caja (con sesión iniciada) |
+| <http://localhost:8080/consultas/salud> | Estado de ms-consultas (con sesión iniciada) |
 
-Los puertos 8081, 8082 y 8083 **ya no responden desde el equipo anfitrión**:
+Los puertos 8081, 8082, 8083 y 8084 **ya no responden desde el equipo anfitrión**:
 los microservicios solo son alcanzables por la red interna de Docker, a través
 del gateway.
 
@@ -1181,7 +1182,7 @@ peligroso que uno que sí.
 ### Datos y persistencia
 
 - **Una sola instancia de MySQL para las cuatro bases.** Se explica y se
-  cuantifica en la sección 8: se conserva el aislamiento lógico de los datos,
+  cuantifica en la sección 9: se conserva el aislamiento lógico de los datos,
   pero se pierde el aislamiento de fallos y de recursos, y la posibilidad de
   escalar cada base por separado.
 - **No hay migraciones de esquema.** El esquema se crea una sola vez, cuando
@@ -1206,11 +1207,14 @@ peligroso que uno que sí.
 
 ### Alcance funcional
 
-- **No hay módulo de visita médica.** El sistema cubre la seguridad del
-  medicamento, el plan de tomas y la caja; no registra la consulta en sí:
-  motivo, exploración, diagnóstico ni evolución. `ms-vigia` deja bitácora de
-  cada dictamen, que alimenta el reporte de análisis médicos, pero eso no es
-  una nota de evolución clínica.
+- **La visita médica se registra, pero sin exploración estructurada ni notas
+  de evolución.** Desde que existe `ms-consultas`, el sistema sí cubre la
+  cadena completa: remisión, asignación de médico y hora, consulta con motivo,
+  diagnóstico y observaciones, exámenes indicados, receta y cierre. Lo que no
+  existe es una exploración física con signos vitales en campos propios, ni
+  notas de evolución seriadas: cada visita es un episodio que se abre y se
+  cierra, no un seguimiento longitudinal del interno. Tampoco hay codificación
+  diagnóstica (CIE-10): el diagnóstico es texto libre.
 - **No hay alta, baja ni edición de internos desde la interfaz.** El padrón se
   lee (`GET /api/v1/internos`); se siembra al arrancar y se modifica en la base.
 - **El vademécum y las reglas de farmacovigilancia son un recorte docente.** 28
