@@ -748,6 +748,203 @@ def costo_por_visita():
     return jsonify(salida)
 
 
+# ---------------------------------------------------------------------------
+#  Informes 4 y 5 del enunciado. Los otros cinco ya existian: tres aqui y en
+#  ms-consultas, y el de medicamentos en ms-pastillero.
+#
+#  Los dos comparten el rango de fechas, asi que comparten el validador. Las
+#  rutas son GET bajo /api/v1, de modo que el guardia de arriba ya las deja
+#  solo para ADMINISTRACION sin tener que tocar la matriz: el dinero del asilo
+#  no lo lee nadie mas.
+# ---------------------------------------------------------------------------
+
+def _rango_de_fechas():
+    """Lee desde/hasta de la consulta. Devuelve (desde, hasta, None) o (None, None, error).
+
+    Se valida el formato en vez de pasarselo crudo a MySQL: una fecha con
+    basura no da error, da un reporte vacio, y un reporte de dinero vacio por
+    un error de tecleo es peor que un 400.
+    """
+    crudos = {}
+    for nombre in ("desde", "hasta"):
+        valor = (request.args.get(nombre) or "").strip()
+        if not valor:
+            crudos[nombre] = None
+            continue
+        try:
+            crudos[nombre] = date.fromisoformat(valor).isoformat()
+        except ValueError:
+            return None, None, (jsonify({
+                "error": "El parametro %s no es una fecha valida." % nombre,
+                "recibido": valor,
+                "formatoEsperado": "AAAA-MM-DD",
+            }), 400)
+
+    if crudos["desde"] and crudos["hasta"] and crudos["desde"] > crudos["hasta"]:
+        return None, None, (jsonify({
+            "error": "El rango esta al reves: la fecha inicial es posterior a la final.",
+            "desde": crudos["desde"], "hasta": crudos["hasta"],
+        }), 400)
+
+    return crudos["desde"], crudos["hasta"], None
+
+
+def _filtro_fechas(columna, desde, hasta):
+    """Fragmento SQL y parametros para acotar una columna DATETIME al rango."""
+    sql, params = "", []
+    if desde:
+        sql += " AND DATE(%s) >= %%s" % columna
+        params.append(desde)
+    if hasta:
+        sql += " AND DATE(%s) <= %%s" % columna
+        params.append(hasta)
+    return sql, params
+
+
+def _cabecera_informe(nombre, desde, hasta):
+    """Lo que el enunciado pide en todos: que se sepa quien lo pidio y cuando."""
+    return {
+        "informe": nombre,
+        "rango": {"desde": desde, "hasta": hasta},
+        "generadoEn": datetime.now().isoformat(timespec="seconds"),
+        "generadoPor": firmante(),
+    }
+
+
+@app.get("/api/v1/reportes/pagos-fundacion")
+def reporte_pagos_fundacion():
+    """Informe 4: los pagos que el asilo le ha hecho a la fundacion.
+
+    El rango acota los pagos y lo devengado dentro de esas fechas, pero el
+    saldo acumulado va aparte y sin acotar: lo que se le debe a la fundacion no
+    empieza de cero porque uno elija ver un mes.
+    """
+    desde, hasta, error = _rango_de_fechas()
+    if error:
+        return error
+
+    filtro, params = _filtro_fechas("creado_en", desde, hasta)
+    pagos = consultar(
+        "SELECT * FROM pagos_fundacion WHERE 1=1" + filtro + " ORDER BY creado_en DESC",
+        params)
+
+    pagado_rango = float(consultar_uno(
+        "SELECT COALESCE(SUM(monto),0) t FROM pagos_fundacion WHERE 1=1" + filtro,
+        params)["t"])
+    devengado_rango = float(consultar_uno(
+        "SELECT COALESCE(SUM(monto_neto),0) t FROM cargos WHERE categoria IN "
+        + _EN_CLAUSULA_FUNDACION + filtro, params)["t"])
+
+    adeudado_total = float(consultar_uno(
+        "SELECT COALESCE(SUM(monto_neto),0) t FROM cargos WHERE categoria IN "
+        + _EN_CLAUSULA_FUNDACION)["t"])
+    pagado_total = float(consultar_uno(
+        "SELECT COALESCE(SUM(monto),0) t FROM pagos_fundacion")["t"])
+
+    salida = _cabecera_informe("Pagos realizados a la fundacion", desde, hasta)
+    salida.update({
+        "total": len(pagos),
+        "pagos": [
+            {"id": p["id"], "monto": float(p["monto"]), "referencia": p["referencia"],
+             "registradoPor": p["registrado_por"],
+             "creadoEn": p["creado_en"].isoformat(timespec="seconds")}
+            for p in pagos
+        ],
+        "totales": {
+            "pagadoEnElRango": round(pagado_rango, 2),
+            "devengadoEnElRango": round(devengado_rango, 2),
+            "diferenciaEnElRango": round(devengado_rango - pagado_rango, 2),
+        },
+        "acumulado": {
+            "totalAdeudado": round(adeudado_total, 2),
+            "totalPagado": round(pagado_total, 2),
+            "saldoConFundacion": round(adeudado_total - pagado_total, 2),
+        },
+    })
+    return jsonify(salida)
+
+
+@app.get("/api/v1/reportes/entradas")
+def reporte_entradas():
+    """Informe 5: todo lo que entra al asilo, donaciones y cobros a las familias.
+
+    Los cobros salen de la tabla de pagos y no de cargos.monto_pagado: el cargo
+    guarda cuanto se ha pagado, pero no cuando, y un informe por rango de fecha
+    necesita la fecha en que el dinero entro, que es la del abono.
+    """
+    desde, hasta, error = _rango_de_fechas()
+    if error:
+        return error
+
+    filtro, params = _filtro_fechas("creado_en", desde, hasta)
+
+    donaciones = consultar(
+        "SELECT * FROM donaciones WHERE 1=1" + filtro + " ORDER BY creado_en DESC", params)
+    # Los tres tipos siempre, aunque vengan en cero, por la misma razon que en
+    # costo-por-visita: un renglon ausente obliga a adivinar.
+    por_tipo = {t: {"cantidad": 0, "monto": 0.0} for t in sorted(CATEGORIAS_DONANTE)}
+    for fila in consultar(
+        "SELECT tipo, COUNT(*) c, SUM(monto) m FROM donaciones WHERE 1=1"
+        + filtro + " GROUP BY tipo", params):
+        por_tipo[fila["tipo"]] = {"cantidad": int(fila["c"]), "monto": float(fila["m"])}
+
+    # El JOIN es lo que le pone categoria a cada abono: el pago apunta al cargo.
+    filtro_pagos, params_pagos = _filtro_fechas("p.creado_en", desde, hasta)
+    cobros = consultar(
+        """SELECT p.id, p.cargo_id, p.paciente_id, p.monto, p.metodo,
+                  p.registrado_por, p.creado_en, c.categoria, c.concepto,
+                  c.paciente_nombre
+             FROM pagos p JOIN cargos c ON c.id = p.cargo_id
+            WHERE 1=1""" + filtro_pagos + " ORDER BY p.creado_en DESC", params_pagos)
+    por_categoria = {}
+    for fila in consultar(
+        """SELECT c.categoria, COUNT(*) n, SUM(p.monto) m
+             FROM pagos p JOIN cargos c ON c.id = p.cargo_id
+            WHERE 1=1""" + filtro_pagos + " GROUP BY c.categoria", params_pagos):
+        por_categoria[fila["categoria"]] = {"cantidad": int(fila["n"]),
+                                            "monto": float(fila["m"])}
+    for categoria in sorted(CATEGORIAS_CARGO):
+        por_categoria.setdefault(categoria, {"cantidad": 0, "monto": 0.0})
+
+    total_donaciones = round(sum(float(d["monto"]) for d in donaciones), 2)
+    total_cobros = round(sum(float(c["monto"]) for c in cobros), 2)
+
+    salida = _cabecera_informe("Entradas: donaciones y cobros", desde, hasta)
+    salida.update({
+        "donaciones": {
+            "total": len(donaciones),
+            "monto": total_donaciones,
+            "porTipo": por_tipo,
+            "detalle": [
+                {"id": d["id"], "donante": d["donante"], "tipo": d["tipo"],
+                 "monto": float(d["monto"]), "destino": d["destino"],
+                 "registradoPor": d["registrado_por"],
+                 "creadoEn": d["creado_en"].isoformat(timespec="seconds")}
+                for d in donaciones
+            ],
+        },
+        "cobros": {
+            "total": len(cobros),
+            "monto": total_cobros,
+            "porCategoria": por_categoria,
+            "detalle": [
+                {"id": c["id"], "cargoId": c["cargo_id"], "pacienteId": c["paciente_id"],
+                 "pacienteNombre": c["paciente_nombre"], "categoria": c["categoria"],
+                 "concepto": c["concepto"], "monto": float(c["monto"]),
+                 "metodo": c["metodo"], "registradoPor": c["registrado_por"],
+                 "creadoEn": c["creado_en"].isoformat(timespec="seconds")}
+                for c in cobros
+            ],
+        },
+        "totales": {
+            "donaciones": total_donaciones,
+            "cobros": total_cobros,
+            "total": round(total_donaciones + total_cobros, 2),
+        },
+    })
+    return jsonify(salida)
+
+
 @app.errorhandler(404)
 def no_encontrado(_):
     return jsonify({"error": "Ruta no encontrada en ms-caja."}), 404
