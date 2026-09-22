@@ -400,6 +400,7 @@
     <div>
       <span class="cajon__servicio" id="visita-servicio">ms-consultas</span>
       <h3 id="visita-titulo">Consulta del especialista</h3>
+      <div class="cajon__estado" id="visita-estado"></div>
     </div>
     <button class="cerrar" id="cerrar-visita" type="button" aria-label="Cerrar">×</button>
   </header>
@@ -472,6 +473,19 @@
     <!-- El dictamen se pinta aqui con el mismo tratamiento visual del recetario -->
     <div class="dictamen" id="dictamen-indicacion" aria-live="polite"></div>
   </section>
+
+  <!-- Cerrar la consulta es irreversible: ms-consultas rechaza despues
+       cualquier examen, receta o cambio de diagnostico con un 409. Por eso
+       el boton solo aparece para MEDICO y solo mientras esta ABIERTA. -->
+  <p class="parte" id="visita-cerrada" hidden>
+    Esta consulta está cerrada. Queda como documento clínico: ya no admite
+    exámenes, recetas ni cambios en el diagnóstico.
+  </p>
+
+  <button class="accion accion--ancha accion--peligro" id="finalizar-consulta"
+          type="button" hidden>
+    Cerrar consulta
+  </button>
 </aside>
 
 

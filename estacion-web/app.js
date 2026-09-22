@@ -1912,7 +1912,7 @@ async function abrirFicha(evento) {
       const quien = document.createElement("p");
       quien.className = "ficha__dato";
       quien.textContent = (v.medicoTratante || "sin médico asignado") + " · " + v.id;
-      caja.append(enc, quien);
+      caja.append(enc, quien, marbeteEstado(v.estado));
 
       const detalle = document.createElement("dl");
       detalle.className = "datos";
@@ -2371,6 +2371,7 @@ function abrirVisita(visita) {
   $("visita-observaciones").value = visita.observaciones || "";
   $("dictamen-indicacion").textContent = "";
   pintarDetalleVisita(visita);
+  aplicarEstadoVisita(visita);
 
   $("cajon-visita").hidden = false;
   $("velo-visita").hidden = false;
@@ -2392,6 +2393,71 @@ function cerrarVisita() {
 
 $("cerrar-visita").addEventListener("click", cerrarVisita);
 $("velo-visita").addEventListener("click", cerrarVisita);
+
+// Una consulta ABIERTA se edita; una CERRADA es un documento clinico que solo
+// se lee. ms-consultas ya lo hace cumplir del lado del servidor —responde 409
+// a examenes, recetas y cambios de ficha—, asi que esto no es la defensa: es
+// no ofrecer lo que el servidor va a rechazar.
+function aplicarEstadoVisita(visita) {
+  const abierta = visita.estado === "ABIERTA";
+
+  const marbete = $("visita-estado");
+  marbete.textContent = "";
+  marbete.appendChild(marbeteEstado(visita.estado));
+
+  $("formulario-visita").hidden = !abierta;
+  $("formulario-examen").hidden = !abierta;
+  $("formulario-indicacion").hidden = !abierta;
+  $("visita-cerrada").hidden = abierta;
+
+  // El cierre es del medico tratante, no de quien pase por la ficha.
+  $("finalizar-consulta").hidden = !(abierta && SESION.rol === "MEDICO");
+}
+
+$("finalizar-consulta").addEventListener("click", async () => {
+  const visita = estadoConsultas.visitaAbierta;
+  if (!visita) return;
+  const interno = INTERNOS[visita.pacienteId];
+
+  const seguro = await confirmar({
+    titulo: "¿Cerrar la consulta?",
+    textoSi: "Sí, cerrar",
+    tono: "peligro",
+    datos: [
+      ["Interno", (interno ? interno.nombre : visita.pacienteId) + " · " + visita.pacienteId],
+      ["Consulta", visita.id],
+      ["Exámenes", (visita.examenes || []).length + " indicados"],
+      ["Recetas", (visita.indicaciones || []).length + " recetados"]
+    ],
+    aviso: "Una consulta cerrada ya no admite cambios: no se le podrán agregar " +
+           "exámenes ni recetas, ni corregir el diagnóstico. Si le falta algo, " +
+           "guarde la ficha antes de cerrarla."
+  });
+  if (!seguro) return;
+
+  const boton = $("finalizar-consulta");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Cerrando…";
+  try {
+    const cerrada = await pedir(
+      CONSULTAS + "/api/v1/visitas/" + visita.id + "/cerrar", { method: "PUT" });
+    estadoConsultas.visitaAbierta = cerrada;
+    pintarDetalleVisita(cerrada);
+    aplicarEstadoVisita(cerrada);
+    aviso("Consulta cerrada",
+      cerrada.id + " queda como documento clínico: ya no admite cambios.", "ok");
+    // El boton que tenia el foco acaba de desaparecer: hay que devolverlo a
+    // algo que exista, o el lector de pantalla se queda sin punto de partida.
+    $("cerrar-visita").focus();
+    await pintarHistorial();
+  } catch (error) {
+    avisarError(error, "cerrar la consulta");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
 
 $("abrir-ficha").addEventListener("click", abrirFicha);
 $("cerrar-ficha").addEventListener("click", cerrarFicha);
@@ -2421,6 +2487,7 @@ async function refrescarVisitaAbierta() {
     const visita = await pedir(CONSULTAS + "/api/v1/visitas/" + abierta.id);
     estadoConsultas.visitaAbierta = visita;
     pintarDetalleVisita(visita);
+    aplicarEstadoVisita(visita);
   } catch (_) { /* el aviso del error ya se mostró en la acción que falló */ }
   await pintarHistorial();
 }

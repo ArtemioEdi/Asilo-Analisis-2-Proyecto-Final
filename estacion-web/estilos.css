@@ -1243,3 +1243,8 @@ button { font-family: inherit; }
 /* A 480px el titulo del bloque y su nota no caben en una linea. En la pagina,
    que es ancha, se siguen viendo enfrentados. */
 .cajon .bloque__cabecera { flex-wrap: wrap; }
+
+/* El estado de la consulta, bajo el titulo del cajon y en cada tarjeta de la
+   ficha medica: el borde de color no basta por si solo. */
+.cajon__estado { margin-top: 8px; }
+.ficha--documento .marbete-estado { margin-top: 4px; align-self: start; }
