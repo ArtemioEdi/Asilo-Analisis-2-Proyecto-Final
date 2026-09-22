@@ -1248,3 +1248,117 @@ button { font-family: inherit; }
    ficha medica: el borde de color no basta por si solo. */
 .cajon__estado { margin-top: 8px; }
 .ficha--documento .marbete-estado { margin-top: 4px; align-self: start; }
+
+/* ---------------------------------------------------------------------
+   Reportes · la hoja y sus tablas
+   La hoja se ve en pantalla como se va a imprimir: fondo blanco, un filete
+   arriba y el sello del servidor debajo del titulo.
+--------------------------------------------------------------------- */
+.reportes__filtros { align-items: end; margin-bottom: 18px; }
+
+.hoja {
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+  border-top: 5px solid var(--cobalto);
+  padding: 26px 28px 30px;
+  margin-top: 20px;
+}
+.hoja__cabecera {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--linea);
+  padding-bottom: 14px;
+}
+.hoja__asilo {
+  font-family: var(--dato);
+  font-size: 11px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+  margin: 0 0 4px;
+}
+.hoja__titulo { font-size: 20px; font-weight: 600; line-height: 1.25; margin: 0; }
+.hoja__alcance { font-size: 14px; color: var(--pizarra); margin: 6px 0 0; }
+.hoja__sello {
+  font-family: var(--dato);
+  font-size: 12px;
+  color: var(--pizarra);
+  margin: 12px 0 22px;
+}
+
+.tabla-envoltura { overflow-x: auto; margin: 4px 0 6px; }
+.tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.tabla th, .tabla td {
+  text-align: left;
+  padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--linea);
+  vertical-align: top;
+}
+.tabla thead th {
+  font-family: var(--dato);
+  font-size: 11px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+  border-bottom-width: 2px;
+  white-space: nowrap;
+}
+.tabla tfoot td {
+  font-weight: 600;
+  border-top: 2px solid var(--tinta);
+  border-bottom: none;
+  padding-top: 10px;
+}
+/* Las cifras en monoespaciada y alineadas a la derecha: es una columna de
+   dinero y se lee comparando, no leyendo. */
+.tabla--numero { text-align: right; font-family: var(--dato); white-space: nowrap; }
+
+.parte--vacia { color: var(--pizarra); font-style: italic; }
+
+@media (max-width: 720px) {
+  .hoja { padding: 20px 16px 24px; }
+  .hoja__titulo { font-size: 18px; }
+}
+
+/* ---------------------------------------------------------------------
+   Impresion. El navegador ya imprime a PDF, asi que no hay biblioteca:
+   lo unico que hace falta es quitar de la hoja todo lo que es pantalla
+   —barra superior, pestañas, lateral de internos, filtros y botones— y
+   dejar el informe solo.
+--------------------------------------------------------------------- */
+@media print {
+  :root { padding: 0 !important; }
+  body { background: #fff; color: #000; }
+
+  .superior, .pestanas, .internos, .avisos, .sin-imprimir,
+  .cajon, .velo, .confirmar { display: none !important; }
+
+  .armazon, .principal { display: block; margin: 0; padding: 0; max-width: none; }
+  .encabezado { display: none; }
+
+  .hoja {
+    border: none;
+    padding: 0;
+    margin: 0;
+    box-shadow: none;
+  }
+  .hoja__cabecera { border-bottom: 1px solid #000; }
+
+  /* Que una tabla no se parta a la mitad entre dos paginas si se puede
+     evitar, y que la fila de totales no quede huerfana. */
+  .tabla-envoltura { overflow: visible; }
+  .tabla { font-size: 11pt; page-break-inside: auto; }
+  .tabla tr { page-break-inside: avoid; page-break-after: auto; }
+  .tabla thead { display: table-header-group; }
+  .tabla tfoot { display: table-row-group; }
+  .bloque { page-break-inside: avoid; }
+
+  a[href]::after { content: ""; }
+}

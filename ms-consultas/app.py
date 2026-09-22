@@ -259,6 +259,22 @@ def firmante():
     return g.sesion.get("nombre") or g.sesion.get("usuario") or "no indicado"
 
 
+def _sello_informe(nombre):
+    """Quien pidio el informe y cuando, para la cabecera de la hoja impresa.
+
+    Sale del token y no del cliente, por la misma razon que el resto de la
+    bitacora: un informe impreso lleva el nombre de quien tenia la sesion
+    abierta, no el que diga el navegador. Que el dato se vea igual no es
+    suficiente; lo que se esta defendiendo es de donde viene.
+    """
+    return {
+        "informe": nombre,
+        "generadoEn": datetime.now().isoformat(timespec="seconds"),
+        "generadoPor": firmante(),
+    }
+
+
+
 def token_de_servicio():
     """Credencial con la que ms-consultas le habla a ms-caja.
 
@@ -1198,13 +1214,15 @@ def reporte_examenes():
         examenes.append(examen)
 
     listos = sum(1 for e in examenes if e["estado"] == "RESULTADO_LISTO")
-    return jsonify({
+    salida = _sello_informe("Examenes medicos realizados por paciente")
+    salida.update({
         "pacienteId": paciente,
         "total": len(examenes),
         "conResultado": listos,
         "pendientes": len(examenes) - listos,
         "examenes": examenes,
     })
+    return jsonify(salida)
 
 
 @app.get("/api/v1/reportes/ficha")
@@ -1255,9 +1273,10 @@ def reporte_ficha():
 
     salida = {
         "pacienteId": paciente,
+        "informe": "Analisis medicos por paciente: ficha, motivo de reclusion y medicacion",
         "generadoEn": iso(ahora()),
         # Es un documento clinico: se imprime con el nombre de quien lo saco.
-        "consultadaPor": firmante(),
+        "generadoPor": firmante(),
         "identificacion": None,
         "psicopatologias": None,
         "alergias": None,

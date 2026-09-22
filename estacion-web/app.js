@@ -353,14 +353,14 @@ function problema(nodo, error, accion, alReintentar) {
 // Enrutado por hash: las vistas son enlazables (#/jornada, #/caja,
 // #/interno/ASL-014) y el boton de atras funciona.
 
-const VISTAS = ["jornada", "caja", "consultas", "agenda", "laboratorio", "farmacia"];
+const VISTAS = ["jornada", "caja", "consultas", "reportes", "agenda", "laboratorio", "farmacia"];
 
 // Reflejo exacto de la matriz del gateway: una vista de mas aqui solo
 // conseguiria que la persona pulse y reciba un 403.
 const VISTAS_POR_ROL = {
-  MEDICO:         ["jornada", "consultas", "caja"],
+  MEDICO:         ["jornada", "consultas", "caja", "reportes"],
   ENFERMERIA:     ["jornada", "consultas"],
-  ADMINISTRACION: ["caja"],
+  ADMINISTRACION: ["caja", "reportes"],
   FUNDACION:      ["agenda"],
   LABORATORIO:    ["laboratorio"],
   FARMACIA:       ["farmacia"],
@@ -412,6 +412,7 @@ function irA(destino, reemplazar) {
   if (ruta.vista === "jornada" && (cambioVista || cambioInterno)) cargarInterno();
   if (ruta.vista === "caja" && (cambioVista || cambioInterno)) pintarCaja();
   if (ruta.vista === "consultas" && (cambioVista || cambioInterno)) pintarConsultas();
+  if (ruta.vista === "reportes" && (cambioVista || cambioInterno)) pintarReportes();
   if (ruta.vista === "agenda" && cambioVista) pintarAgenda();
   if (ruta.vista === "laboratorio" && cambioVista) pintarLaboratorio();
   if (ruta.vista === "farmacia" && cambioVista) pintarFarmacia();
@@ -566,6 +567,7 @@ function aplicarPermisos() {
   $("pestana-jornada").hidden = !vistaPermitida("jornada");
   $("pestana-caja").hidden = !vistaPermitida("caja");
   $("pestana-consultas").hidden = !vistaPermitida("consultas");
+  $("pestana-reportes").hidden = !vistaPermitida("reportes");
   // Enfermeria lee la cadena clinica pero no escribe: sin boton de remitir.
   $("abrir-remision").hidden = SESION.rol !== "MEDICO";
   // Los tres roles operativos no tienen internos a cargo: fuera la lateral.
@@ -1851,7 +1853,7 @@ async function abrirFicha(evento) {
 
   // Es un documento clínico: se firma con quién lo sacó y cuándo.
   $("ficha-pie").textContent = "Generada el " + fechaLegible(f.generadoEn) +
-    " a solicitud de " + f.consultadaPor + ".";
+    " a solicitud de " + f.generadoPor + ".";
 
   const datos = document.createElement("dl");
   datos.className = "datos";
@@ -3000,3 +3002,692 @@ async function iniciarApp() {
     limpiarSesion();
   }
 })();
+
+/* =====================================================================
+   Reportes · los siete informes del enunciado
+
+   Los siete salen de tres microservicios distintos, pero para quien los
+   consulta son la misma cosa: se elige uno, se acota, se genera y se
+   imprime. El catalogo de abajo es lo unico que sabe de esa diferencia;
+   el resto de la pantalla trabaja contra el catalogo y no contra las
+   rutas.
+
+   Ninguna entrada del catalogo aparece si el rol no la puede pedir: una
+   opcion de mas solo conseguiria que la persona la elija y reciba un 403.
+   ===================================================================== */
+
+function quetzales(monto) {
+  return "Q " + Number(monto || 0).toFixed(2);
+}
+
+// Lo que cada informe necesita antes de poder pedirse.
+const INFORMES = [
+  {
+    clave: "costos-cita",
+    titulo: "Costos de cada cita por paciente",
+    nota: "Lo que costo una consulta, sumando el laboratorio y la farmacia que salieron de ella.",
+    roles: ["ADMINISTRACION"],
+    pide: ["interno", "visita"],
+    url: (f) => CAJA + "/api/v1/reportes/costo-por-visita?visitaId=" + encodeURIComponent(f.visita),
+    pintar: informeCostosCita,
+  },
+  {
+    clave: "analisis-medicos",
+    titulo: "Análisis médicos por paciente",
+    nota: "Ficha médica completa: por qué fue recluido, sus consultas y su medicación.",
+    roles: ["MEDICO"],
+    pide: ["interno"],
+    url: (f) => CONSULTAS + "/api/v1/reportes/ficha?pacienteId=" + encodeURIComponent(f.interno),
+    pintar: informeAnalisisMedicos,
+  },
+  {
+    clave: "cobros-paciente",
+    titulo: "Cobros por paciente",
+    nota: "Los cargos del interno en el rango, con el detalle de los gastos médicos.",
+    roles: ["ADMINISTRACION"],
+    pide: ["interno", "rango"],
+    url: (f) => CAJA + "/api/v1/cargos?pacienteId=" + encodeURIComponent(f.interno) +
+                "&desde=" + f.desde + "&hasta=" + f.hasta,
+    pintar: informeCobrosPaciente,
+  },
+  {
+    clave: "pagos-fundacion",
+    titulo: "Pagos realizados a la fundación",
+    nota: "Lo que el asilo le ha pagado a la fundación, contra lo que devengó en el rango.",
+    roles: ["ADMINISTRACION"],
+    pide: ["rango"],
+    url: (f) => CAJA + "/api/v1/reportes/pagos-fundacion?desde=" + f.desde + "&hasta=" + f.hasta,
+    pintar: informePagosFundacion,
+  },
+  {
+    clave: "entradas",
+    titulo: "Entradas: donaciones y cobros",
+    nota: "Todo lo que entró al asilo en el rango, por donante y por categoría.",
+    roles: ["ADMINISTRACION"],
+    pide: ["rango"],
+    url: (f) => CAJA + "/api/v1/reportes/entradas?desde=" + f.desde + "&hasta=" + f.hasta,
+    pintar: informeEntradas,
+  },
+  {
+    clave: "examenes",
+    titulo: "Exámenes médicos realizados por paciente",
+    nota: "Todos los exámenes indicados al interno y cuáles ya tienen resultado.",
+    roles: ["MEDICO"],
+    pide: ["interno"],
+    url: (f) => CONSULTAS + "/api/v1/reportes/examenes?pacienteId=" + encodeURIComponent(f.interno),
+    pintar: informeExamenes,
+  },
+  {
+    clave: "medicamentos",
+    titulo: "Medicamentos aplicados por paciente",
+    nota: "Qué se le administró, qué se omitió y qué proporción de las tomas se cumplió.",
+    roles: ["MEDICO", "ENFERMERIA"],
+    pide: ["interno", "rango"],
+    url: (f) => PASTILLERO + "/api/v1/pacientes/" + encodeURIComponent(f.interno) +
+                "/adherencia?desde=" + f.desde + "&hasta=" + f.hasta,
+    pintar: informeMedicamentos,
+  },
+];
+
+function informesDelRol() {
+  return INFORMES.filter((i) => i.roles.includes(SESION.rol));
+}
+
+function informeElegido() {
+  return INFORMES.find((i) => i.clave === $("reporte-cual").value) || null;
+}
+
+
+/* ---------------------------------------------------------------------
+   Piezas comunes de una hoja: una tabla con su pie de totales y un
+   bloque de cifras. Los siete informes se dibujan con esto.
+   --------------------------------------------------------------------- */
+
+// columnas: [{rotulo, alinear}], filas: [[celda, ...]], pie: [celda, ...]
+function tablaInforme(columnas, filas, pie) {
+  const caja = document.createElement("div");
+  caja.className = "tabla-envoltura";
+  const tabla = document.createElement("table");
+  tabla.className = "tabla";
+
+  const thead = document.createElement("thead");
+  const filaCab = document.createElement("tr");
+  for (const col of columnas) {
+    const th = document.createElement("th");
+    th.textContent = col.rotulo;
+    th.scope = "col";
+    if (col.alinear === "derecha") th.className = "tabla--numero";
+    filaCab.appendChild(th);
+  }
+  thead.appendChild(filaCab);
+
+  const tbody = document.createElement("tbody");
+  for (const fila of filas) {
+    const tr = document.createElement("tr");
+    fila.forEach((celda, i) => {
+      const td = document.createElement("td");
+      // Nodo si el dibujante ya armo uno (un marbete); texto si no.
+      if (celda instanceof Node) td.appendChild(celda);
+      else td.textContent = celda === null || celda === undefined ? "—" : String(celda);
+      if (columnas[i] && columnas[i].alinear === "derecha") td.className = "tabla--numero";
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+
+  tabla.append(thead, tbody);
+
+  if (pie && pie.length) {
+    const tfoot = document.createElement("tfoot");
+    const tr = document.createElement("tr");
+    pie.forEach((celda, i) => {
+      const td = document.createElement("td");
+      td.textContent = celda === null || celda === undefined ? "" : String(celda);
+      if (columnas[i] && columnas[i].alinear === "derecha") td.className = "tabla--numero";
+      tr.appendChild(td);
+    });
+    tfoot.appendChild(tr);
+    tabla.appendChild(tfoot);
+  }
+
+  caja.appendChild(tabla);
+  return caja;
+}
+
+function cifrasInforme(pares) {
+  const dl = document.createElement("dl");
+  dl.className = "datos";
+  for (const [rotulo, valor] of pares) dl.appendChild(lineaDato(rotulo, valor));
+  return dl;
+}
+
+function bloqueInforme(titulo, contenido) {
+  const seccion = document.createElement("section");
+  seccion.className = "bloque";
+  const cab = document.createElement("div");
+  cab.className = "bloque__cabecera";
+  const h = document.createElement("h4");
+  h.textContent = titulo;
+  cab.appendChild(h);
+  seccion.append(cab, contenido);
+  return seccion;
+}
+
+// Un informe sin filas no es un error: es un rango sin movimientos, y hay
+// que decir cual, o se lee como que el sistema fallo.
+function sinDatos(texto) {
+  const p = document.createElement("p");
+  p.className = "parte parte--vacia";
+  p.textContent = texto;
+  return p;
+}
+
+
+/* ---------------------------------------------------------------------
+   Los siete dibujantes. Cada uno recibe el JSON del servidor y devuelve
+   el cuerpo de la hoja.
+   --------------------------------------------------------------------- */
+
+function informeCostosCita(d) {
+  const trozos = document.createDocumentFragment();
+
+  trozos.appendChild(cifrasInforme([
+    ["Consulta", d.visitaId],
+    ["Interno", (d.pacienteNombre || "—") + " · " + (d.pacienteId || "—")],
+  ]));
+
+  const filas = ["CONSULTA", "LABORATORIO", "FARMACIA"].map((cat) => {
+    const c = d.porCategoria[cat] || { cantidad: 0, montoBruto: 0, montoNeto: 0, montoPagado: 0 };
+    return [
+      cat.charAt(0) + cat.slice(1).toLowerCase(),
+      c.cantidad,
+      quetzales(c.montoBruto),
+      quetzales(c.montoBruto - c.montoNeto),
+      quetzales(c.montoNeto),
+      quetzales(c.montoPagado),
+    ];
+  });
+
+  const t = d.totales;
+  trozos.appendChild(tablaInforme(
+    [{ rotulo: "Categoría" }, { rotulo: "Cargos", alinear: "derecha" },
+     { rotulo: "Bruto", alinear: "derecha" }, { rotulo: "Descuento", alinear: "derecha" },
+     { rotulo: "Neto", alinear: "derecha" }, { rotulo: "Pagado", alinear: "derecha" }],
+    filas,
+    ["Totales", d.total, quetzales(t.montoBruto), quetzales(t.descuento),
+     quetzales(t.montoNeto), quetzales(t.montoPagado)]));
+
+  trozos.appendChild(cifrasInforme([
+    ["Descuento de la fundación", quetzales(t.descuento)],
+    ["Saldo pendiente", quetzales(t.saldo)],
+  ]));
+
+  if (d.nota) trozos.appendChild(sinDatos(d.nota));
+  return trozos;
+}
+
+
+function informeAnalisisMedicos(d) {
+  const trozos = document.createDocumentFragment();
+  const id = d.identificacion || {};
+
+  trozos.appendChild(cifrasInforme([
+    ["Interno", (id.nombre || d.pacienteId) + " · " + d.pacienteId],
+    ["Edad", id.edad != null ? id.edad + " años" : "—"],
+    ["Cama", id.cama],
+    ["Ingreso", id.ingreso],
+    ["Responsable", id.responsable],
+  ]));
+
+  // El motivo de reclusion del enunciado son las psicopatologias del padron.
+  trozos.appendChild(bloqueInforme("Motivo de reclusión y antecedentes",
+    cifrasInforme([
+      ["Psicopatologías", (d.psicopatologias || []).join(" · ") || "ninguna registrada"],
+      ["Alergias", (d.alergias || []).join(" · ") || "ninguna registrada"],
+    ])));
+
+  if (d.advertencia) trozos.appendChild(sinDatos(d.advertencia));
+
+  const r = d.resumen || {};
+  trozos.appendChild(bloqueInforme("Resumen clínico", cifrasInforme([
+    ["Remisiones", r.solicitudes],
+    ["Consultas atendidas", r.visitas],
+    ["Exámenes indicados", r.examenes],
+    ["Medicamentos recetados", r.medicamentosIndicados],
+  ])));
+
+  if (!(d.visitas || []).length) {
+    trozos.appendChild(sinDatos(
+      "Este interno todavía no ha sido atendido por ningún especialista, " +
+      "así que no hay consultas que listar."));
+    return trozos;
+  }
+
+  trozos.appendChild(bloqueInforme("Consultas", tablaInforme(
+    [{ rotulo: "Fecha" }, { rotulo: "Especialidad" }, { rotulo: "Médico" },
+     { rotulo: "Diagnóstico" }, { rotulo: "Estado" }],
+    d.visitas.map((v) => [
+      fechaLegible(v.fechaVisita),
+      v.especialidad || "—",
+      v.medicoTratante || "—",
+      v.diagnostico || "sin diagnóstico anotado",
+      marbeteEstado(v.estado),
+    ]),
+    null)));
+
+  const recetados = [];
+  for (const v of d.visitas) {
+    for (const i of v.indicaciones || []) {
+      recetados.push([
+        fechaLegible(v.fechaVisita),
+        i.nombre,
+        i.dosisMg + " mg cada " + i.cadaHoras + " h por " + i.duracionDias + " días",
+        i.entregado ? "entregado" : "sin entregar",
+      ]);
+    }
+  }
+  trozos.appendChild(bloqueInforme("Medicación indicada",
+    recetados.length
+      ? tablaInforme([{ rotulo: "Fecha" }, { rotulo: "Medicamento" },
+                      { rotulo: "Pauta" }, { rotulo: "Entrega" }], recetados, null)
+      : sinDatos("No se ha recetado ningún medicamento en las consultas de este interno.")));
+
+  return trozos;
+}
+
+
+function informeCobrosPaciente(d) {
+  const trozos = document.createDocumentFragment();
+  const interno = INTERNOS[($("reporte-interno").value || "")];
+
+  trozos.appendChild(cifrasInforme([
+    ["Interno", interno ? interno.nombre + " · " + interno.pacienteId : "—"],
+    ["Cargos en el rango", d.total],
+  ]));
+
+  if (!d.total) {
+    trozos.appendChild(sinDatos(
+      "A este interno no se le cargó nada entre las fechas elegidas. " +
+      "Pruebe con un rango más amplio: los cargos se listan por su fecha de creación."));
+    return trozos;
+  }
+
+  trozos.appendChild(tablaInforme(
+    [{ rotulo: "Fecha" }, { rotulo: "Categoría" }, { rotulo: "Concepto" },
+     { rotulo: "Neto", alinear: "derecha" }, { rotulo: "Pagado", alinear: "derecha" },
+     { rotulo: "Saldo", alinear: "derecha" }, { rotulo: "Estado" }],
+    d.cargos.map((c) => [
+      fechaLegible(c.creadoEn), c.categoria, c.concepto,
+      quetzales(c.montoNeto), quetzales(c.montoPagado), quetzales(c.saldo),
+      c.estado.toLowerCase(),
+    ]),
+    ["Totales", "", "", quetzales(d.montoNetoTotal),
+     quetzales(d.montoNetoTotal - d.saldoTotal), quetzales(d.saldoTotal), ""]));
+
+  return trozos;
+}
+
+
+function informePagosFundacion(d) {
+  const trozos = document.createDocumentFragment();
+  const t = d.totales;
+
+  trozos.appendChild(bloqueInforme("En el rango elegido", cifrasInforme([
+    ["Devengado (consultas, laboratorio y farmacia)", quetzales(t.devengadoEnElRango)],
+    ["Pagado a la fundación", quetzales(t.pagadoEnElRango)],
+    ["Diferencia del período", quetzales(t.diferenciaEnElRango)],
+  ])));
+
+  // El acumulado va aparte y sin acotar: lo que se le debe a la fundacion no
+  // empieza de cero porque uno elija ver un mes.
+  const a = d.acumulado;
+  trozos.appendChild(bloqueInforme("Acumulado histórico, sin acotar por fecha",
+    cifrasInforme([
+      ["Total adeudado", quetzales(a.totalAdeudado)],
+      ["Total pagado", quetzales(a.totalPagado)],
+      ["Saldo con la fundación", quetzales(a.saldoConFundacion)],
+    ])));
+
+  trozos.appendChild(bloqueInforme("Pagos del rango",
+    d.total
+      ? tablaInforme(
+          [{ rotulo: "Fecha" }, { rotulo: "Folio" }, { rotulo: "Referencia" },
+           { rotulo: "Registrado por" }, { rotulo: "Monto", alinear: "derecha" }],
+          d.pagos.map((p) => [
+            fechaLegible(p.creadoEn), p.id, p.referencia || "—",
+            p.registradoPor || "—", quetzales(p.monto),
+          ]),
+          ["Total", "", "", "", quetzales(t.pagadoEnElRango)])
+      : sinDatos("No se le hizo ningún pago a la fundación entre las fechas elegidas.")));
+
+  return trozos;
+}
+
+
+function informeEntradas(d) {
+  const trozos = document.createDocumentFragment();
+
+  trozos.appendChild(cifrasInforme([
+    ["Donaciones", quetzales(d.totales.donaciones)],
+    ["Cobros a familiares", quetzales(d.totales.cobros)],
+    ["Total de entradas", quetzales(d.totales.total)],
+  ]));
+
+  const porTipo = Object.entries(d.donaciones.porTipo)
+    .map(([tipo, v]) => [tipo.charAt(0) + tipo.slice(1).toLowerCase(), v.cantidad, quetzales(v.monto)]);
+  trozos.appendChild(bloqueInforme("Donaciones por tipo de donante", tablaInforme(
+    [{ rotulo: "Tipo" }, { rotulo: "Cantidad", alinear: "derecha" },
+     { rotulo: "Monto", alinear: "derecha" }],
+    porTipo,
+    ["Total", d.donaciones.total, quetzales(d.donaciones.monto)])));
+
+  trozos.appendChild(bloqueInforme("Donaciones recibidas",
+    d.donaciones.total
+      ? tablaInforme(
+          [{ rotulo: "Fecha" }, { rotulo: "Donante" }, { rotulo: "Tipo" },
+           { rotulo: "Destino" }, { rotulo: "Monto", alinear: "derecha" }],
+          d.donaciones.detalle.map((x) => [
+            fechaLegible(x.creadoEn), x.donante, x.tipo.toLowerCase(),
+            x.destino || "—", quetzales(x.monto),
+          ]),
+          ["Total", "", "", "", quetzales(d.donaciones.monto)])
+      : sinDatos("No se recibió ninguna donación entre las fechas elegidas.")));
+
+  const porCat = Object.entries(d.cobros.porCategoria)
+    .filter(([, v]) => v.cantidad > 0)
+    .map(([cat, v]) => [cat.charAt(0) + cat.slice(1).toLowerCase(), v.cantidad, quetzales(v.monto)]);
+  trozos.appendChild(bloqueInforme("Cobros por categoría",
+    porCat.length
+      ? tablaInforme(
+          [{ rotulo: "Categoría" }, { rotulo: "Abonos", alinear: "derecha" },
+           { rotulo: "Monto", alinear: "derecha" }],
+          porCat,
+          ["Total", d.cobros.total, quetzales(d.cobros.monto)])
+      : sinDatos("Ningún familiar abonó nada entre las fechas elegidas.")));
+
+  if (d.cobros.total) {
+    trozos.appendChild(bloqueInforme("Detalle de los cobros", tablaInforme(
+      [{ rotulo: "Fecha" }, { rotulo: "Interno" }, { rotulo: "Concepto" },
+       { rotulo: "Método" }, { rotulo: "Monto", alinear: "derecha" }],
+      d.cobros.detalle.map((c) => [
+        fechaLegible(c.creadoEn), c.pacienteNombre || c.pacienteId,
+        c.concepto, c.metodo, quetzales(c.monto),
+      ]),
+      ["Total", "", "", "", quetzales(d.cobros.monto)])));
+  }
+
+  return trozos;
+}
+
+
+function informeExamenes(d) {
+  const trozos = document.createDocumentFragment();
+  const interno = INTERNOS[d.pacienteId];
+
+  trozos.appendChild(cifrasInforme([
+    ["Interno", (interno ? interno.nombre : d.pacienteId) + " · " + d.pacienteId],
+    ["Exámenes indicados", d.total],
+    ["Con resultado", d.conResultado],
+    ["Pendientes", d.pendientes],
+  ]));
+
+  if (!d.total) {
+    trozos.appendChild(sinDatos(
+      "A este interno no se le ha indicado ningún examen. " +
+      "Los exámenes los indica el especialista durante la consulta."));
+    return trozos;
+  }
+
+  trozos.appendChild(tablaInforme(
+    [{ rotulo: "Indicado" }, { rotulo: "Examen" }, { rotulo: "Consulta" },
+     { rotulo: "Resultado" }, { rotulo: "Estado" }],
+    d.examenes.map((e) => [
+      fechaLegible(e.indicadoEn),
+      e.nombre,
+      (e.especialidad || "—") + " · " + fechaLegible(e.fechaVisita),
+      e.resultado || "sin resultado todavía",
+      marbeteEstado(e.estado),
+    ]),
+    null));
+
+  return trozos;
+}
+
+
+function informeMedicamentos(d) {
+  const trozos = document.createDocumentFragment();
+  const interno = INTERNOS[d.pacienteId];
+  const c = d.detalle || {};
+
+  trozos.appendChild(cifrasInforme([
+    ["Interno", (interno ? interno.nombre : d.pacienteId) + " · " + d.pacienteId],
+    ["Tomas programadas", d.totalProgramadas],
+    ["Adherencia",
+      // null y 0 % no son lo mismo: sin tomas cerradas no hay nada que medir.
+      d.adherenciaPorcentaje === null
+        ? "todavía no hay tomas cerradas que medir"
+        : d.adherenciaPorcentaje + " %"],
+  ]));
+
+  trozos.appendChild(bloqueInforme("Cómo terminaron las tomas", tablaInforme(
+    [{ rotulo: "Estado" }, { rotulo: "Tomas", alinear: "derecha" }],
+    [["Administradas", c.ADMINISTRADA || 0],
+     ["Omitidas", c.OMITIDA || 0],
+     ["Vencidas sin registrar", c.VENCIDA || 0],
+     ["Todavía pendientes", c.PENDIENTE || 0]],
+    ["Total", d.totalProgramadas])));
+
+  const porFarmaco = Object.entries(d.porFarmaco || {});
+  trozos.appendChild(bloqueInforme("Por medicamento",
+    porFarmaco.length
+      ? tablaInforme(
+          [{ rotulo: "Medicamento" }, { rotulo: "Programadas", alinear: "derecha" },
+           { rotulo: "Administradas", alinear: "derecha" }],
+          porFarmaco.map(([f, v]) => [f, v.programadas, v.administradas]),
+          ["Total",
+           porFarmaco.reduce((s, [, v]) => s + v.programadas, 0),
+           porFarmaco.reduce((s, [, v]) => s + v.administradas, 0)])
+      : sinDatos("Este interno no tuvo ninguna toma programada entre las fechas elegidas.")));
+
+  return trozos;
+}
+
+
+/* ---------------------------------------------------------------------
+   La pantalla: armado del formulario, generacion e impresion.
+   --------------------------------------------------------------------- */
+
+function pintarReportes() {
+  const selector = $("reporte-cual");
+  const disponibles = informesDelRol();
+
+  // Se rearma solo la primera vez: rehacerlo perderia lo que ya eligio.
+  if (selector.options.length !== disponibles.length) {
+    selector.textContent = "";
+    disponibles.forEach((informe, i) => {
+      const opcion = document.createElement("option");
+      opcion.value = informe.clave;
+      opcion.textContent = (i + 1) + ". " + informe.titulo;
+      selector.appendChild(opcion);
+    });
+  }
+
+  $("reportes-meta").textContent =
+    disponibles.length + (disponibles.length === 1 ? " informe disponible" : " informes disponibles") +
+    " para el rol " + SESION.rol;
+
+  llenarInternosDelReporte();
+  ajustarFiltrosDelReporte();
+}
+
+function llenarInternosDelReporte() {
+  const selector = $("reporte-interno");
+  const elegido = selector.value || estado.interno;
+  selector.textContent = "";
+  for (const id of Object.keys(INTERNOS)) {
+    const opcion = document.createElement("option");
+    opcion.value = id;
+    opcion.textContent = INTERNOS[id].nombre + " · " + id;
+    selector.appendChild(opcion);
+  }
+  if (elegido && INTERNOS[elegido]) selector.value = elegido;
+}
+
+// Cada informe pide lo suyo: mostrar los cinco filtros siempre obligaria a
+// adivinar cuales cuentan para el que se eligio.
+function ajustarFiltrosDelReporte() {
+  const informe = informeElegido();
+  if (!informe) return;
+  const pide = informe.pide;
+
+  $("campo-reporte-interno").hidden = !pide.includes("interno");
+  $("campo-reporte-visita").hidden = !pide.includes("visita");
+  $("campo-reporte-desde").hidden = !pide.includes("rango");
+  $("campo-reporte-hasta").hidden = !pide.includes("rango");
+  $("reporte-ayuda").textContent = informe.nota;
+
+  if (pide.includes("rango") && !$("reporte-desde").value) {
+    // Un mes hacia atras: es el rango que se pide casi siempre, y deja ver
+    // datos en vez de una hoja vacia la primera vez.
+    const hoy = new Date();
+    const antes = new Date(hoy.getTime() - 30 * 24 * 60 * 60 * 1000);
+    $("reporte-desde").value = antes.toISOString().slice(0, 10);
+    $("reporte-hasta").value = hoy.toISOString().slice(0, 10);
+  }
+
+  if (pide.includes("visita")) llenarConsultasDelReporte();
+}
+
+// La caja no lleva registro de visitas y ADMINISTRACION no puede leer
+// ms-consultas. Pero cada cargo trae de que consulta salio, asi que la lista
+// se saca de los cargos del interno, igual que en la vista de caja.
+async function llenarConsultasDelReporte() {
+  const selector = $("reporte-visita");
+  const paciente = $("reporte-interno").value;
+  if (!paciente) return;
+
+  selector.textContent = "";
+  const cargando = document.createElement("option");
+  cargando.textContent = "Buscando consultas…";
+  selector.appendChild(cargando);
+  selector.disabled = true;
+
+  let datos;
+  try {
+    datos = await pedir(CAJA + "/api/v1/cargos?pacienteId=" + encodeURIComponent(paciente));
+  } catch (error) {
+    selector.textContent = "";
+    const fallo = document.createElement("option");
+    fallo.textContent = "No se pudieron cargar las consultas";
+    selector.appendChild(fallo);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  const visitas = [...new Set((datos.cargos || []).map((c) => c.visitaId).filter(Boolean))];
+  selector.textContent = "";
+  selector.disabled = !visitas.length;
+  if (!visitas.length) {
+    const ninguna = document.createElement("option");
+    ninguna.value = "";
+    ninguna.textContent = "Este interno no tiene consultas con cargos";
+    selector.appendChild(ninguna);
+    return;
+  }
+  for (const v of visitas) {
+    const opcion = document.createElement("option");
+    opcion.value = v;
+    opcion.textContent = v;
+    selector.appendChild(opcion);
+  }
+}
+
+$("reporte-cual").addEventListener("change", () => {
+  $("reporte-hoja").hidden = true;
+  $("reporte-estado").textContent = "";
+  ajustarFiltrosDelReporte();
+});
+
+$("reporte-interno").addEventListener("change", () => {
+  const informe = informeElegido();
+  if (informe && informe.pide.includes("visita")) llenarConsultasDelReporte();
+});
+
+$("formulario-reporte").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const informe = informeElegido();
+  if (!informe) return;
+
+  const filtros = {
+    interno: $("reporte-interno").value,
+    visita: $("reporte-visita").value,
+    desde: $("reporte-desde").value,
+    hasta: $("reporte-hasta").value,
+  };
+
+  if (informe.pide.includes("visita") && !filtros.visita) {
+    aviso("Falta elegir la consulta",
+      "Este informe se saca de una consulta concreta, y este interno no tiene ninguna con cargos.",
+      "aviso");
+    return;
+  }
+  // El servidor tambien lo valida y responde 400; esto solo evita el viaje.
+  if (informe.pide.includes("rango") && filtros.desde && filtros.hasta &&
+      filtros.desde > filtros.hasta) {
+    aviso("El rango está al revés",
+      "La fecha inicial es posterior a la final.", "aviso");
+    return;
+  }
+
+  const boton = $("generar-reporte");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Generando…";
+  $("reporte-hoja").hidden = true;
+  esqueleto($("reporte-estado"), 4, true);
+
+  let datos;
+  try {
+    datos = await pedir(informe.url(filtros));
+  } catch (error) {
+    problema($("reporte-estado"), error, "generar el informe",
+      () => $("formulario-reporte").requestSubmit());
+    if (error.sesionExpirada) sesionExpirada();
+    boton.disabled = false;
+    boton.textContent = original;
+    return;
+  }
+
+  $("reporte-estado").textContent = "";
+  $("reporte-titulo").textContent = informe.titulo;
+  $("reporte-alcance").textContent = alcanceDelInforme(informe, filtros);
+  // Fecha y firmante SIEMPRE del servidor: el navegador sabe quien inicio
+  // sesion, pero la hoja la firma el token.
+  $("reporte-sello").textContent =
+    "Generado el " + fechaLegible(datos.generadoEn) + " a solicitud de " + datos.generadoPor + ".";
+
+  const cuerpo = $("reporte-cuerpo");
+  cuerpo.textContent = "";
+  cuerpo.appendChild(informe.pintar(datos));
+  $("reporte-hoja").hidden = false;
+  $("reporte-hoja").scrollIntoView({ block: "start", behavior: "smooth" });
+
+  boton.disabled = false;
+  boton.textContent = original;
+});
+
+function alcanceDelInforme(informe, filtros) {
+  const partes = [];
+  if (informe.pide.includes("interno") && INTERNOS[filtros.interno]) {
+    partes.push(INTERNOS[filtros.interno].nombre + " (" + filtros.interno + ")");
+  }
+  if (informe.pide.includes("visita") && filtros.visita) partes.push("consulta " + filtros.visita);
+  if (informe.pide.includes("rango")) {
+    partes.push("del " + (filtros.desde || "inicio") + " al " + (filtros.hasta || "hoy"));
+  }
+  return partes.join(" · ");
+}
+
+// El navegador ya imprime a PDF: no hace falta una biblioteca. La hoja de
+// estilo @media print es la que esconde la navegacion y los filtros.
+$("imprimir-reporte").addEventListener("click", () => window.print());

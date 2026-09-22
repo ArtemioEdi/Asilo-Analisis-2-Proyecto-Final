@@ -397,12 +397,14 @@ def listar_cargos():
     sql += " ORDER BY creado_en DESC LIMIT 200"
     filas = consultar(sql, params)
     cargos = [_cargo_json(f) for f in filas]
-    return jsonify({
+    salida = _cabecera_informe("Cobros por paciente, con el detalle de gastos medicos", desde, hasta)
+    salida.update({
         "total": len(cargos),
         "montoNetoTotal": round(sum(c["montoNeto"] for c in cargos), 2),
         "saldoTotal": round(sum(c["saldo"] for c in cargos), 2),
         "cargos": cargos,
     })
+    return jsonify(salida)
 
 
 @app.get("/api/v1/pacientes/<paciente_id>/cuenta")
@@ -721,7 +723,8 @@ def costo_por_visita():
             "montoPagado": float(fila["pagado"]),
         }
 
-    salida = {
+    salida = _sello_informe("Costo de la consulta, con laboratorio y farmacia")
+    salida.update({
         "visitaId": visita,
         "pacienteId": cargos[0]["pacienteId"] if cargos else None,
         "pacienteNombre": cargos[0]["pacienteNombre"] if cargos else None,
@@ -736,7 +739,7 @@ def costo_por_visita():
             "saldo": round(neto - pagado, 2),
         },
         "cargos": cargos,
-    }
+    })
     if not cargos:
         # La caja no tiene la tabla de visitas, asi que no puede distinguir
         # entre "sin cargos" y "folio inexistente". Un 404 seria mentira la
@@ -801,14 +804,26 @@ def _filtro_fechas(columna, desde, hasta):
     return sql, params
 
 
-def _cabecera_informe(nombre, desde, hasta):
-    """Lo que el enunciado pide en todos: que se sepa quien lo pidio y cuando."""
+def _sello_informe(nombre):
+    """Quien pidio el informe y cuando, para la cabecera de la hoja impresa.
+
+    Sale del token y no del cliente, por la misma razon que el resto de la
+    bitacora: un informe impreso lleva el nombre de quien tenia la sesion
+    abierta, no el que diga el navegador. Que el dato se vea igual no es
+    suficiente; lo que se esta defendiendo es de donde viene.
+    """
     return {
         "informe": nombre,
-        "rango": {"desde": desde, "hasta": hasta},
         "generadoEn": datetime.now().isoformat(timespec="seconds"),
         "generadoPor": firmante(),
     }
+
+
+def _cabecera_informe(nombre, desde, hasta):
+    """El sello, mas el rango para los informes que se piden por fechas."""
+    cabecera = _sello_informe(nombre)
+    cabecera["rango"] = {"desde": desde, "hasta": hasta}
+    return cabecera
 
 
 @app.get("/api/v1/reportes/pagos-fundacion")

@@ -104,6 +104,10 @@
               role="tab" aria-selected="false" aria-controls="vista-caja">
         <span id="pestana-caja-texto">Caja y donaciones</span>
       </button>
+      <button class="pestana" id="pestana-reportes" data-vista="reportes" type="button"
+              role="tab" aria-selected="false" aria-controls="vista-reportes" hidden>
+        Reportes
+      </button>
     </nav>
 
     <!-- ---------------- Jornada de medicacion ---------------- -->
@@ -238,6 +242,69 @@
 
     </section>
 
+
+    <!-- ---------------- Reportes · los siete del enunciado -------------- -->
+    <section id="vista-reportes" role="tabpanel" aria-labelledby="pestana-reportes"
+             tabindex="-1" hidden>
+
+      <header class="encabezado">
+        <div>
+          <h2>Reportes</h2>
+          <p class="encabezado__meta" id="reportes-meta"></p>
+        </div>
+      </header>
+
+      <!-- Los filtros no se imprimen: la hoja impresa es el informe, no la
+           pantalla desde la que se pidio. -->
+      <form class="formulario reportes__filtros sin-imprimir" id="formulario-reporte"
+            autocomplete="off">
+        <div class="campo campo--ancho">
+          <label for="reporte-cual">Informe</label>
+          <select id="reporte-cual"></select>
+        </div>
+        <div class="campo" id="campo-reporte-interno" hidden>
+          <label for="reporte-interno">Interno</label>
+          <select id="reporte-interno"></select>
+        </div>
+        <div class="campo" id="campo-reporte-visita" hidden>
+          <label for="reporte-visita">Consulta</label>
+          <select id="reporte-visita"></select>
+        </div>
+        <div class="campo" id="campo-reporte-desde" hidden>
+          <label for="reporte-desde">Desde</label>
+          <input id="reporte-desde" type="date">
+        </div>
+        <div class="campo" id="campo-reporte-hasta" hidden>
+          <label for="reporte-hasta">Hasta</label>
+          <input id="reporte-hasta" type="date">
+        </div>
+        <button class="accion" id="generar-reporte" type="submit">Generar informe</button>
+      </form>
+
+      <p class="parte sin-imprimir" id="reporte-ayuda"></p>
+
+      <div id="reporte-estado" aria-live="polite"></div>
+
+      <article class="hoja" id="reporte-hoja" hidden>
+        <header class="hoja__cabecera">
+          <div>
+            <p class="hoja__asilo">Asilo de Ancianos «Cabeza de Algodón»</p>
+            <h3 class="hoja__titulo" id="reporte-titulo"></h3>
+            <p class="hoja__alcance" id="reporte-alcance"></p>
+          </div>
+          <button class="accion-sec sin-imprimir" id="imprimir-reporte" type="button">
+            Imprimir
+          </button>
+        </header>
+
+        <!-- El sello viene del servidor, no del navegador: lo firma el token
+             de quien tiene la sesion abierta. -->
+        <p class="hoja__sello" id="reporte-sello"></p>
+
+        <div id="reporte-cuerpo"></div>
+      </article>
+
+    </section>
     <!-- ---------------- Consultas · la cadena clinica (MEDICO) ----------- -->
     <section id="vista-consultas" role="tabpanel" aria-labelledby="pestana-consultas"
              tabindex="-1" hidden>
