@@ -247,7 +247,11 @@ def exigir_sesion():
     escribe = request.method not in ("GET", "HEAD")
     permitidos = ROLES_ESCRITURA if escribe else ROLES_LECTURA
     if not escribe and CUENTA_DE_PACIENTE.match(request.path):
-        permitidos = permitidos + ("MEDICO",)
+        # Y el token de servicio de ms-pastillero, que consulta esta misma
+        # cuenta para advertir si un interno egresa debiendo. Solo esta ruta:
+        # el balance del asilo, las donaciones y los gastos siguen fuera del
+        # alcance de cualquier servicio.
+        permitidos = permitidos + ("MEDICO",) + ROLES_SERVICIO
     # El token de servicio de ms-consultas: solo POST /api/v1/cargos.
     if escribe and request.method == "POST" and CREAR_CARGO.match(request.path):
         permitidos = permitidos + ROLES_SERVICIO

@@ -17,22 +17,54 @@ USE asilo_pastillero;
 CREATE TABLE IF NOT EXISTS internos (
     id               VARCHAR(16)   NOT NULL,
     nombre           VARCHAR(120)  NOT NULL,
-    edad             SMALLINT      NOT NULL,
-    cama             VARCHAR(60),
+    -- Documento de identidad. Es lo unico que impide dar de alta dos veces a
+    -- la misma persona, asi que la unicidad la garantiza el motor y no una
+    -- comprobacion en Python: dos altas simultaneas pasarian las dos.
+    documento        VARCHAR(32)   NOT NULL,
+    -- La edad NO se guarda: se calcula de la fecha de nacimiento cada vez que
+    -- se lee la ficha. Guardarla obligaria a corregirla en cada cumpleanos, y
+    -- una edad vieja no es un detalle cosmetico aqui: ms-vigia aplica
+    -- criterios geriatricos a partir de ella para decidir si un medicamento
+    -- es seguro.
+    fecha_nacimiento DATE          NOT NULL,
+    sexo             VARCHAR(12)   NOT NULL,
     -- Fecha real, no texto: se guarda como DATE y la aplicacion la presenta
     -- en formato dd/mm/aaaa.
     ingreso          DATE,
+    motivo_ingreso   TEXT,
+    pabellon         VARCHAR(60),
+    cama             VARCHAR(60),
     -- Listas cortas; JSON nativo de MySQL en vez de texto con formato propio.
     psicopatologias  JSON          NOT NULL,
     alergias         JSON          NOT NULL,
+    -- Lo que el interno toma de forma cronica, fuera de los planes de tomas.
+    -- ms-vigia lo necesita para detectar duplicidad terapeutica.
+    medicacion_permanente JSON     NOT NULL,
     responsable      VARCHAR(120),
     -- Correo del familiar responsable. Es a donde ms-consultas avisa cuando
     -- se remite al interno a una especialidad. Dato de contacto, no clinico:
     -- por eso viaja tambien en la ficha que recibe administracion.
     correo_responsable VARCHAR(160),
+    -- Un interno nunca se borra. Egresa, y su historial queda intacto: las
+    -- tomas y los planes que firmo enfermeria son documentos legales.
+    estado           VARCHAR(12)   NOT NULL DEFAULT 'ACTIVO',
+    egreso_fecha     DATE          NULL,
+    egreso_motivo    TEXT          NULL,
 
     CONSTRAINT pk_internos PRIMARY KEY (id),
-    CONSTRAINT ck_internos_edad CHECK (edad BETWEEN 0 AND 130)
+    CONSTRAINT uq_internos_documento UNIQUE (documento),
+    CONSTRAINT ck_internos_sexo
+        CHECK (sexo IN ('FEMENINO', 'MASCULINO', 'OTRO')),
+    CONSTRAINT ck_internos_estado
+        CHECK (estado IN ('ACTIVO', 'EGRESADO')),
+    -- Un egresado tiene fecha de egreso y un activo no. Que la coherencia la
+    -- imponga el motor evita que un error de la aplicacion deje internos a
+    -- medio egresar.
+    CONSTRAINT ck_internos_egreso CHECK (
+        (estado = 'ACTIVO'   AND egreso_fecha IS NULL) OR
+        (estado = 'EGRESADO' AND egreso_fecha IS NOT NULL)),
+
+    INDEX idx_internos_estado (estado, nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -61,7 +93,11 @@ CREATE TABLE IF NOT EXISTS planes (
     CONSTRAINT pk_planes PRIMARY KEY (id),
     CONSTRAINT fk_planes_interno FOREIGN KEY (paciente_id)
         REFERENCES internos (id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    CONSTRAINT ck_planes_estado CHECK (estado IN ('ACTIVO', 'SUSPENDIDO')),
+    -- FINALIZADO lo pone el egreso del interno; SUSPENDIDO es la revocacion
+    -- clinica que solo firma el medico. Son cosas distintas y por eso no
+    -- comparten estado.
+    CONSTRAINT ck_planes_estado
+        CHECK (estado IN ('ACTIVO', 'SUSPENDIDO', 'FINALIZADO')),
     CONSTRAINT ck_planes_dosis CHECK (dosis_mg > 0),
     CONSTRAINT ck_planes_cada_horas CHECK (cada_horas BETWEEN 1 AND 72),
     CONSTRAINT ck_planes_dias CHECK (dias BETWEEN 1 AND 90),

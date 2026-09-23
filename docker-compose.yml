@@ -83,6 +83,8 @@ services:
       BD_USUARIO: usr_pastillero
       BD_CLAVE: ${BD_CLAVE_PASTILLERO:?falta BD_CLAVE_PASTILLERO. Copie .env.ejemplo a .env}
       VIGIA_URL: http://ms-vigia:8081
+      # Solo para comprobar la deuda al egresar a un interno.
+      CAJA_URL: http://ms-caja:8083
       TOLERANCIA_MIN: "60"
       SEMBRAR: "1"
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}

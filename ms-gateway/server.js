@@ -231,6 +231,9 @@ app.post("/api/auth/logout", requiereSesion, (req, res) => {
 //   servicio        lee                     escribe
 //   ms-vigia        MEDICO, ENFERMERIA      MEDICO
 //   ms-pastillero   MEDICO, ENFERMERIA      MEDICO, ENFERMERIA
+//                   + el padron lo leen ADMINISTRACION y ADMINISTRADOR, y lo
+//                     escribe solo ADMINISTRADOR; la parte clinica de la
+//                     ficha la escribe solo MEDICO
 //   ms-caja         ADMINISTRACION          ADMINISTRACION
 //
 // La misma matriz esta repetida dentro de cada microservicio: defensa en
@@ -244,6 +247,16 @@ const CUENTA_DE_PACIENTE = /^\/api\/v1\/pacientes\/[^/]+\/cuenta\/?$/;
 // La simetrica: administracion lee el padron porque le cobra a la familia,
 // pero ms-pastillero le responde la ficha SIN la parte clinica.
 const PADRON_DE_INTERNOS = /^\/api\/v1\/internos(\/[^/]+)?\/?$/;
+
+// El padron lo gestiona el ADMINISTRADOR: alta, datos administrativos y
+// egreso. No alcanza la parte clinica de la ficha ni ninguna otra ruta de
+// ms-pastillero, que siguen siendo del personal clinico.
+const PADRON_ESCRITURA = /^\/api\/v1\/internos(\/[^/]+(\/egreso)?)?\/?$/;
+
+// La simetrica: psicopatologias, alergias y medicacion permanente las escribe
+// el MEDICO y nadie mas, ni siquiera quien gestiona el padron. Son los datos
+// con los que ms-vigia decide si bloquea un medicamento.
+const FICHA_CLINICA = /^\/api\/v1\/internos\/[^/]+\/clinica\/?$/;
 
 // Suspender es solo del MEDICO: no es registrar lo que paso, es revocar una
 // decision clinica, y esa la toma quien la firmo. Enfermeria consigna hechos
@@ -264,7 +277,15 @@ function autorizar(rolesLectura, rolesEscritura) {
       permitidos = permitidos.concat("MEDICO");
     }
     if (!escribe && req.baseUrl === "/pastillero" && PADRON_DE_INTERNOS.test(req.path)) {
-      permitidos = permitidos.concat("ADMINISTRACION");
+      permitidos = permitidos.concat("ADMINISTRACION", "ADMINISTRADOR");
+    }
+    // El orden importa: /clinica se comprueba ANTES que PADRON_ESCRITURA, y
+    // PADRON_ESCRITURA no la abarca, para que el administrador no pueda
+    // escribir alergias por el camino de los datos administrativos.
+    if (escribe && req.baseUrl === "/pastillero" && FICHA_CLINICA.test(req.path)) {
+      permitidos = ["MEDICO"];
+    } else if (escribe && req.baseUrl === "/pastillero" && PADRON_ESCRITURA.test(req.path)) {
+      permitidos = ["ADMINISTRADOR"];
     }
     if (escribe && req.baseUrl === "/pastillero" && SUSPENDER_PLAN.test(req.path)) {
       permitidos = ["MEDICO"];

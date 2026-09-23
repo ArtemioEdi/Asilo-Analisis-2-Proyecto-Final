@@ -733,7 +733,8 @@ function pintarFicha() {
   if (!f) return;
   $("nombre-interno").textContent = f.nombre;
   $("meta-interno").textContent =
-    f.pacienteId + " · " + f.edad + " años · " + f.cama + " · ingresó el " + f.ingreso;
+    f.pacienteId + " · " + f.edad + " años · " + (f.ubicacion || "sin cama asignada") +
+    " · ingresó el " + f.ingreso;
 
   const datos = $("datos-interno");
   datos.textContent = "";
@@ -1861,7 +1862,7 @@ async function abrirFicha(evento) {
     lineaDato("Interno", id.nombre || f.pacienteId),
     lineaDato("Código", f.pacienteId),
     lineaDato("Edad", id.edad ? id.edad + " años" : null),
-    lineaDato("Cama", id.cama),
+    lineaDato("Cama", id.ubicacion),
     lineaDato("Ingreso", id.ingreso),
     lineaDato("Responsable", id.responsable),
     lineaDato("Correo del responsable", id.correoResponsable)
@@ -3247,7 +3248,7 @@ function informeAnalisisMedicos(d) {
   trozos.appendChild(cifrasInforme([
     ["Interno", (id.nombre || d.pacienteId) + " · " + d.pacienteId],
     ["Edad", id.edad != null ? id.edad + " años" : "—"],
-    ["Cama", id.cama],
+    ["Cama", id.ubicacion],
     ["Ingreso", id.ingreso],
     ["Responsable", id.responsable],
   ]));

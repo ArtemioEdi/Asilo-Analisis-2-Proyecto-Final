@@ -35,6 +35,8 @@ if _faltantes:
         "Copie .env.ejemplo a .env." % ", ".join(_faltantes)
     )
 VIGIA_URL = os.environ.get("VIGIA_URL", "http://ms-vigia:8081")
+# Solo para comprobar la deuda al egresar a un interno; ver saldo_pendiente().
+CAJA_URL = os.environ.get("CAJA_URL", "http://ms-caja:8083")
 TOLERANCIA_MIN = int(os.environ.get("TOLERANCIA_MIN", 60))
 
 # Secreto compartido con ms-gateway. Sin valor por defecto a proposito: un
@@ -63,6 +65,20 @@ PADRON_DE_INTERNOS = re.compile(r"^/api/v1/internos(/[^/]+)?/?$")
 # con "omitir", que exige motivo.
 SUSPENDER_PLAN = re.compile(r"^/api/v1/planes/[^/]+/suspender/?$")
 ROLES_SUSPENDER = ("MEDICO",)
+
+# El padron lo gestiona el ADMINISTRADOR: alta, datos administrativos y
+# egreso. Es la misma matriz del gateway, repetida aqui por si alguien entra
+# por la red interna. No alcanza ninguna otra ruta de ms-pastillero: no
+# prescribe, no administra tomas y no suspende planes.
+PADRON_ESCRITURA = re.compile(r"^/api/v1/internos(/[^/]+(/egreso)?)?/?$")
+ROLES_PADRON = ("ADMINISTRADOR",)
+
+# La simetrica: psicopatologias, alergias y medicacion permanente las escribe
+# el MEDICO y nadie mas, ni siquiera quien gestiona el padron. Son los datos
+# con los que ms-vigia decide si bloquea un medicamento, y por eso no pueden
+# quedar en manos de un rol administrativo.
+FICHA_CLINICA = re.compile(r"^/api/v1/internos/[^/]+/clinica/?$")
+ROLES_FICHA_CLINICA = ("MEDICO",)
 
 # La sonda de vida no expone datos y Docker la consulta sin token.
 RUTAS_LIBRES = ("/salud",)
@@ -250,13 +266,25 @@ def exigir_sesion():
     escribe = request.method not in ("GET", "HEAD")
     permitidos = ROLES_ESCRITURA if escribe else ROLES_LECTURA
     if not escribe and PADRON_DE_INTERNOS.match(request.path):
-        permitidos = permitidos + ("ADMINISTRACION",)
+        permitidos = permitidos + ("ADMINISTRACION", "ADMINISTRADOR")
+    # El orden importa: /clinica se comprueba antes, y PADRON_ESCRITURA no la
+    # abarca, para que el administrador no pueda escribir alergias por el
+    # camino de los datos administrativos.
+    if escribe and FICHA_CLINICA.match(request.path):
+        permitidos = ROLES_FICHA_CLINICA
+    elif escribe and PADRON_ESCRITURA.match(request.path):
+        permitidos = ROLES_PADRON
     if escribe and SUSPENDER_PLAN.match(request.path):
         permitidos = ROLES_SUSPENDER
 
     if g.sesion.get("rol") not in permitidos:
         if escribe and SUSPENDER_PLAN.match(request.path):
             detalle = "suspender un tratamiento: es una decision clinica y la revoca el medico"
+        elif escribe and FICHA_CLINICA.match(request.path):
+            detalle = ("escribir la parte clinica de la ficha: psicopatologias, alergias "
+                       "y medicacion permanente las registra el medico")
+        elif escribe and PADRON_ESCRITURA.match(request.path):
+            detalle = "gestionar el padron de internos: eso es del administrador"
         else:
             detalle = ("escribir en el pastillero" if escribe else "leer el pastillero")
         return jsonify({
@@ -276,6 +304,64 @@ def firmante():
     sesion.
     """
     return g.sesion.get("nombre") or g.sesion.get("usuario") or "no indicado"
+
+
+def token_de_servicio():
+    """Credencial con la que ms-pastillero le pregunta a ms-caja.
+
+    Quien egresa a un interno es el ADMINISTRADOR, que no puede leer la caja:
+    eso es de ADMINISTRACION. Pero el egreso tiene que poder advertir que la
+    familia queda debiendo, y para eso hay que mirar la cuenta.
+
+    Mismo mecanismo que ya usa ms-consultas para cobrar: un token firmado con
+    el secreto compartido que dice que quien pregunta es ms-pastillero (rol
+    SERVICIO), en nombre de quien lo pide, y que dura un minuto. ms-caja
+    acepta el rol SERVICIO solo para crear cargos y para LEER la cuenta de un
+    interno: nunca para el balance del asilo, las donaciones o los gastos.
+    """
+    ahora = int(time.time())
+    return jwt.encode(
+        {
+            "usuario": APP_NOMBRE,
+            "nombre": firmante(),
+            "rol": "SERVICIO",
+            "emisor": APP_NOMBRE,
+            "iat": ahora,
+            "exp": ahora + 60,
+        },
+        SECRETO,
+        algorithm="HS256",
+    )
+
+
+def saldo_pendiente(paciente_id):
+    """Cuanto debe la familia del interno. Devuelve (deuda, aviso).
+
+    Si ms-caja no responde NO se aborta el egreso: se devuelve un aviso de que
+    no se pudo comprobar la deuda. Un interno no se queda sin egresar porque
+    la caja este caida, igual que una consulta no se queda sin abrir porque no
+    se pudo cobrar.
+    """
+    try:
+        r = requests.get(
+            "%s/api/v1/pacientes/%s/cuenta" % (CAJA_URL, paciente_id),
+            headers={"Authorization": "Bearer " + token_de_servicio()},
+            timeout=4,
+        )
+    except requests.RequestException:
+        return None, ("No se pudo comprobar si el interno queda debiendo: "
+                      "MS-CAJA no responde. El egreso se hizo igual; revise la "
+                      "cuenta a mano.")
+    if r.status_code != 200:
+        return None, ("No se pudo comprobar si el interno queda debiendo: "
+                      "MS-CAJA respondio con codigo %d. El egreso se hizo igual."
+                      % r.status_code)
+    cuenta = r.json()
+    saldo = float(cuenta.get("saldoPendiente") or 0)
+    if saldo <= 0:
+        return None, None
+    return {"saldo": saldo,
+            "cargosPendientes": int(cuenta.get("cargosPendientes") or 0)}, None
 
 
 
@@ -316,33 +402,88 @@ def salud():
 # cliente la enviara, bastaria vaciar el arreglo de alergias para que el
 # sistema aprobara furosemida a una paciente alergica a las sulfas.
 
+def edad_de(nacimiento, referencia=None):
+    """Edad cumplida a partir de la fecha de nacimiento.
+
+    Se calcula y no se guarda. Una edad guardada envejece mal: queda vieja al
+    dia siguiente del cumpleanos, y aqui eso no es cosmetico, porque ms-vigia
+    aplica criterios geriatricos a partir de ella.
+    """
+    if nacimiento is None:
+        return None
+    hoy = referencia or date.today()
+    # Se resta un ano si todavia no ha llegado el cumpleanos de este ano.
+    return hoy.year - nacimiento.year - (
+        (hoy.month, hoy.day) < (nacimiento.month, nacimiento.day))
+
+
 def ficha_json(fila, incluir_clinico=True):
     """Ficha del interno. Sin la parte clinica si quien pregunta no es clinico."""
+    pabellon = fila["pabellon"]
+    cama = fila["cama"]
     ficha = {
         "pacienteId": fila["id"],
         "nombre": fila["nombre"],
-        "edad": fila["edad"],
-        "cama": fila["cama"],
+        "documento": fila["documento"],
+        "fechaNacimiento": fila["fecha_nacimiento"].isoformat()
+                           if fila["fecha_nacimiento"] else None,
+        "edad": edad_de(fila["fecha_nacimiento"]),
+        "sexo": fila["sexo"],
+        "pabellon": pabellon,
+        "cama": cama,
+        # Las dos juntas, ya legibles: es como se nombra una cama en la
+        # practica y como la pinta la estacion.
+        "ubicacion": ", ".join(p for p in (pabellon,
+                                           "cama %s" % cama if cama else None) if p) or None,
         # La columna es DATE; el personal la lee en dd/mm/aaaa.
         "ingreso": fila["ingreso"].strftime("%d/%m/%Y") if fila["ingreso"] else None,
+        "motivoIngreso": fila["motivo_ingreso"],
         "responsable": fila["responsable"],
         # De contacto, no clinico: ms-consultas avisa al familiar y
         # administracion le cobra.
         "correoResponsable": fila["correo_responsable"],
+        "estado": fila["estado"],
+        "egreso": None,
     }
+    if fila["estado"] == "EGRESADO":
+        ficha["egreso"] = {
+            "fecha": fila["egreso_fecha"].strftime("%d/%m/%Y")
+                     if fila["egreso_fecha"] else None,
+            "motivo": fila["egreso_motivo"],
+        }
     if incluir_clinico:
         ficha["psicopatologias"] = json.loads(fila["psicopatologias"])
         ficha["alergias"] = json.loads(fila["alergias"])
+        ficha["medicacionPermanente"] = json.loads(fila["medicacion_permanente"])
     return ficha
 
 
 def puede_ver_lo_clinico():
+    # ADMINISTRADOR gestiona el padron pero no es personal clinico: ve los
+    # datos administrativos del interno, no sus psicopatologias.
     return g.sesion.get("rol") in ("MEDICO", "ENFERMERIA")
-
-
 @app.get("/api/v1/internos")
 def listar_internos():
-    filas = consultar("SELECT * FROM internos ORDER BY nombre")
+    """El padron. Por omision solo los ACTIVOS.
+
+    Un egresado no desaparece —su historial queda intacto y se le puede pedir
+    por su id—, pero deja de salir en el padron: la jornada de enfermeria y el
+    selector de internos no tienen por que ofrecer a alguien que ya no vive
+    aqui. Con ?estado=EGRESADO o ?estado=TODOS se ven los demas.
+    """
+    estado = (request.args.get("estado") or "ACTIVO").strip().upper()
+    if estado not in ("ACTIVO", "EGRESADO", "TODOS"):
+        return jsonify({
+            "error": "estado tiene que ser ACTIVO, EGRESADO o TODOS.",
+            "recibido": estado,
+        }), 400
+
+    if estado == "TODOS":
+        filas = consultar("SELECT * FROM internos ORDER BY nombre")
+    else:
+        filas = consultar(
+            "SELECT * FROM internos WHERE estado = %s ORDER BY nombre", (estado,))
+
     activos = {
         f["paciente_id"]: f["n"]
         for f in consultar(
@@ -355,7 +496,7 @@ def listar_internos():
         ficha = ficha_json(f, clinico)
         ficha["planesActivos"] = activos.get(f["id"], 0)
         internos.append(ficha)
-    return jsonify({"total": len(internos), "internos": internos})
+    return jsonify({"total": len(internos), "estado": estado, "internos": internos})
 
 
 @app.get("/api/v1/internos/<paciente_id>")
@@ -700,6 +841,330 @@ def adherencia(paciente_id):
     return jsonify(salida)
 
 
+
+
+# ===========================================================================
+#  Gestion del padron de internos
+#
+#  Hasta aqui el padron solo se leia y se sembraba al arrancar. Estos cuatro
+#  endpoints lo hacen gestionable, con una division deliberada: el
+#  ADMINISTRADOR lleva los datos administrativos y el MEDICO la parte clinica.
+#  No es burocracia: psicopatologias, alergias y medicacion permanente son los
+#  datos con los que ms-vigia decide si bloquea un medicamento, y quien lleva
+#  camas y expedientes no tiene por que poder cambiarlos.
+# ===========================================================================
+
+SEXOS = ("FEMENINO", "MASCULINO", "OTRO")
+
+
+def _texto(cuerpo, clave, maximo, obligatorio=True):
+    """Lee un campo de texto del cuerpo y devuelve (valor, error)."""
+    valor = (cuerpo.get(clave) or "").strip()
+    if not valor:
+        if obligatorio:
+            return None, "Falta %s." % clave
+        return None, None
+    if len(valor) > maximo:
+        return None, "%s no puede pasar de %d caracteres." % (clave, maximo)
+    return valor, None
+
+
+def _fecha(cuerpo, clave, obligatorio=True):
+    """Lee una fecha AAAA-MM-DD y devuelve (date, error)."""
+    valor = (cuerpo.get(clave) or "").strip()
+    if not valor:
+        return None, ("Falta %s." % clave) if obligatorio else None
+    try:
+        return date.fromisoformat(valor), None
+    except ValueError:
+        return None, "%s no es una fecha valida; se espera AAAA-MM-DD." % clave
+
+
+def _lista_de_textos(cuerpo, clave):
+    """Lee una lista de cadenas cortas y devuelve (lista, error)."""
+    valor = cuerpo.get(clave, [])
+    if valor is None:
+        return [], None
+    if not isinstance(valor, list):
+        return None, "%s tiene que ser una lista." % clave
+    limpia = []
+    for elemento in valor:
+        if not isinstance(elemento, str):
+            return None, "%s solo admite texto." % clave
+        elemento = elemento.strip()
+        if elemento:
+            limpia.append(elemento)
+    return limpia, None
+
+
+def _datos_administrativos(cuerpo, para_alta):
+    """Valida el bloque administrativo. Devuelve (dict, lista de errores)."""
+    errores = []
+    datos = {}
+
+    nombre, error = _texto(cuerpo, "nombre", 120)
+    if error:
+        errores.append(error)
+    datos["nombre"] = nombre
+
+    if para_alta:
+        documento, error = _texto(cuerpo, "documento", 32)
+        if error:
+            errores.append(error)
+        datos["documento"] = documento
+
+        nacimiento, error = _fecha(cuerpo, "fechaNacimiento")
+        if error:
+            errores.append(error)
+        elif nacimiento > date.today():
+            errores.append("fechaNacimiento no puede estar en el futuro.")
+        datos["fecha_nacimiento"] = nacimiento
+
+        sexo = (cuerpo.get("sexo") or "").strip().upper()
+        if sexo not in SEXOS:
+            errores.append("sexo tiene que ser uno de: %s." % ", ".join(SEXOS))
+        datos["sexo"] = sexo
+
+    ingreso, error = _fecha(cuerpo, "ingreso", obligatorio=False)
+    if error:
+        errores.append(error)
+    datos["ingreso"] = ingreso
+
+    datos["motivo_ingreso"] = (cuerpo.get("motivoIngreso") or "").strip() or None
+    datos["pabellon"] = (cuerpo.get("pabellon") or "").strip() or None
+    datos["cama"] = (cuerpo.get("cama") or "").strip() or None
+    datos["responsable"] = (cuerpo.get("responsable") or "").strip() or None
+
+    correo = (cuerpo.get("correoResponsable") or "").strip() or None
+    # Comprobacion deliberadamente floja: aqui solo se descarta lo que
+    # claramente no es un correo. Validar direcciones a fondo con una
+    # expresion regular es una fuente conocida de falsos negativos, y el
+    # correo se verifica de verdad cuando ms-consultas intenta enviarlo.
+    if correo and ("@" not in correo or len(correo) > 160):
+        errores.append("correoResponsable no parece una direccion de correo.")
+    datos["correo_responsable"] = correo
+
+    return datos, errores
+
+
+@app.post("/api/v1/internos")
+def alta_de_interno():
+    """Da de alta a un interno. Solo ADMINISTRADOR (lo exige el guardia)."""
+    cuerpo = request.get_json(silent=True) or {}
+    datos, errores = _datos_administrativos(cuerpo, para_alta=True)
+    if errores:
+        return jsonify({"error": "Peticion invalida", "detalles": errores}), 400
+
+    # Id aleatorio y no un correlativo: un MAX(id)+1 colisiona bajo dos altas
+    # simultaneas, que es el error que ya se corrigio en los folios de
+    # dictamen y no vale la pena repetir.
+    paciente_id = "ASL-" + uuid.uuid4().hex[:8].upper()
+
+    bd = conexion()
+    try:
+        ejecutar(
+            """INSERT INTO internos
+                   (id, nombre, documento, fecha_nacimiento, sexo, ingreso,
+                    motivo_ingreso, pabellon, cama, psicopatologias, alergias,
+                    medicacion_permanente, responsable, correo_responsable,
+                    estado)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'[]','[]','[]',%s,%s,'ACTIVO')""",
+            (paciente_id, datos["nombre"], datos["documento"],
+             datos["fecha_nacimiento"], datos["sexo"], datos["ingreso"],
+             datos["motivo_ingreso"], datos["pabellon"], datos["cama"],
+             datos["responsable"], datos["correo_responsable"]),
+        )
+        bd.commit()
+    except pymysql.err.IntegrityError as error:
+        bd.rollback()
+        # La unicidad del documento la impone el motor, no una consulta
+        # previa: entre el SELECT y el INSERT cabe otra alta.
+        if "uq_internos_documento" in str(error) or "Duplicate" in str(error):
+            existente = consultar_uno(
+                "SELECT id, nombre FROM internos WHERE documento = %s",
+                (datos["documento"],))
+            return jsonify({
+                "error": "Ya hay un interno con el documento %s." % datos["documento"],
+                "internoExistente": existente["id"] if existente else None,
+                "nombre": existente["nombre"] if existente else None,
+            }), 409
+        raise
+    except Exception:
+        bd.rollback()
+        raise
+
+    ficha = ficha_json(
+        consultar_uno("SELECT * FROM internos WHERE id = %s", (paciente_id,)),
+        puede_ver_lo_clinico())
+    ficha["nota"] = ("El interno nace sin parte clinica. Las psicopatologias, "
+                     "las alergias y la medicacion permanente las registra el "
+                     "medico en PUT /api/v1/internos/%s/clinica." % paciente_id)
+    return jsonify(ficha), 201
+
+
+@app.put("/api/v1/internos/<paciente_id>")
+def actualizar_interno(paciente_id):
+    """Datos administrativos del interno. Solo ADMINISTRADOR.
+
+    El documento, la fecha de nacimiento y el sexo NO se tocan aqui: son la
+    identidad de la persona, y corregirlos es rehacer el alta, no editarla.
+    """
+    fila = consultar_uno("SELECT * FROM internos WHERE id = %s", (paciente_id,))
+    if fila is None:
+        return jsonify({"error": "No existe el interno %s." % paciente_id}), 404
+
+    cuerpo = request.get_json(silent=True) or {}
+    datos, errores = _datos_administrativos(cuerpo, para_alta=False)
+    if errores:
+        return jsonify({"error": "Peticion invalida", "detalles": errores}), 400
+
+    bd = conexion()
+    try:
+        ejecutar(
+            """UPDATE internos
+                  SET nombre=%s, ingreso=%s, motivo_ingreso=%s, pabellon=%s,
+                      cama=%s, responsable=%s, correo_responsable=%s
+                WHERE id=%s""",
+            (datos["nombre"], datos["ingreso"], datos["motivo_ingreso"],
+             datos["pabellon"], datos["cama"], datos["responsable"],
+             datos["correo_responsable"], paciente_id),
+        )
+        bd.commit()
+    except Exception:
+        bd.rollback()
+        raise
+
+    return jsonify(ficha_json(
+        consultar_uno("SELECT * FROM internos WHERE id = %s", (paciente_id,)),
+        puede_ver_lo_clinico()))
+
+
+@app.put("/api/v1/internos/<paciente_id>/clinica")
+def actualizar_clinica(paciente_id):
+    """Psicopatologias, alergias y medicacion permanente. Solo MEDICO.
+
+    Es el unico sitio donde se escriben, y por eso no esta en la pantalla del
+    padron: ms-vigia decide con estos datos si un medicamento es seguro para
+    este interno, asi que los firma quien responde por esa decision.
+    """
+    fila = consultar_uno("SELECT * FROM internos WHERE id = %s", (paciente_id,))
+    if fila is None:
+        return jsonify({"error": "No existe el interno %s." % paciente_id}), 404
+
+    cuerpo = request.get_json(silent=True) or {}
+    errores = []
+    valores = {}
+    for clave, columna in (("psicopatologias", "psicopatologias"),
+                           ("alergias", "alergias"),
+                           ("medicacionPermanente", "medicacion_permanente")):
+        if clave not in cuerpo:
+            # Ausente es "no lo toques"; lista vacia es "no tiene". Si fueran
+            # lo mismo, mandar solo las alergias borraria las psicopatologias.
+            continue
+        lista, error = _lista_de_textos(cuerpo, clave)
+        if error:
+            errores.append(error)
+        else:
+            valores[columna] = lista
+    if errores:
+        return jsonify({"error": "Peticion invalida", "detalles": errores}), 400
+    if not valores:
+        return jsonify({
+            "error": "Peticion invalida",
+            "detalles": ["No se mando ninguno de: psicopatologias, alergias, "
+                         "medicacionPermanente."],
+        }), 400
+
+    asignaciones = ", ".join("%s=%%s" % c for c in valores)
+    bd = conexion()
+    try:
+        ejecutar("UPDATE internos SET " + asignaciones + " WHERE id=%s",
+                 tuple(json.dumps(v, ensure_ascii=False) for v in valores.values())
+                 + (paciente_id,))
+        bd.commit()
+    except Exception:
+        bd.rollback()
+        raise
+
+    return jsonify(ficha_json(
+        consultar_uno("SELECT * FROM internos WHERE id = %s", (paciente_id,)),
+        puede_ver_lo_clinico()))
+
+
+@app.put("/api/v1/internos/<paciente_id>/egreso")
+def egresar_interno(paciente_id):
+    """Egresa al interno. Solo ADMINISTRADOR.
+
+    Un interno NUNCA se borra. Egresa: deja el padron activo y conserva
+    intacto su historial, porque las tomas y los planes que firmo enfermeria
+    son documentos legales y no pueden desaparecer porque la persona se fue.
+
+    El egreso, el cierre de sus planes y la anulacion de sus tomas futuras van
+    en una sola transaccion: un interno egresado al que le siguieran saliendo
+    tomas en la jornada de enfermeria seria peor que no haberlo egresado.
+    """
+    fila = consultar_uno("SELECT * FROM internos WHERE id = %s", (paciente_id,))
+    if fila is None:
+        return jsonify({"error": "No existe el interno %s." % paciente_id}), 404
+    if fila["estado"] == "EGRESADO":
+        return jsonify({
+            "error": "El interno %s ya estaba egresado." % paciente_id,
+            "egreso": ficha_json(fila, False)["egreso"],
+        }), 409
+
+    cuerpo = request.get_json(silent=True) or {}
+    errores = []
+    fecha, error = _fecha(cuerpo, "fecha")
+    if error:
+        errores.append(error)
+    elif fecha > date.today():
+        errores.append("La fecha de egreso no puede estar en el futuro.")
+    motivo, error = _texto(cuerpo, "motivo", 500)
+    if error:
+        errores.append(error)
+    if errores:
+        return jsonify({"error": "Peticion invalida", "detalles": errores}), 400
+
+    ahora = datetime.now().replace(microsecond=0)
+    bd = conexion()
+    try:
+        ejecutar(
+            "UPDATE internos SET estado='EGRESADO', egreso_fecha=%s, "
+            "egreso_motivo=%s WHERE id=%s",
+            (fecha, motivo, paciente_id))
+        planes = ejecutar(
+            "UPDATE planes SET estado='FINALIZADO' "
+            "WHERE paciente_id=%s AND estado='ACTIVO'",
+            (paciente_id,))
+        tomas = ejecutar(
+            "UPDATE tomas SET estado='OMITIDA', observacion=%s, registrado_en=%s "
+            "WHERE paciente_id=%s AND estado='PENDIENTE' AND programado_para > %s",
+            ("Interno egresado: " + motivo, ahora, paciente_id, ahora))
+        bd.commit()
+    except Exception:
+        bd.rollback()
+        raise
+
+    salida = ficha_json(
+        consultar_uno("SELECT * FROM internos WHERE id = %s", (paciente_id,)),
+        puede_ver_lo_clinico())
+    salida["planesFinalizados"] = planes
+    salida["tomasAnuladas"] = tomas
+
+    # La deuda no impide el egreso: la cuenta sigue siendo exigible al
+    # familiar responsable. Pero irse sin que nadie lo diga seria peor.
+    deuda, aviso_caja = saldo_pendiente(paciente_id)
+    if deuda:
+        salida["advertencia"] = (
+            "El interno egresa con Q %.2f pendientes en %d cargo(s). La deuda "
+            "sigue siendo exigible al familiar responsable."
+            % (deuda["saldo"], deuda["cargosPendientes"]))
+        salida["saldoPendiente"] = deuda
+    elif aviso_caja:
+        salida["advertencia"] = aviso_caja
+
+    return jsonify(salida)
+
 @app.errorhandler(404)
 def no_encontrado(_):
     return jsonify({"error": "Ruta no encontrada en ms-pastillero."}), 404
@@ -718,30 +1183,48 @@ def sembrar_internos():
             bd.close()
             return
 
-    # El ingreso se guarda como DATE y se presenta en dd/mm/aaaa.
+    # El ingreso y la fecha de nacimiento se guardan como DATE y se presentan
+    # en dd/mm/aaaa. La edad NO se siembra: sale de la fecha de nacimiento.
+    # Las tres fechas estan elegidas para que den las edades de siempre —84,
+    # 79 y 88— y para que sigan dandolas conforme pase el tiempo.
     internos = [
-        ("ASL-014", "Rosalía Menchú Coy", 84, "Pabellón A, cama 3", "2023-05-11",
+        ("ASL-014", "Rosalía Menchú Coy", "1942-05-11", "FEMENINO", "2587412360101",
+         "2023-05-11", "Deterioro cognitivo progresivo; la familia no puede darle "
+         "atención permanente en casa.", "Pabellón A", "3",
          ["Demencia mixta", "Insomnio crónico"], ["penicilina"],
+         ["Donepecilo 10 mg cada 24 h"],
          "María Coy, hija", "maria.coy@ejemplo.gt"),
-        ("ASL-007", "Tránsito Xicará Tzoc", 79, "Pabellón B, cama 1", "2024-02-02",
+        ("ASL-007", "Tránsito Xicará Tzoc", "1947-02-02", "FEMENINO", "1874523690902",
+         "2024-02-02", "Depresión mayor con intento previo; requiere vigilancia y "
+         "control de medicación.", "Pabellón B", "1",
          ["Depresión mayor", "Hipertensión arterial"], ["sulfas"],
+         ["Enalapril 10 mg cada 12 h", "Sertralina 50 mg cada 24 h"],
          "Julio Xicará, sobrino", "julio.xicara@ejemplo.gt"),
-        ("ASL-022", "Bernardo Puac Ixcoy", 88, "Pabellón C, cama 2", "2022-09-19",
+        ("ASL-022", "Bernardo Puac Ixcoy", "1938-09-19", "MASCULINO", "1023698740503",
+         "2022-09-19", "Viudo sin red familiar de apoyo; deterioro cognitivo leve y "
+         "riesgo de caídas.", "Pabellón C", "2",
          ["Deterioro cognitivo leve", "Fibrilación auricular"], [],
+         ["Warfarina 5 mg cada 24 h"],
          "Elena Ixcoy, nieta", "elena.ixcoy@ejemplo.gt"),
     ]
     try:
         with bd.cursor() as cursor:
-            for (pid, nombre, edad, cama, ingreso, psico, alergias,
+            for (pid, nombre, nacimiento, sexo, documento, ingreso, motivo,
+                 pabellon, cama, psico, alergias, permanente,
                  responsable, correo) in internos:
                 cursor.execute(
                     """INSERT INTO internos
-                           (id, nombre, edad, cama, ingreso, psicopatologias,
-                            alergias, responsable, correo_responsable)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (pid, nombre, edad, cama, ingreso,
+                           (id, nombre, documento, fecha_nacimiento, sexo,
+                            ingreso, motivo_ingreso, pabellon, cama,
+                            psicopatologias, alergias, medicacion_permanente,
+                            responsable, correo_responsable, estado)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'ACTIVO')""",
+                    (pid, nombre, documento, nacimiento, sexo, ingreso, motivo,
+                     pabellon, cama,
                      json.dumps(psico, ensure_ascii=False),
-                     json.dumps(alergias, ensure_ascii=False), responsable, correo),
+                     json.dumps(alergias, ensure_ascii=False),
+                     json.dumps(permanente, ensure_ascii=False),
+                     responsable, correo),
                 )
         bd.commit()
     except Exception:

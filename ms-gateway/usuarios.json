@@ -47,6 +47,12 @@
       "nombre": "Farmacia de la Fundación",
       "rol": "FARMACIA",
       "claveHash": "$2a$10$3IGpX6ftQX5n8bgoEhzMXexVVmhowWnmQMCNG5B8NT4uWxNvmvggi"
+    },
+    {
+      "usuario": "admin",
+      "nombre": "Ing. Dolores Ramirez",
+      "rol": "ADMINISTRADOR",
+      "claveHash": "$2b$10$tjuRELdJTHZhUewPhkCdi.RuYGgVrPYNZVYHL0CEfb9CZ.LfqvKrG"
     }
   ]
 }

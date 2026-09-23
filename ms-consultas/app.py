@@ -1313,7 +1313,7 @@ def reporte_ficha():
         salida["identificacion"] = {
             "nombre": ficha.get("nombre"),
             "edad": ficha.get("edad"),
-            "cama": ficha.get("cama"),
+            "ubicacion": ficha.get("ubicacion"),
             "ingreso": ficha.get("ingreso"),
             "responsable": ficha.get("responsable"),
             "correoResponsable": ficha.get("correoResponsable"),
