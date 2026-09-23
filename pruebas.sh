@@ -310,6 +310,69 @@ comprobar "validar a un interno inexistente responde 404" "404" \
 detalle "$(cat "$TEMPORAL/respuesta.json" | campo error)"
 
 # ---------------------------------------------------------------------------
+titulo "8b. La medicacion permanente pesa igual que un plan de tomas"
+# ---------------------------------------------------------------------------
+# Las "medicinas de cajon" —lo que el interno ya tomaba antes de entrar y nadie
+# le programa— tienen que entrar en el dictamen igual que un plan activo. Si no
+# entran, la ficha muestra un farmaco que el motor no mira, y eso es peor que no
+# registrarlo: parece que protege.
+#
+# Rosalia no tiene sertralina en ningun plan. El tramadol se le aprueba. En
+# cuanto el medico le registra la sertralina como permanente, el mismo tramadol
+# tiene que quedar BLOQUEADO por sindrome serotoninergico.
+#
+# El bloque fija su punto de partida y lo restaura al final, para que correr
+# pruebas.sh dos veces seguidas de el mismo resultado: si se limitara a dar por
+# sentado el estado sembrado, la segunda corrida empezaria con la sertralina ya
+# puesta y el primer comprobar fallaria.
+PERMANENTE_BASE='{"medicacionPermanente":[{"principioActivo":"donepecilo","farmaco":"Donepecilo","dosisMg":10,"cadaHoras":24,"via":"oral"}]}'
+codigo PUT "$GATEWAY/pastillero/api/v1/internos/ASL-014/clinica" "$TOKEN_MEDICO" \
+  "$PERMANENTE_BASE" > /dev/null
+
+ANTES=$(cuerpo POST "$GATEWAY/vigia/api/v1/validaciones" "$TOKEN_MEDICO" \
+  '{"pacienteId":"ASL-014","propuesta":{"principioActivo":"tramadol","dosisMg":50,"cadaHoras":8}}')
+comprobar "sin sertralina registrada, el tramadol se aprueba" "APROBADO" \
+  "$(printf '%s' "$ANTES" | campo veredicto)"
+
+comprobar "el medico registra la sertralina como permanente (200)" "200" \
+  "$(codigo PUT "$GATEWAY/pastillero/api/v1/internos/ASL-014/clinica" "$TOKEN_MEDICO" \
+     '{"medicacionPermanente":[{"principioActivo":"donepecilo","farmaco":"Donepecilo","dosisMg":10,"cadaHoras":24},{"principioActivo":"sertralina","farmaco":"Sertralina","dosisMg":50,"cadaHoras":24,"nota":"La toma desde antes de ingresar."}]}')"
+
+comprobar "aparece en la medicacion actual con origen PERMANENTE" "PERMANENTE" \
+  "$(cuerpo GET "$GATEWAY/pastillero/api/v1/pacientes/ASL-014/medicacion-activa" "$TOKEN_MEDICO" \
+     | tr '{' '\n' | grep sertralina | sed -n 's/.*"origen":"\([A-Z]*\)".*/\1/p')"
+
+DESPUES=$(cuerpo POST "$GATEWAY/vigia/api/v1/validaciones" "$TOKEN_MEDICO" \
+  '{"pacienteId":"ASL-014","propuesta":{"principioActivo":"tramadol","dosisMg":50,"cadaHoras":8}}')
+comprobar "ahora el mismo tramadol queda BLOQUEADO" "BLOQUEADO" \
+  "$(printf '%s' "$DESPUES" | campo veredicto)"
+comprobar "y lo bloquea la interaccion, no otra regla" "FV-INT-01" \
+  "$(printf '%s' "$DESPUES" | campo hallazgos.0.codigo)"
+detalle "$(printf '%s' "$DESPUES" | campo hallazgos.0.mensaje)"
+
+# Un principio activo que ms-vigia no conoce no se guarda: quedaria en la
+# ficha sin proteger de nada, que es justo el fallo que esto vino a cerrar.
+comprobar "un principio activo inventado se rechaza (400)" "400" \
+  "$(codigo PUT "$GATEWAY/pastillero/api/v1/internos/ASL-014/clinica" "$TOKEN_MEDICO" \
+     '{"medicacionPermanente":[{"principioActivo":"aguadepanela"}]}')"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo detalles.0)"
+
+# Lo que ya viene de un plan no se cuenta dos veces.
+comprobar "un farmaco que ya esta en plan no se duplica" "1" \
+  "$(cuerpo GET "$GATEWAY/pastillero/api/v1/pacientes/ASL-007/medicacion-activa" "$TOKEN_MEDICO" \
+     | grep -o '"principioActivo":"enalapril"' | wc -l | tr -d ' ')"
+
+# Se devuelve el padron a como quedo sembrado: el escenario de la demostracion
+# no tiene por que arrastrar lo que dejo una corrida de pruebas.
+codigo PUT "$GATEWAY/pastillero/api/v1/internos/ASL-014/clinica" "$TOKEN_MEDICO" \
+  "$PERMANENTE_BASE" > /dev/null
+comprobar "el padron queda como estaba al empezar" "APROBADO" \
+  "$(cuerpo POST "$GATEWAY/vigia/api/v1/validaciones" "$TOKEN_MEDICO" \
+     '{"pacienteId":"ASL-014","propuesta":{"principioActivo":"tramadol","dosisMg":50,"cadaHoras":8}}' \
+     | campo veredicto)"
+
+
+# ---------------------------------------------------------------------------
 titulo "9. Folios unicos bajo concurrencia"
 # ---------------------------------------------------------------------------
 # Diez validaciones a la vez: ninguna puede repetir folio.

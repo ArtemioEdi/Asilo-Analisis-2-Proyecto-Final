@@ -499,6 +499,65 @@ def listar_internos():
     return jsonify({"total": len(internos), "estado": estado, "internos": internos})
 
 
+def medicacion_actual_de(paciente_id, fila=None):
+    """Todo lo que el interno tiene encima ahora mismo, de las DOS fuentes.
+
+    Un plan de tomas es lo que se le administra por turnos aqui dentro. La
+    medicacion permanente es lo que ya tomaba antes de entrar —las "medicinas
+    de cajon"— y que nadie programa porque la toma por su cuenta.
+
+    Las dos cuentan igual para la farmacovigilancia: a ms-vigia le da lo mismo
+    de donde salga la warfarina, lo que necesita saber es que el interno la
+    tiene encima antes de dejar pasar un ibuprofeno. Mientras esta lista se
+    armaba solo con los planes, registrar un farmaco como permanente no
+    protegia de nada: la ficha lo mostraba y el motor no lo miraba.
+
+    Si un principio activo esta en los dos lados cuenta UNA sola vez, y gana el
+    plan: lleva dosis y pauta vigentes, y un planId con el que suspenderlo.
+    """
+    medicacion = []
+    vistos = set()
+
+    for p in consultar(
+        "SELECT id, principio_activo, farmaco, dosis_mg, cada_horas, via "
+        "FROM planes WHERE paciente_id = %s AND estado = 'ACTIVO'",
+        (paciente_id,)
+    ):
+        vistos.add(p["principio_activo"])
+        medicacion.append({
+            "planId": p["id"],
+            "principioActivo": p["principio_activo"],
+            "farmaco": p["farmaco"],
+            "dosisMg": p["dosis_mg"],
+            "cadaHoras": p["cada_horas"],
+            "via": p["via"],
+            "origen": "PLAN",
+        })
+
+    if fila is None:
+        fila = consultar_uno(
+            "SELECT medicacion_permanente FROM internos WHERE id = %s", (paciente_id,))
+    if fila is None:
+        return medicacion
+
+    for m in json.loads(fila["medicacion_permanente"]):
+        clave = m.get("principioActivo")
+        if not clave or clave in vistos:
+            continue
+        vistos.add(clave)
+        medicacion.append({
+            "planId": None,
+            "principioActivo": clave,
+            "farmaco": m.get("farmaco") or clave,
+            "dosisMg": m.get("dosisMg"),
+            "cadaHoras": m.get("cadaHoras"),
+            "via": m.get("via"),
+            "origen": "PERMANENTE",
+        })
+
+    return medicacion
+
+
 @app.get("/api/v1/internos/<paciente_id>")
 def obtener_interno(paciente_id):
     fila = consultar_uno("SELECT * FROM internos WHERE id = %s", (paciente_id,))
@@ -508,21 +567,7 @@ def obtener_interno(paciente_id):
     clinico = puede_ver_lo_clinico()
     ficha = ficha_json(fila, clinico)
     if clinico:
-        # Viaja con la ficha para que ms-vigia busque interacciones y
-        # duplicidades con una sola llamada.
-        ficha["medicacionActual"] = [
-            {
-                "principioActivo": p["principio_activo"],
-                "farmaco": p["farmaco"],
-                "dosisMg": p["dosis_mg"],
-                "cadaHoras": p["cada_horas"],
-                "via": p["via"],
-            }
-            for p in consultar(
-                "SELECT principio_activo, farmaco, dosis_mg, cada_horas, via "
-                "FROM planes WHERE paciente_id = %s AND estado = 'ACTIVO'",
-                (paciente_id,))
-        ]
+        ficha["medicacionActual"] = medicacion_actual_de(paciente_id, fila)
     return jsonify(ficha)
 
 
@@ -555,21 +600,10 @@ def medicacion_activa(paciente_id):
     Se devuelve tambien el planId para que la estacion pueda ofrecer
     suspender ese tratamiento sin tener que buscar el plan por otro lado.
     """
-    filas = consultar(
-        """SELECT id, principio_activo, farmaco, dosis_mg, cada_horas, via
-           FROM planes WHERE paciente_id = %s AND estado = 'ACTIVO'""",
-        (paciente_id,))
-    return jsonify({"pacienteId": paciente_id, "medicacionActual": [
-        {
-            "planId": f["id"],
-            "principioActivo": f["principio_activo"],
-            "farmaco": f["farmaco"],
-            "dosisMg": f["dosis_mg"],
-            "cadaHoras": f["cada_horas"],
-            "via": f["via"],
-        }
-        for f in filas
-    ]})
+    # La misma fusion que la ficha: quien mira lo que el interno tiene
+    # encima tiene que ver tambien lo que toma por su cuenta.
+    return jsonify({"pacienteId": paciente_id,
+                    "medicacionActual": medicacion_actual_de(paciente_id)})
 
 
 @app.post("/api/v1/planes")
@@ -1039,6 +1073,97 @@ def actualizar_interno(paciente_id):
         puede_ver_lo_clinico()))
 
 
+def vademecum_de_vigia():
+    """Los principios activos que ms-vigia conoce. Devuelve (claves, error).
+
+    Se le reenvia el token de quien pregunta, no una credencial de
+    servicio, igual que en consultar_dictamen: quien escribe la ficha
+    clinica es el medico, y el medico ya puede leer el vademecum.
+    """
+    try:
+        r = requests.get(
+            "%s/api/v1/vademecum" % VIGIA_URL,
+            headers={"Authorization": request.headers.get("Authorization", "")},
+            timeout=4)
+    except requests.RequestException:
+        return None, "MS-VIGIA no responde."
+    if r.status_code != 200:
+        return None, "MS-VIGIA respondio con codigo %d." % r.status_code
+    datos = r.json()
+    claves = set()
+    for entrada in datos.get("farmacos", datos.get("vademecum", [])):
+        if isinstance(entrada, str):
+            claves.add(entrada)
+        elif isinstance(entrada, dict):
+            clave = entrada.get("principioActivo") or entrada.get("clave")
+            if clave:
+                claves.add(clave)
+    return claves, None
+
+
+def _medicacion_permanente(cuerpo):
+    """Valida la medicacion permanente. Devuelve (lista, errores, sin_vigia).
+
+    Cada entrada tiene que traer un principioActivo que ms-vigia conozca. No
+    es burocracia: esta lista entra en los dictamenes, y un principio activo
+    mal escrito no da error, da silencio. El farmaco quedaria registrado, la
+    ficha lo mostraria y el motor no lo reconoceria, que es exactamente el
+    fallo que este cambio vino a cerrar.
+
+    Si ms-vigia no responde no se guarda nada y se devuelve 503. Aqui se esta
+    escribiendo un dato del que depende la seguridad del paciente, y escribirlo
+    a ciegas es peor que no escribirlo: es el mismo criterio con el que una
+    remision aborta si no puede leer la ficha.
+    """
+    valor = cuerpo.get("medicacionPermanente")
+    if not isinstance(valor, list):
+        return None, ["medicacionPermanente tiene que ser una lista."], False
+    if not valor:
+        return [], [], False
+
+    conocidos, fallo = vademecum_de_vigia()
+    if fallo:
+        return None, [fallo], True
+
+    errores = []
+    limpia = []
+    vistos = set()
+    for i, entrada in enumerate(valor):
+        if not isinstance(entrada, dict):
+            errores.append("medicacionPermanente[%d] tiene que ser un objeto con "
+                           "principioActivo." % i)
+            continue
+        clave = (entrada.get("principioActivo") or "").strip().lower()
+        if not clave:
+            errores.append("medicacionPermanente[%d]: falta principioActivo." % i)
+            continue
+        if clave not in conocidos:
+            errores.append(
+                "medicacionPermanente[%d]: ms-vigia no conoce el principio activo "
+                "'%s', asi que registrarlo no protegeria de nada." % (i, clave))
+            continue
+        if clave in vistos:
+            errores.append("medicacionPermanente[%d]: '%s' esta repetido." % (i, clave))
+            continue
+        vistos.add(clave)
+
+        item = {"principioActivo": clave}
+        for campo, tipo in (("dosisMg", float), ("cadaHoras", float)):
+            if entrada.get(campo) is not None:
+                try:
+                    item[campo] = tipo(entrada[campo])
+                except (TypeError, ValueError):
+                    errores.append("medicacionPermanente[%d]: %s tiene que ser un "
+                                   "numero." % (i, campo))
+        for campo in ("farmaco", "via", "nota"):
+            texto = (entrada.get(campo) or "").strip()
+            if texto:
+                item[campo] = texto[:120]
+        limpia.append(item)
+
+    return limpia, errores, False
+
+
 @app.put("/api/v1/internos/<paciente_id>/clinica")
 def actualizar_clinica(paciente_id):
     """Psicopatologias, alergias y medicacion permanente. Solo MEDICO.
@@ -1054,18 +1179,38 @@ def actualizar_clinica(paciente_id):
     cuerpo = request.get_json(silent=True) or {}
     errores = []
     valores = {}
+
+    # Ausente es "no lo toques"; lista vacia es "no tiene". Si fueran lo mismo,
+    # mandar solo las alergias borraria las psicopatologias.
     for clave, columna in (("psicopatologias", "psicopatologias"),
-                           ("alergias", "alergias"),
-                           ("medicacionPermanente", "medicacion_permanente")):
+                           ("alergias", "alergias")):
         if clave not in cuerpo:
-            # Ausente es "no lo toques"; lista vacia es "no tiene". Si fueran
-            # lo mismo, mandar solo las alergias borraria las psicopatologias.
             continue
         lista, error = _lista_de_textos(cuerpo, clave)
         if error:
             errores.append(error)
         else:
             valores[columna] = lista
+
+    # La medicacion permanente va aparte porque no es texto libre: cada entrada
+    # lleva un principioActivo del vademecum, porque esta lista entra en los
+    # dictamenes de ms-vigia.
+    if "medicacionPermanente" in cuerpo:
+        lista, fallos, sin_vigia = _medicacion_permanente(cuerpo)
+        if sin_vigia:
+            return jsonify({
+                "error": "No se puede registrar la medicacion permanente ahora: %s"
+                         % fallos[0],
+                "detalle": ("Esta lista decide si ms-vigia bloquea un medicamento. "
+                            "Guardarla sin poder comprobar los principios activos "
+                            "dejaria una ficha que parece protegida y no lo esta, "
+                            "asi que no se guarda nada."),
+            }), 503
+        if fallos:
+            errores.extend(fallos)
+        else:
+            valores["medicacion_permanente"] = lista
+
     if errores:
         return jsonify({"error": "Peticion invalida", "detalles": errores}), 400
     if not valores:
@@ -1192,19 +1337,26 @@ def sembrar_internos():
          "2023-05-11", "Deterioro cognitivo progresivo; la familia no puede darle "
          "atención permanente en casa.", "Pabellón A", "3",
          ["Demencia mixta", "Insomnio crónico"], ["penicilina"],
-         ["Donepecilo 10 mg cada 24 h"],
+         [{"principioActivo": "donepecilo", "farmaco": "Donepecilo",
+           "dosisMg": 10, "cadaHoras": 24, "via": "oral"}],
          "María Coy, hija", "maria.coy@ejemplo.gt"),
         ("ASL-007", "Tránsito Xicará Tzoc", "1947-02-02", "FEMENINO", "1874523690902",
          "2024-02-02", "Depresión mayor con intento previo; requiere vigilancia y "
          "control de medicación.", "Pabellón B", "1",
          ["Depresión mayor", "Hipertensión arterial"], ["sulfas"],
-         ["Enalapril 10 mg cada 12 h", "Sertralina 50 mg cada 24 h"],
+         [{"principioActivo": "enalapril", "farmaco": "Enalapril",
+           "dosisMg": 10, "cadaHoras": 12, "via": "oral"},
+          {"principioActivo": "sertralina", "farmaco": "Sertralina",
+           "dosisMg": 50, "cadaHoras": 24, "via": "oral"}],
          "Julio Xicará, sobrino", "julio.xicara@ejemplo.gt"),
         ("ASL-022", "Bernardo Puac Ixcoy", "1938-09-19", "MASCULINO", "1023698740503",
          "2022-09-19", "Viudo sin red familiar de apoyo; deterioro cognitivo leve y "
          "riesgo de caídas.", "Pabellón C", "2",
          ["Deterioro cognitivo leve", "Fibrilación auricular"], [],
-         ["Warfarina 5 mg cada 24 h"],
+         # Warfarina como medicina de cajon: Bernardo ya la tomaba antes
+         # de entrar. Entra en los dictamenes igual que un plan activo.
+         [{"principioActivo": "warfarina", "farmaco": "Warfarina",
+           "dosisMg": 5, "cadaHoras": 24, "via": "oral"}],
          "Elena Ixcoy, nieta", "elena.ixcoy@ejemplo.gt"),
     ]
     try:
