@@ -1362,3 +1362,37 @@ button { font-family: inherit; }
 
   a[href]::after { content: ""; }
 }
+
+/* ---------------------------------------------------------------------
+   Padron de internos · la pantalla del administrador
+   Reusa la tabla de los informes: es la misma forma de leer, una fila por
+   interno y las acciones al final.
+--------------------------------------------------------------------- */
+.padron__filtros {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: end;
+  margin-bottom: 18px;
+}
+.padron__filtros .campo { margin: 0; min-width: 220px; }
+
+.padron__nombre { font-size: 15px; font-weight: 500; line-height: 1.3; }
+.padron__codigo {
+  font-family: var(--dato);
+  font-size: 12px;
+  color: var(--pizarra);
+  margin-top: 2px;
+}
+
+/* Egresar no se deshace: el boton lo dice antes de que lo pulsen. */
+.accion-sec--peligro { color: var(--alerta); border-color: var(--alerta); }
+.accion-sec--peligro:hover:not(:disabled) {
+  background: var(--alerta);
+  border-color: var(--alerta);
+  color: var(--blanco);
+}
+
+@media (max-width: 720px) {
+  .padron__filtros .campo { min-width: 0; flex: 1 1 100%; }
+}

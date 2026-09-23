@@ -353,7 +353,8 @@ function problema(nodo, error, accion, alReintentar) {
 // Enrutado por hash: las vistas son enlazables (#/jornada, #/caja,
 // #/interno/ASL-014) y el boton de atras funciona.
 
-const VISTAS = ["jornada", "caja", "consultas", "reportes", "agenda", "laboratorio", "farmacia"];
+const VISTAS = ["jornada", "caja", "consultas", "reportes", "padron",
+                "agenda", "laboratorio", "farmacia"];
 
 // Reflejo exacto de la matriz del gateway: una vista de mas aqui solo
 // conseguiria que la persona pulse y reciba un 403.
@@ -361,6 +362,7 @@ const VISTAS_POR_ROL = {
   MEDICO:         ["jornada", "consultas", "caja", "reportes"],
   ENFERMERIA:     ["jornada", "consultas", "reportes"],
   ADMINISTRACION: ["caja", "reportes"],
+  ADMINISTRADOR:  ["padron"],
   FUNDACION:      ["agenda"],
   LABORATORIO:    ["laboratorio"],
   FARMACIA:       ["farmacia"],
@@ -368,7 +370,9 @@ const VISTAS_POR_ROL = {
 
 // Los tres roles operativos no tienen internos a cargo: su pantalla es una
 // bandeja, sin barra lateral.
-const ROLES_SIN_PADRON = ["FUNDACION", "LABORATORIO", "FARMACIA"];
+// El ADMINISTRADOR tampoco lleva la lateral: su pantalla ES el padron, y una
+// lista de internos al lado de otra lista de internos solo confunde.
+const ROLES_SIN_PADRON = ["FUNDACION", "LABORATORIO", "FARMACIA", "ADMINISTRADOR"];
 
 function vistasDelRol() { return VISTAS_POR_ROL[SESION.rol] || []; }
 function vistaPermitida(vista) { return vistasDelRol().includes(vista); }
@@ -413,6 +417,7 @@ function irA(destino, reemplazar) {
   if (ruta.vista === "caja" && (cambioVista || cambioInterno)) pintarCaja();
   if (ruta.vista === "consultas" && (cambioVista || cambioInterno)) pintarConsultas();
   if (ruta.vista === "reportes" && (cambioVista || cambioInterno)) pintarReportes();
+  if (ruta.vista === "padron" && cambioVista) pintarPadron();
   if (ruta.vista === "agenda" && cambioVista) pintarAgenda();
   if (ruta.vista === "laboratorio" && cambioVista) pintarLaboratorio();
   if (ruta.vista === "farmacia" && cambioVista) pintarFarmacia();
@@ -568,6 +573,7 @@ function aplicarPermisos() {
   $("pestana-caja").hidden = !vistaPermitida("caja");
   $("pestana-consultas").hidden = !vistaPermitida("consultas");
   $("pestana-reportes").hidden = !vistaPermitida("reportes");
+  $("pestana-padron").hidden = !vistaPermitida("padron");
   // Enfermeria lee la cadena clinica pero no escribe: sin boton de remitir.
   $("abrir-remision").hidden = SESION.rol !== "MEDICO";
   // Los tres roles operativos no tienen internos a cargo: fuera la lateral.
@@ -1193,6 +1199,8 @@ document.addEventListener("keydown", (e) => {
   if (!$("cajon-remision").hidden) cerrarRemision();
   if (!$("cajon-visita").hidden) cerrarVisita();
   if (!$("cajon-ficha").hidden) cerrarFicha();
+  if (!$("cajon-interno").hidden) cerrarFormularioInterno();
+  if (!$("cajon-egreso").hidden) cerrarEgreso();
 });
 
 $("formulario").addEventListener("submit", async (evento) => {
@@ -3705,3 +3713,355 @@ function alcanceDelInforme(informe, filtros) {
 // El navegador ya imprime a PDF: no hace falta una biblioteca. La hoja de
 // estilo @media print es la que esconde la navegacion y los filtros.
 $("imprimir-reporte").addEventListener("click", () => window.print());
+
+/* =====================================================================
+   Padron de internos · la pantalla del ADMINISTRADOR
+
+   Alta, edicion y egreso de internos. Lo clinico —psicopatologias,
+   alergias y medicacion permanente— NO se edita desde aqui: lo firma el
+   medico desde su propia vista, porque con esos datos ms-vigia decide si
+   bloquea un medicamento. Aqui ni siquiera se muestran: el administrador
+   lleva camas y expedientes, no historias clinicas.
+   ===================================================================== */
+
+const estadoPadron = { internos: [], editando: null, egresando: null };
+
+const ETIQUETA_SEXO = {
+  FEMENINO: "Femenino", MASCULINO: "Masculino", OTRO: "Otro",
+};
+
+function hoyISO() {
+  const h = new Date();
+  return new Date(h.getTime() - h.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10);
+}
+
+// La fecha viaja como dd/mm/aaaa desde el servidor, pero un <input type=date>
+// solo entiende aaaa-mm-dd.
+function aISO(fecha) {
+  if (!fecha) return "";
+  const partes = String(fecha).split("/");
+  if (partes.length !== 3) return "";
+  return partes[2] + "-" + partes[1] + "-" + partes[0];
+}
+
+async function pintarPadron() {
+  const nodo = $("padron-lista");
+  esqueleto(nodo, 4, true);
+
+  let datos;
+  try {
+    datos = await pedir(PASTILLERO + "/api/v1/internos?estado=" + $("padron-estado").value);
+  } catch (error) {
+    problema(nodo, error, "consultar el padrón de internos", pintarPadron);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+
+  estadoPadron.internos = datos.internos;
+  pintarListaPadron();
+}
+
+function pintarListaPadron() {
+  const nodo = $("padron-lista");
+  const filtro = ($("padron-buscar").value || "").trim().toLowerCase();
+  const estado = $("padron-estado").value;
+
+  const visibles = estadoPadron.internos.filter((i) => {
+    if (!filtro) return true;
+    return [i.nombre, i.documento, i.pabellon, i.cama, i.responsable, i.pacienteId]
+      .some((campo) => String(campo || "").toLowerCase().includes(filtro));
+  });
+
+  $("padron-meta").textContent =
+    visibles.length + (visibles.length === 1 ? " interno" : " internos") +
+    (filtro ? " que coinciden con la búsqueda" : "") +
+    " · " + (estado === "TODOS" ? "activos y egresados"
+             : estado === "ACTIVO" ? "solo activos" : "solo egresados");
+
+  nodo.textContent = "";
+
+  if (!visibles.length) {
+    // Los dos vacios no son lo mismo y no se explican igual.
+    if (filtro) {
+      vacio(nodo, "Ningún interno coincide con la búsqueda",
+        "Se busca por nombre, documento, pabellón, cama, responsable o código. " +
+        "Pruebe con menos letras, o cambie el filtro de arriba.");
+    } else if (estado === "EGRESADO") {
+      vacio(nodo, "Todavía no hay internos egresados",
+        "Cuando un interno egrese aparecerá aquí, con su historial intacto.");
+    } else {
+      vacio(nodo, "El padrón está vacío",
+        "Use «Dar de alta» para registrar al primer interno.");
+    }
+    return;
+  }
+
+  const columnas = [
+    { rotulo: "Interno" }, { rotulo: "Documento" }, { rotulo: "Edad", alinear: "derecha" },
+    { rotulo: "Ubicación" }, { rotulo: "Ingreso" }, { rotulo: "Responsable" },
+    { rotulo: "Estado" }, { rotulo: "" },
+  ];
+
+  const filas = visibles.map((i) => {
+    const quien = document.createElement("div");
+    const nombre = document.createElement("p");
+    nombre.className = "padron__nombre";
+    nombre.textContent = i.nombre;
+    const codigo = document.createElement("p");
+    codigo.className = "padron__codigo";
+    codigo.textContent = i.pacienteId + " · " + (ETIQUETA_SEXO[i.sexo] || i.sexo);
+    quien.append(nombre, codigo);
+
+    const marbete = marbeteEstado(i.estado,
+      i.estado === "ACTIVO" ? "activo" : "egresado");
+
+    const acciones = document.createElement("div");
+    acciones.className = "ficha__acciones";
+    if (i.estado === "ACTIVO") {
+      const editar = document.createElement("button");
+      editar.className = "accion-sec";
+      editar.type = "button";
+      editar.textContent = "Editar";
+      editar.addEventListener("click", () => abrirFormularioInterno(i));
+      const egresar = document.createElement("button");
+      egresar.className = "accion-sec accion-sec--peligro";
+      egresar.type = "button";
+      egresar.textContent = "Egresar";
+      egresar.addEventListener("click", () => abrirEgreso(i));
+      acciones.append(editar, egresar);
+    } else {
+      const cuando = document.createElement("span");
+      cuando.className = "padron__codigo";
+      cuando.textContent = i.egreso && i.egreso.fecha
+        ? "egresó el " + i.egreso.fecha : "egresado";
+      acciones.appendChild(cuando);
+    }
+
+    return [quien, i.documento || "—", i.edad != null ? i.edad : "—",
+            i.ubicacion || "sin cama asignada", i.ingreso || "—",
+            i.responsable || "—", marbete, acciones];
+  });
+
+  nodo.appendChild(tablaInforme(columnas, filas, null));
+}
+
+$("padron-buscar").addEventListener("input", pintarListaPadron);
+$("padron-estado").addEventListener("change", pintarPadron);
+
+
+/* ---------------------------------------------------------------------
+   Alta y edicion
+   --------------------------------------------------------------------- */
+
+let soltarFocoInterno = null;
+let abrioElInterno = null;
+
+function abrirFormularioInterno(interno) {
+  estadoPadron.editando = interno || null;
+  abrioElInterno = document.activeElement;
+  const alta = !interno;
+
+  $("interno-titulo").textContent = alta
+    ? "Dar de alta a un interno" : "Editar a " + interno.nombre;
+  $("guardar-interno").textContent = alta ? "Dar de alta" : "Guardar los cambios";
+  $("interno-nota").textContent = alta
+    ? "El interno nace sin parte clínica. Las psicopatologías, las alergias y la " +
+      "medicación permanente las registra el médico desde su propia vista."
+    : "El documento, la fecha de nacimiento y el sexo no se editan: son la " +
+      "identidad de la persona, y corregirlos es rehacer el alta.";
+
+  // La identidad solo se pide en el alta.
+  for (const campo of ["documento", "nacimiento", "sexo"]) {
+    $("campo-interno-" + campo).hidden = !alta;
+  }
+  $("interno-documento").required = alta;
+  $("interno-nacimiento").required = alta;
+
+  $("interno-nombre").value = interno ? interno.nombre : "";
+  $("interno-documento").value = "";
+  $("interno-nacimiento").value = "";
+  $("interno-sexo").value = "FEMENINO";
+  $("interno-ingreso").value = interno ? aISO(interno.ingreso) : hoyISO();
+  $("interno-pabellon").value = interno ? (interno.pabellon || "") : "";
+  $("interno-cama").value = interno ? (interno.cama || "") : "";
+  $("interno-motivo").value = interno ? (interno.motivoIngreso || "") : "";
+  $("interno-responsable").value = interno ? (interno.responsable || "") : "";
+  $("interno-correo").value = interno ? (interno.correoResponsable || "") : "";
+
+  $("interno-clinica").textContent = alta ? "" :
+    "La ficha clínica de este interno la edita el médico. Desde el padrón no se " +
+    "ve ni se modifica.";
+
+  $("cajon-interno").hidden = false;
+  $("velo-interno").hidden = false;
+  soltarFocoInterno = atraparFoco($("cajon-interno"));
+  $("interno-nombre").focus();
+}
+
+function cerrarFormularioInterno() {
+  if ($("cajon-interno").hidden) return;
+  $("cajon-interno").hidden = true;
+  $("velo-interno").hidden = true;
+  estadoPadron.editando = null;
+  if (soltarFocoInterno) { soltarFocoInterno(); soltarFocoInterno = null; }
+  if (abrioElInterno && abrioElInterno.focus && document.contains(abrioElInterno)) {
+    abrioElInterno.focus();
+  }
+  abrioElInterno = null;
+}
+
+$("abrir-alta").addEventListener("click", () => abrirFormularioInterno(null));
+$("cerrar-interno").addEventListener("click", cerrarFormularioInterno);
+$("velo-interno").addEventListener("click", cerrarFormularioInterno);
+
+$("formulario-interno").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const editando = estadoPadron.editando;
+  const boton = $("guardar-interno");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Guardando…";
+
+  const cuerpo = {
+    nombre: $("interno-nombre").value.trim(),
+    ingreso: $("interno-ingreso").value || null,
+    motivoIngreso: $("interno-motivo").value.trim(),
+    pabellon: $("interno-pabellon").value.trim(),
+    cama: $("interno-cama").value.trim(),
+    responsable: $("interno-responsable").value.trim(),
+    correoResponsable: $("interno-correo").value.trim(),
+  };
+  if (!editando) {
+    cuerpo.documento = $("interno-documento").value.trim();
+    cuerpo.fechaNacimiento = $("interno-nacimiento").value;
+    cuerpo.sexo = $("interno-sexo").value;
+  }
+
+  try {
+    const guardado = await pedir(
+      PASTILLERO + "/api/v1/internos" + (editando ? "/" + editando.pacienteId : ""),
+      {
+        method: editando ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cuerpo),
+      });
+    aviso(editando ? "Interno actualizado" : "Interno dado de alta",
+      guardado.nombre + " · " + guardado.pacienteId +
+      (editando ? "" : " · queda pendiente su ficha clínica"), "ok");
+    cerrarFormularioInterno();
+    await pintarPadron();
+    // El selector de internos del resto de la estacion sale del padron.
+    await cargarInternos();
+  } catch (error) {
+    // El documento repetido no es un fallo del sistema sino un dato que ya
+    // existe, y se cuenta como tal, diciendo con quien choca.
+    if (error.estado === 409 && error.cuerpo && error.cuerpo.internoExistente) {
+      aviso("Ese documento ya está registrado",
+        "Pertenece a " + (error.cuerpo.nombre || "otro interno") +
+        " (" + error.cuerpo.internoExistente + ").", "aviso");
+    } else {
+      avisarError(error, editando ? "guardar los cambios" : "dar de alta al interno");
+    }
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+
+/* ---------------------------------------------------------------------
+   Egreso
+   --------------------------------------------------------------------- */
+
+let soltarFocoEgreso = null;
+let abrioElEgreso = null;
+
+function abrirEgreso(interno) {
+  estadoPadron.egresando = interno;
+  abrioElEgreso = document.activeElement;
+
+  const cabecera = $("egreso-cabecera");
+  cabecera.textContent = "";
+  cabecera.append(
+    campo("Interno", interno.nombre + " · " + interno.pacienteId),
+    campo("Ubicación", interno.ubicacion || "sin cama asignada"),
+    campo("Tratamientos activos", String(interno.planesActivos || 0)),
+    campo("Responsable", interno.responsable || "sin responsable registrado")
+  );
+
+  $("egreso-fecha").value = hoyISO();
+  $("egreso-motivo").value = "";
+  $("cajon-egreso").hidden = false;
+  $("velo-egreso").hidden = false;
+  soltarFocoEgreso = atraparFoco($("cajon-egreso"));
+  $("egreso-motivo").focus();
+}
+
+function cerrarEgreso() {
+  if ($("cajon-egreso").hidden) return;
+  $("cajon-egreso").hidden = true;
+  $("velo-egreso").hidden = true;
+  estadoPadron.egresando = null;
+  if (soltarFocoEgreso) { soltarFocoEgreso(); soltarFocoEgreso = null; }
+  if (abrioElEgreso && abrioElEgreso.focus && document.contains(abrioElEgreso)) {
+    abrioElEgreso.focus();
+  }
+  abrioElEgreso = null;
+}
+
+$("cerrar-egreso").addEventListener("click", cerrarEgreso);
+$("velo-egreso").addEventListener("click", cerrarEgreso);
+
+$("formulario-egreso").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const interno = estadoPadron.egresando;
+  if (!interno) return;
+
+  const seguro = await confirmar({
+    titulo: "¿Egresar a " + interno.nombre + "?",
+    textoSi: "Sí, egresar",
+    tono: "peligro",
+    datos: [
+      ["Interno", interno.nombre + " · " + interno.pacienteId],
+      ["Fecha", $("egreso-fecha").value],
+      ["Motivo", $("egreso-motivo").value.trim()],
+      ["Tratamientos que se finalizan", String(interno.planesActivos || 0)],
+    ],
+    aviso: "Sale del padrón activo y sus tomas futuras quedan anuladas. Su " +
+           "historial se conserva íntegro y se le puede seguir consultando. " +
+           "Si queda debiendo, la deuda sigue siendo exigible al familiar.",
+  });
+  if (!seguro) return;
+
+  const boton = $("confirmar-egreso");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Egresando…";
+  try {
+    const salida = await pedir(
+      PASTILLERO + "/api/v1/internos/" + interno.pacienteId + "/egreso",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fecha: $("egreso-fecha").value,
+          motivo: $("egreso-motivo").value.trim(),
+        }),
+      });
+    aviso("Interno egresado",
+      salida.nombre + " · " + (salida.planesFinalizados || 0) +
+      " tratamiento(s) finalizado(s) y " + (salida.tomasAnuladas || 0) +
+      " toma(s) futura(s) anulada(s).", "ok");
+    // La deuda no impide el egreso, pero no puede pasar desapercibida.
+    if (salida.advertencia) aviso("Atención", salida.advertencia, "aviso");
+    cerrarEgreso();
+    await pintarPadron();
+    await cargarInternos();
+  } catch (error) {
+    avisarError(error, "egresar al interno");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});

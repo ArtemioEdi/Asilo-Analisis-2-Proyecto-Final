@@ -108,6 +108,10 @@
               role="tab" aria-selected="false" aria-controls="vista-reportes" hidden>
         Reportes
       </button>
+      <button class="pestana" id="pestana-padron" data-vista="padron" type="button"
+              role="tab" aria-selected="false" aria-controls="vista-padron" hidden>
+        Padrón
+      </button>
     </nav>
 
     <!-- ---------------- Jornada de medicacion ---------------- -->
@@ -304,6 +308,38 @@
 
         <div id="reporte-cuerpo"></div>
       </article>
+
+    </section>
+
+    <!-- ---------------- Padron de internos (ADMINISTRADOR) -------------- -->
+    <section id="vista-padron" role="tabpanel" aria-labelledby="pestana-padron"
+             tabindex="-1" hidden>
+
+      <header class="encabezado">
+        <div>
+          <h2>Padrón de internos</h2>
+          <p class="encabezado__meta" id="padron-meta"></p>
+        </div>
+        <button class="accion" id="abrir-alta" type="button">Dar de alta</button>
+      </header>
+
+      <div class="padron__filtros">
+        <div class="campo">
+          <label for="padron-buscar">Buscar</label>
+          <input id="padron-buscar" type="search"
+                 placeholder="Nombre, documento, pabellón o responsable">
+        </div>
+        <div class="campo">
+          <label for="padron-estado">Mostrar</label>
+          <select id="padron-estado">
+            <option value="ACTIVO">Activos</option>
+            <option value="EGRESADO">Egresados</option>
+            <option value="TODOS">Todos</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="padron-lista"></div>
 
     </section>
     <!-- ---------------- Consultas · la cadena clinica (MEDICO) ----------- -->
@@ -663,6 +699,125 @@
 <!-- Region aria-live: los errores se quedan hasta que se cierren, los demas
      se van solos. -->
 <div class="avisos" id="avisos" aria-live="polite" aria-atomic="false"></div>
+
+
+<!-- Alta y edicion del interno. El mismo cajon sirve para las dos: cambian el
+     titulo, la nota y los campos de identidad, que en una edicion no se tocan
+     porque corregirlos es rehacer el alta, no editarla. -->
+<aside class="cajon" id="cajon-interno" hidden role="dialog" aria-modal="true"
+       aria-labelledby="interno-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio">ms-pastillero</span>
+      <h3 id="interno-titulo">Dar de alta a un interno</h3>
+    </div>
+    <button class="cerrar" id="cerrar-interno" type="button" aria-label="Cerrar">×</button>
+  </header>
+
+  <p class="cajon__nota" id="interno-nota"></p>
+
+  <form class="formulario" id="formulario-interno" autocomplete="off">
+    <div class="campo campo--ancho">
+      <label for="interno-nombre">Nombre completo</label>
+      <input id="interno-nombre" type="text" required maxlength="120"
+             placeholder="Como aparece en su documento">
+    </div>
+
+    <!-- Identidad: solo en el alta. -->
+    <div class="campo" id="campo-interno-documento">
+      <label for="interno-documento">Documento</label>
+      <input id="interno-documento" type="text" maxlength="32" placeholder="CUI">
+    </div>
+    <div class="campo" id="campo-interno-nacimiento">
+      <label for="interno-nacimiento">Fecha de nacimiento</label>
+      <input id="interno-nacimiento" type="date">
+    </div>
+    <div class="campo" id="campo-interno-sexo">
+      <label for="interno-sexo">Sexo</label>
+      <select id="interno-sexo">
+        <option value="FEMENINO">Femenino</option>
+        <option value="MASCULINO">Masculino</option>
+        <option value="OTRO">Otro</option>
+      </select>
+    </div>
+
+    <div class="campo">
+      <label for="interno-ingreso">Fecha de ingreso</label>
+      <input id="interno-ingreso" type="date">
+    </div>
+    <div class="campo">
+      <label for="interno-pabellon">Pabellón</label>
+      <input id="interno-pabellon" type="text" maxlength="60" placeholder="Pabellón A">
+    </div>
+    <div class="campo">
+      <label for="interno-cama">Cama</label>
+      <input id="interno-cama" type="text" maxlength="60" placeholder="3">
+    </div>
+    <div class="campo campo--ancho">
+      <label for="interno-motivo">Motivo de ingreso</label>
+      <input id="interno-motivo" type="text"
+             placeholder="Por qué queda a cargo del asilo">
+    </div>
+    <div class="campo campo--ancho">
+      <label for="interno-responsable">Familiar responsable</label>
+      <input id="interno-responsable" type="text" maxlength="120"
+             placeholder="María Coy, hija">
+    </div>
+    <div class="campo campo--ancho">
+      <label for="interno-correo">Correo del responsable</label>
+      <input id="interno-correo" type="email" maxlength="160"
+             placeholder="A donde se le avisa de cada remisión">
+    </div>
+
+    <button class="accion accion--ancha" id="guardar-interno" type="submit">
+      Dar de alta
+    </button>
+  </form>
+
+  <!-- La parte clinica no se edita desde aqui a proposito: la firma el
+       medico, porque con ella ms-vigia decide si bloquea un medicamento. -->
+  <p class="parte" id="interno-clinica"></p>
+</aside>
+
+<!-- Egreso. Lleva sus propios campos, asi que no cabe en el dialogo de
+     confirmacion: la confirmacion viene despues, con las consecuencias ya
+     contadas. -->
+<aside class="cajon" id="cajon-egreso" hidden role="dialog" aria-modal="true"
+       aria-labelledby="egreso-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio">ms-pastillero</span>
+      <h3 id="egreso-titulo">Egresar a un interno</h3>
+    </div>
+    <button class="cerrar" id="cerrar-egreso" type="button" aria-label="Cerrar">×</button>
+  </header>
+
+  <dl class="datos" id="egreso-cabecera"></dl>
+
+  <p class="cajon__nota">
+    Un interno <b>nunca se borra</b>. Al egresar deja el padrón activo y
+    conserva íntegro su historial: sus tomas y sus planes son documentos
+    clínicos. Se finalizan sus tratamientos activos y se anulan sus tomas
+    futuras.
+  </p>
+
+  <form class="formulario" id="formulario-egreso" autocomplete="off">
+    <div class="campo">
+      <label for="egreso-fecha">Fecha de egreso</label>
+      <input id="egreso-fecha" type="date" required>
+    </div>
+    <div class="campo campo--ancho">
+      <label for="egreso-motivo">Motivo</label>
+      <input id="egreso-motivo" type="text" required maxlength="500"
+             placeholder="Traslado, alta voluntaria, fallecimiento…">
+    </div>
+    <button class="accion accion--ancha accion--peligro" id="confirmar-egreso" type="submit">
+      Egresar
+    </button>
+  </form>
+</aside>
+<div class="velo" id="velo-interno" hidden></div>
+<div class="velo" id="velo-egreso" hidden></div>
 
 <script src="app.js"></script>
 </body>
