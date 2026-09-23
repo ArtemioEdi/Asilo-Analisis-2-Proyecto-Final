@@ -104,7 +104,8 @@ CATEGORIAS_CARGO = {"CONSULTA", "LABORATORIO", "FARMACIA", "CUOTA", "OTRO"}
 # gasto que no existe. OTRO es un cargo interno.
 CATEGORIAS_QUE_COBRA_LA_FUNDACION = ("CONSULTA", "LABORATORIO", "FARMACIA")
 _EN_CLAUSULA_FUNDACION = "(" + ",".join("'%s'" % c for c in CATEGORIAS_QUE_COBRA_LA_FUNDACION) + ")"
-CATEGORIAS_DONANTE = {"EMPRESA", "GOBIERNO", "PARTICULAR"}
+CATEGORIAS_DONANTE = {"EMPRESA_INTERNACIONAL", "EMPRESA_NACIONAL",
+                      "GOBIERNO", "PARTICULAR"}
 CATEGORIAS_GASTO = {"SERVICIOS", "PERSONAL", "INSUMOS", "MANTENIMIENTO", "OTRO"}
 
 
@@ -1052,7 +1053,8 @@ def sembrar():
         )
 
     donaciones = [
-        ("Fundacion Amigos del Adulto Mayor", "EMPRESA", 5000.0, "fondo general", 25),
+        ("Fundacion Amigos del Adulto Mayor", "EMPRESA_NACIONAL", 5000.0, "fondo general", 25),
+        ("HelpAge International", "EMPRESA_INTERNACIONAL", 7200.0, "equipamiento", 31),
         ("Municipalidad de Mazatenango", "GOBIERNO", 3500.0, "insumos medicos", 18),
         ("Familia Coy Menchu", "PARTICULAR", 400.0, "fondo general", 6),
     ]

@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS visitas (
     observaciones   TEXT,
     estado          VARCHAR(12)   NOT NULL DEFAULT 'ABIERTA',
     creada_en       DATETIME      NOT NULL,
+    -- El cobro de la consulta en si. NULL significa que ms-caja no
+    -- respondio cuando se abrio la visita y el cargo quedo pendiente de
+    -- conciliacion: la consulta no se detiene por un fallo de facturacion.
+    cargo_id        VARCHAR(16)   NULL,
 
     CONSTRAINT pk_visitas PRIMARY KEY (id),
     CONSTRAINT fk_visitas_solicitud FOREIGN KEY (solicitud_id)

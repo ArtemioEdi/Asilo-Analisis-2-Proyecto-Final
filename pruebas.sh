@@ -164,7 +164,7 @@ comprobar "sin token, /vigia responde 401" "401" \
 
 comprobar "sin token, POST a /caja responde 401" "401" \
   "$(codigo POST "$GATEWAY/caja/api/v1/donaciones" "" \
-     '{"donante":"ATACANTE","tipo":"EMPRESA","monto":99999}')"
+     '{"donante":"ATACANTE","tipo":"EMPRESA_NACIONAL","monto":99999}')"
 detalle "este era el agujero: antes ese POST directo a 8083 devolvia 201"
 
 # Se le cambia un caracter a la firma del token bueno.
@@ -416,7 +416,7 @@ comprobar "se registra un abono al cargo (201)" "201" \
 
 comprobar "se registra una donacion (201)" "201" \
   "$(codigo POST "$GATEWAY/caja/api/v1/donaciones" "$TOKEN_ADMINISTRACION" \
-     '{"donante":"Prueba SA","tipo":"EMPRESA","monto":250}')"
+     '{"donante":"Prueba SA","tipo":"EMPRESA_NACIONAL","monto":250}')"
 
 comprobar "se registra un gasto (201)" "201" \
   "$(codigo POST "$GATEWAY/caja/api/v1/gastos" "$TOKEN_ADMINISTRACION" \
@@ -622,11 +622,12 @@ comprobar "la ficha trae la parte clinica del padron" "si" \
   "$([ -n "$(cat "$TEMPORAL/respuesta.json" | campo psicopatologias)" ] && echo si || echo no)"
 detalle "$(cat "$TEMPORAL/respuesta.json" | campo resumen.visitas) consultas · $(cat "$TEMPORAL/respuesta.json" | campo resumen.examenes) examenes · $(cat "$TEMPORAL/respuesta.json" | campo resumen.medicamentosIndicados) medicamentos"
 
-comprobar "costo de esa consulta, sumando laboratorio y farmacia (200)" "200" \
+comprobar "costo de esa consulta, sumando consulta, laboratorio y farmacia (200)" "200" \
   "$(codigo GET "$GATEWAY/caja/api/v1/reportes/costo-por-visita?visitaId=$VISITA_ID" "$TOKEN_ADMINISTRACION")"
-comprobar "la caja encontro los dos cargos de la consulta" "2" \
+comprobar "la caja encontro los tres cargos de la consulta" "3" \
   "$(cat "$TEMPORAL/respuesta.json" | campo total)"
 detalle "neto Q $(cat "$TEMPORAL/respuesta.json" | campo totales.montoNeto) · la fundacion descuenta Q $(cat "$TEMPORAL/respuesta.json" | campo totales.descuento)"
+detalle "de ese total, la consulta en si aporta Q $(cat "$TEMPORAL/respuesta.json" | campo porCategoria.CONSULTA.montoNeto)"
 
 comprobar "el aviso al familiar quedo asentado" "200" \
   "$(codigo GET "$GATEWAY/consultas/api/v1/correos?pacienteId=ASL-014" "$TOKEN_MEDICO")"

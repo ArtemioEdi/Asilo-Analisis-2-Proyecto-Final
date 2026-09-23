@@ -359,7 +359,7 @@ const VISTAS = ["jornada", "caja", "consultas", "reportes", "agenda", "laborator
 // conseguiria que la persona pulse y reciba un 403.
 const VISTAS_POR_ROL = {
   MEDICO:         ["jornada", "consultas", "caja", "reportes"],
-  ENFERMERIA:     ["jornada", "consultas"],
+  ENFERMERIA:     ["jornada", "consultas", "reportes"],
   ADMINISTRACION: ["caja", "reportes"],
   FUNDACION:      ["agenda"],
   LABORATORIO:    ["laboratorio"],
@@ -3016,6 +3016,19 @@ async function iniciarApp() {
    opcion de mas solo conseguiria que la persona la elija y reciba un 403.
    ===================================================================== */
 
+
+// Los tipos viajan en mayuscula y con guion bajo; en la hoja impresa se leen
+// como los nombra el enunciado.
+const ETIQUETA_DONANTE = {
+  EMPRESA_INTERNACIONAL: "Empresa internacional",
+  EMPRESA_NACIONAL: "Empresa nacional",
+  GOBIERNO: "Gobierno",
+  PARTICULAR: "Particular",
+};
+
+function nombreDeDonante(tipo) {
+  return ETIQUETA_DONANTE[tipo] || tipo;
+}
 function quetzales(monto) {
   return "Q " + Number(monto || 0).toFixed(2);
 }
@@ -3374,7 +3387,7 @@ function informeEntradas(d) {
   ]));
 
   const porTipo = Object.entries(d.donaciones.porTipo)
-    .map(([tipo, v]) => [tipo.charAt(0) + tipo.slice(1).toLowerCase(), v.cantidad, quetzales(v.monto)]);
+    .map(([tipo, v]) => [nombreDeDonante(tipo), v.cantidad, quetzales(v.monto)]);
   trozos.appendChild(bloqueInforme("Donaciones por tipo de donante", tablaInforme(
     [{ rotulo: "Tipo" }, { rotulo: "Cantidad", alinear: "derecha" },
      { rotulo: "Monto", alinear: "derecha" }],
@@ -3387,7 +3400,7 @@ function informeEntradas(d) {
           [{ rotulo: "Fecha" }, { rotulo: "Donante" }, { rotulo: "Tipo" },
            { rotulo: "Destino" }, { rotulo: "Monto", alinear: "derecha" }],
           d.donaciones.detalle.map((x) => [
-            fechaLegible(x.creadoEn), x.donante, x.tipo.toLowerCase(),
+            fechaLegible(x.creadoEn), x.donante, nombreDeDonante(x.tipo),
             x.destino || "—", quetzales(x.monto),
           ]),
           ["Total", "", "", "", quetzales(d.donaciones.monto)])

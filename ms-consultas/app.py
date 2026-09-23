@@ -615,6 +615,7 @@ def visita_json(fila, con_detalle=True):
         "observaciones": fila["observaciones"],
         "estado": fila["estado"],
         "creadaEn": iso(fila["creada_en"]),
+        "cargoId": fila["cargo_id"],
     }
     if con_detalle:
         # Cada bloque solo si el rol puede verlo: los dos pueden abrir la
@@ -846,6 +847,22 @@ def crear_visita():
             return jsonify({"error": "Peticion invalida", "detalles": [problema]}), 400
 
     visita_id = folio("VM")
+
+    # La consulta en si tambien se cobra, no solo lo que sale de ella. Sin esto
+    # el informe de costos de la cita mostraba la categoria CONSULTA en cero y
+    # solo sumaba laboratorio y farmacia, que es justo lo contrario de lo que
+    # pide el enunciado.
+    #
+    # Mismo camino que el examen y la entrega de farmacia: se pide con el token
+    # de servicio, que lleva el nombre real de quien abre la consulta, y si
+    # ms-caja no responde la visita se abre igual con cargo_id en NULL. Una
+    # consulta no se detiene porque la caja este caida.
+    cargo_id, advertencia = crear_cargo(
+        solicitud["paciente_id"], "CONSULTA",
+        "Consulta de %s (visita %s)"
+        % (solicitud["especialidad_asignada"] or "especialidad no indicada", visita_id),
+        cuerpo.get("tarifa", "consulta-especialista"), visita_id)
+
     bd = conexion()
     # Crear la visita y marcar la solicitud atendida van juntas: si no, la
     # agenda queda mintiendo.
@@ -853,11 +870,11 @@ def crear_visita():
         ejecutar(
             """INSERT INTO visitas
                    (id, solicitud_id, paciente_id, fecha_visita, motivo,
-                    medico_tratante, especialidad, estado, creada_en)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,'ABIERTA',%s)""",
+                    medico_tratante, especialidad, estado, creada_en, cargo_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,'ABIERTA',%s,%s)""",
             (visita_id, solicitud_id, solicitud["paciente_id"], fecha,
              solicitud["motivo"], solicitud["medico_asignado"],
-             solicitud["especialidad_asignada"], ahora()),
+             solicitud["especialidad_asignada"], ahora(), cargo_id),
         )
         ejecutar("UPDATE solicitudes SET estado='ATENDIDA' WHERE id = %s", (solicitud_id,))
         bd.commit()
@@ -865,8 +882,10 @@ def crear_visita():
         bd.rollback()
         raise
 
-    return jsonify(visita_json(
-        consultar_uno("SELECT * FROM visitas WHERE id = %s", (visita_id,)))), 201
+    salida = visita_json(consultar_uno("SELECT * FROM visitas WHERE id = %s", (visita_id,)))
+    if advertencia:
+        salida["advertencia"] = advertencia
+    return jsonify(salida), 201
 
 
 @app.get("/api/v1/visitas")

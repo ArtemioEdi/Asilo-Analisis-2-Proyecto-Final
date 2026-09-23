@@ -124,7 +124,7 @@ espera "GET /vigia/salud sin token"         401 "$(codigo GET "$GW/vigia/salud")
 espera "GET /pastillero/salud sin token"    401 "$(codigo GET "$GW/pastillero/salud")"
 espera "GET /caja/api/v1/resumen sin token" 401 "$(codigo GET "$GW/caja/api/v1/resumen")"
 espera "POST donacion sin token (el agujero original)" 401 \
-  "$(codigo POST "$GW/caja/api/v1/donaciones" "" '{"donante":"ATACANTE","tipo":"EMPRESA","monto":99999}')"
+  "$(codigo POST "$GW/caja/api/v1/donaciones" "" '{"donante":"ATACANTE","tipo":"EMPRESA_NACIONAL","monto":99999}')"
 
 titulo "3. Login"
 TOK_MED=$(login medico medico2026)
@@ -156,14 +156,14 @@ espera "medico NO lee el resumen de caja"  403 "$(codigo GET "$GW/caja/api/v1/re
 espera "medico SI lee la cuenta de un interno (la excepcion)" 200 \
   "$(codigo GET "$GW/caja/api/v1/pacientes/ASL-014/cuenta" "$TOK_MED")"
 espera "enfermeria NO escribe en /caja"    403 \
-  "$(codigo POST "$GW/caja/api/v1/donaciones" "$TOK_ENF" '{"donante":"X","tipo":"EMPRESA","monto":10}')"
+  "$(codigo POST "$GW/caja/api/v1/donaciones" "$TOK_ENF" '{"donante":"X","tipo":"EMPRESA_NACIONAL","monto":10}')"
 
 titulo "5. Defensa en profundidad: el microservicio tambien valida"
 if command -v docker >/dev/null 2>&1; then
   R=$(docker exec ms-caja python3 -c "
 import urllib.request,urllib.error
 req=urllib.request.Request('http://localhost:8083/api/v1/donaciones',
-    data=b'{\"donante\":\"INTERNO\",\"tipo\":\"EMPRESA\",\"monto\":1}',
+    data=b'{\"donante\":\"INTERNO\",\"tipo\":\"EMPRESA_NACIONAL\",\"monto\":1}',
     headers={'Content-Type':'application/json'}, method='POST')
 try:
     urllib.request.urlopen(req); print(201)
@@ -315,7 +315,7 @@ TOK_ADM=$(login administracion admin2026)
 # de Windows reescribe los argumentos con acentos segun la pagina de codigos
 # de la consola y manda bytes que no son UTF-8. Leido de un archivo, curl los
 # envia tal cual. Es una limitacion del curl de Windows, no del sistema.
-printf '%s' '{"donante":"Fundación Amigos del Adulto Mayor","tipo":"EMPRESA","monto":100}' \
+printf '%s' '{"donante":"Fundación Amigos del Adulto Mayor","tipo":"EMPRESA_NACIONAL","monto":100}' \
   > /tmp/v_tildes.json
 CODIGO_TILDES=$(curl -s -o /tmp/v_cuerpo.json -w "%{http_code}" -m 15 \
   -X POST "$GW/caja/api/v1/donaciones" \

@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS pagos (
 CREATE TABLE IF NOT EXISTS donaciones (
     id              VARCHAR(16)    NOT NULL,
     donante         VARCHAR(160)   NOT NULL,
-    tipo            VARCHAR(16)    NOT NULL,
+    -- 24 y no 16: EMPRESA_INTERNACIONAL mide 21 caracteres.
+    tipo            VARCHAR(24)    NOT NULL,
     monto           DECIMAL(10,2)  NOT NULL,
     destino         VARCHAR(120),
     registrado_por  VARCHAR(120),
@@ -89,7 +90,8 @@ CREATE TABLE IF NOT EXISTS donaciones (
 
     CONSTRAINT pk_donaciones PRIMARY KEY (id),
     CONSTRAINT ck_donaciones_tipo
-        CHECK (tipo IN ('EMPRESA', 'GOBIERNO', 'PARTICULAR')),
+        CHECK (tipo IN ('EMPRESA_INTERNACIONAL', 'EMPRESA_NACIONAL',
+                        'GOBIERNO', 'PARTICULAR')),
     CONSTRAINT ck_donaciones_monto CHECK (monto > 0),
 
     INDEX idx_donaciones_fecha (creado_en)
