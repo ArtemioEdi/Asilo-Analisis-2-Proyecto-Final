@@ -197,6 +197,18 @@
             <button class="accion accion--ancha" type="submit">Registrar cargo</button>
           </form>
 
+          <form class="formulario formulario--caja" id="formulario-cuotas">
+            <p class="formulario__titulo">Cuota mensual de estadía</p>
+            <p class="formulario__nota" id="cuotas-nota"></p>
+            <div class="campo campo--ancho">
+              <label for="cuotas-mes">Mes</label>
+              <input id="cuotas-mes" type="month" required>
+            </div>
+            <button class="accion accion--ancha" id="generar-cuotas" type="submit">
+              Generar cuotas del mes
+            </button>
+          </form>
+
           <form class="formulario formulario--caja" id="formulario-donacion">
             <p class="formulario__titulo">Registrar una donación</p>
             <div class="campo campo--ancho">

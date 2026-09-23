@@ -5,3 +5,4 @@ PyMySQL==1.1.1
 # caching_sha2_password. Sin esto la conexion falla al arrancar.
 cryptography==43.0.3
 gunicorn==23.0.0
+requests==2.32.3

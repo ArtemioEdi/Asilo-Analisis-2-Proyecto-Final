@@ -107,6 +107,8 @@ services:
       BD_USUARIO: usr_caja
       BD_CLAVE: ${BD_CLAVE_CAJA:?falta BD_CLAVE_CAJA. Copie .env.ejemplo a .env}
       SEMBRAR: "1"
+      # Para la generacion mensual de cuotas.
+      PASTILLERO_URL: http://ms-pastillero:8082
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
     depends_on:
       bd-asilo:

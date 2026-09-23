@@ -694,6 +694,14 @@ button { font-family: inherit; }
 .formulario { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .campo--ancho { grid-column: 1 / -1; }
 .formulario__titulo { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+/* La nota explica a quien se le va a cobrar antes de pulsar el boton, asi
+   que ocupa el ancho entero: partida en dos columnas no se lee. */
+.formulario__nota {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  color: var(--pizarra);
+  margin: -6px 0 12px;
+}
 
 /* =====================================================================
    Dictamen de ms-vigia

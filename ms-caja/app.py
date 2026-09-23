@@ -7,11 +7,16 @@ from decimal import Decimal
 
 import jwt
 import pymysql
+import requests
 from flask import Flask, g, jsonify, request
 from flask.json.provider import DefaultJSONProvider
 from pymysql.cursors import DictCursor
 
 APP_NOMBRE = "ms-caja"
+
+# Solo para la generacion mensual de cuotas: hace falta el padron activo
+# para saber a quien cobrarle la estadia.
+PASTILLERO_URL = os.environ.get("PASTILLERO_URL", "http://ms-pastillero:8082")
 APP_VERSION = "2.0.0"
 
 # Conexion a MySQL. Si falta alguna variable, el servicio no arranca.
@@ -965,6 +970,137 @@ def reporte_entradas():
     return jsonify(salida)
 
 
+
+
+# ===========================================================================
+#  Cuota mensual de estadia
+#
+#  La tarifa existia desde siempre, pero el cargo habia que crearlo a mano,
+#  interno por interno. Esto lo genera de una vez para todo el padron activo.
+#
+#  La cuota NO forma parte del adeudo con la fundacion: es plata que el
+#  familiar le paga al asilo por tener ahi a su pariente, no un servicio que
+#  la fundacion preste. Por eso su categoria queda fuera de
+#  CATEGORIAS_QUE_COBRA_LA_FUNDACION y por eso no lleva descuento.
+# ===========================================================================
+
+MES_VALIDO = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def internos_activos(token):
+    """El padron activo, preguntado a ms-pastillero. Devuelve (lista, error).
+
+    Se le reenvia el token de quien pide la generacion, que es ADMINISTRACION
+    y ya puede leer el padron —sin la parte clinica, que ms-pastillero no le
+    entrega—. No hace falta un token de servicio para leer algo que quien
+    pregunta ya podria leer por su cuenta.
+    """
+    try:
+        r = requests.get(
+            "%s/api/v1/internos?estado=ACTIVO" % PASTILLERO_URL,
+            headers={"Authorization": token},
+            timeout=5,
+        )
+    except requests.RequestException:
+        return None, "MS-PASTILLERO no responde."
+    if r.status_code != 200:
+        return None, "MS-PASTILLERO respondio con codigo %d." % r.status_code
+    return r.json().get("internos", []), None
+
+
+@app.post("/api/v1/cuotas/generar")
+def generar_cuotas():
+    """Genera la cuota del mes para cada interno activo que no la tenga.
+
+    Es idempotente: correrlo dos veces sobre el mismo mes no duplica nada y
+    devuelve cuantas creo y cuantas ya existian. La garantia no es la consulta
+    previa —entre mirar e insertar cabe otra ejecucion— sino el indice unico
+    sobre (paciente_id, periodo_cuota); la consulta previa solo sirve para no
+    intentar lo que ya se sabe hecho.
+
+    Si ms-pastillero no responde no se genera NADA y se devuelve 503. Cobrarle
+    la estadia a una lista incompleta de internos deja a unos cobrados y a
+    otros no, y nadie se entera hasta que el familiar reclama.
+    """
+    cuerpo = request.get_json(silent=True) or {}
+    mes = (cuerpo.get("mes") or "").strip()
+    if not MES_VALIDO.match(mes):
+        return jsonify({
+            "error": "Indique el mes como AAAA-MM.",
+            "recibido": mes or None,
+            "ejemplo": datetime.now().strftime("%Y-%m"),
+        }), 400
+
+    tarifa = TARIFARIO["cuota-mensual"]
+    monto_bruto = float(tarifa["precioFundacion"])
+    descuento_pct = float(tarifa["descuentoPct"])
+    monto_neto = round(monto_bruto * (1 - descuento_pct / 100), 2)
+
+    internos, fallo = internos_activos(request.headers.get("Authorization", ""))
+    if fallo:
+        return jsonify({
+            "error": "No se generaron las cuotas: %s" % fallo,
+            "detalle": ("Hace falta el padron activo para saber a quien cobrarle. "
+                        "Cobrarle a una lista incompleta dejaria a unos internos "
+                        "cobrados y a otros no, asi que no se genero ninguna."),
+        }), 503
+
+    ya_estaban = {
+        f["paciente_id"] for f in consultar(
+            "SELECT paciente_id FROM cargos WHERE periodo_cuota = %s", (mes,))
+    }
+
+    ahora = datetime.now().replace(microsecond=0)
+    creadas, existentes, cargos = [], [], []
+    bd = conexion()
+    try:
+        for interno in internos:
+            paciente_id = interno.get("pacienteId")
+            if not paciente_id:
+                continue
+            if paciente_id in ya_estaban:
+                existentes.append(paciente_id)
+                continue
+            cargo_id = _folio("CG")
+            try:
+                ejecutar(
+                    """INSERT INTO cargos
+                           (id, paciente_id, paciente_nombre, categoria, concepto,
+                            referencia, monto_bruto, descuento_pct, monto_neto,
+                            monto_pagado, estado, registrado_por, creado_en,
+                            periodo_cuota)
+                       VALUES (%s,%s,%s,'CUOTA',%s,%s,%s,%s,%s,0,'PENDIENTE',%s,%s,%s)""",
+                    (cargo_id, paciente_id, interno.get("nombre"),
+                     "Cuota mensual de estadia %s" % mes, mes,
+                     monto_bruto, descuento_pct, monto_neto, firmante(), ahora, mes),
+                )
+            except pymysql.err.IntegrityError:
+                # Otra ejecucion la creo entre la consulta y este INSERT. No es
+                # un error: es justamente lo que el indice unico esta para
+                # impedir, y el resultado sigue siendo el correcto.
+                existentes.append(paciente_id)
+                continue
+            creadas.append(paciente_id)
+            cargos.append({"id": cargo_id, "pacienteId": paciente_id,
+                           "pacienteNombre": interno.get("nombre"),
+                           "montoNeto": monto_neto})
+        bd.commit()
+    except Exception:
+        bd.rollback()
+        raise
+
+    salida = _sello_informe("Generacion de cuotas mensuales")
+    salida.update({
+        "mes": mes,
+        "internosActivos": len(internos),
+        "creadas": len(creadas),
+        "yaExistian": len(existentes),
+        "montoUnitario": monto_neto,
+        "montoTotalGenerado": round(monto_neto * len(creadas), 2),
+        "cargos": cargos,
+    })
+    return jsonify(salida), 201 if creadas else 200
+
 @app.errorhandler(404)
 def no_encontrado(_):
     return jsonify({"error": "Ruta no encontrada en ms-caja."}), 404
@@ -986,12 +1122,15 @@ def sembrar():
     ]
     ejemplos = [
         # pacienteId, tarifa, concepto, dias_atras, pagado_ya
-        ("ASL-014", "cuota-mensual", "Cuota de estadia, mes en curso", 20, True),
+        # El concepto de la cuota lo arma el ciclo con el mes que le toca: para
+        # poder sellarla hay que saber de que mes es, y un texto fijo mentiria
+        # en cuanto la demostracion caiga en otro mes.
+        ("ASL-014", "cuota-mensual", None, 20, True),
         ("ASL-014", "consulta-especialista", "Valoracion por psiquiatria geriatrica", 12, True),
         ("ASL-014", "laboratorio-basico", "Perfil metabolico de control", 12, False),
-        ("ASL-007", "cuota-mensual", "Cuota de estadia, mes en curso", 20, False),
+        ("ASL-007", "cuota-mensual", None, 20, False),
         ("ASL-007", "consulta-general", "Control de presion arterial", 5, True),
-        ("ASL-022", "cuota-mensual", "Cuota de estadia, mes en curso", 20, True),
+        ("ASL-022", "cuota-mensual", None, 20, True),
         ("ASL-022", "laboratorio-basico", "Control de INR por warfarina", 3, False),
         ("ASL-022", "farmacia-especializado", "Atorvastatina, caja mensual", 3, False),
     ]
@@ -1002,6 +1141,13 @@ def sembrar():
         descuento = t["descuentoPct"]
         monto_neto = round(monto_bruto * (1 - descuento / 100), 2)
         creado = hoy - timedelta(days=dias_atras)
+        # La cuota sembrada lleva su periodo, igual que las que genera
+        # /cuotas/generar. Sin ese sello el generador no la ve y le cobraria la
+        # estadia por segunda vez a estas tres familias la primera vez que
+        # alguien pulse el boton.
+        periodo = creado.strftime("%Y-%m") if t["categoria"] == "CUOTA" else None
+        if concepto is None:
+            concepto = "Cuota mensual de estadia %s" % periodo
         nombre = dict(pacientes)[pid]
         cargo_id = _folio("CG")
         monto_pagado = monto_neto if pagado else 0
@@ -1010,11 +1156,12 @@ def sembrar():
             """INSERT INTO cargos
                    (id, paciente_id, paciente_nombre, categoria, concepto, referencia,
                     monto_bruto, descuento_pct, monto_neto, monto_pagado, estado,
-                    registrado_por, creado_en)
+                    registrado_por, creado_en, periodo_cuota)
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                       'Marta Solis, administracion',%s)""",
+                       'Marta Solis, administracion',%s,%s)""",
             (cargo_id, pid, nombre, t["categoria"], concepto, tarifa_clave,
-             monto_bruto, descuento, monto_neto, monto_pagado, estado, creado),
+             monto_bruto, descuento, monto_neto, monto_pagado, estado, creado,
+             periodo),
         )
         if pagado:
             cursor.execute(

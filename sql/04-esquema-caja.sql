@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS cargos (
     -- administracion registre a mano.
     visita_id        VARCHAR(24)    NULL,
 
+    -- Mes que cubre la cuota de estadia, como AAAA-MM. NULO en todo lo demas.
+    -- Existe para que la generacion mensual sea idempotente sin depender de
+    -- que la aplicacion mire antes: con el UNIQUE de abajo, dos ejecuciones
+    -- sobre el mismo mes —o dos simultaneas— no pueden duplicar la cuota.
+    -- En MySQL los NULOS no chocan entre si en un indice unico, asi que los
+    -- cargos que no son cuota quedan fuera de la restriccion.
+    periodo_cuota    CHAR(7)        NULL,
+
     CONSTRAINT pk_cargos PRIMARY KEY (id),
     CONSTRAINT ck_cargos_categoria
         CHECK (categoria IN ('CONSULTA', 'LABORATORIO', 'FARMACIA', 'CUOTA', 'OTRO')),
@@ -53,6 +61,10 @@ CREATE TABLE IF NOT EXISTS cargos (
     CONSTRAINT ck_cargos_descuento CHECK (descuento_pct BETWEEN 0 AND 100),
     CONSTRAINT ck_cargos_montos
         CHECK (monto_bruto >= 0 AND monto_neto >= 0 AND monto_pagado >= 0),
+
+    -- Una cuota por interno y por mes. Lo garantiza el motor y no una
+    -- consulta previa: entre el SELECT y el INSERT cabe otra ejecucion.
+    CONSTRAINT uq_cargos_cuota_mes UNIQUE (paciente_id, periodo_cuota),
 
     INDEX idx_cargos_paciente (paciente_id, creado_en),
     INDEX idx_cargos_categoria (categoria),

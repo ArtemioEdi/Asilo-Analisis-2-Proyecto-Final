@@ -1497,6 +1497,8 @@ async function cargarTarifasCaja() {
         (t.descuentoPct ? " (" + t.descuentoPct + "% de descuento)" : " (sin descuento)");
       select.appendChild(opcion);
     }
+    // Ya hay tarifario: la nota del formulario de cuotas puede decir cuanto.
+    prepararCuotas();
   } catch (_) {
     select.textContent = "";
     const opcion = document.createElement("option");
@@ -4060,6 +4062,103 @@ $("formulario-egreso").addEventListener("submit", async (evento) => {
     await cargarInternos();
   } catch (error) {
     avisarError(error, "egresar al interno");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+/* ---------------------------------------------------------------------
+   Cuota mensual de estadia
+
+   Genera de una vez el cargo de la cuota para todo el padron activo. La
+   confirmacion dice a cuantos se les va a cobrar y cuanto suma, porque
+   despues son cargos reales en la cuenta de otras tantas familias.
+   --------------------------------------------------------------------- */
+
+function mesActualISO() {
+  const h = new Date();
+  return h.getFullYear() + "-" + String(h.getMonth() + 1).padStart(2, "0");
+}
+
+// El mes en palabras, para que la confirmacion no diga "2026-09".
+function mesLegible(iso) {
+  const [anio, mes] = String(iso || "").split("-");
+  const nombres = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+                   "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+  const nombre = nombres[parseInt(mes, 10) - 1];
+  return nombre ? nombre + " de " + anio : iso;
+}
+
+function tarifaDeLaCuota() {
+  const t = (TARIFAS_CAJA || []).find((x) => x.clave === "cuota-mensual");
+  if (!t) return null;
+  return {
+    neto: t.precioFundacion * (1 - (t.descuentoPct || 0) / 100),
+    nombre: t.nombre,
+  };
+}
+
+function prepararCuotas() {
+  if (!$("cuotas-mes").value) $("cuotas-mes").value = mesActualISO();
+  const tarifa = tarifaDeLaCuota();
+  const activos = Object.keys(INTERNOS).length;
+  $("cuotas-nota").textContent = tarifa
+    ? "Se le cobra a cada interno activo. Hoy son " + activos +
+      ", a " + quetzales(tarifa.neto) + " cada uno."
+    : "Se le cobra a cada interno activo del padrón.";
+}
+
+$("formulario-cuotas").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const mes = $("cuotas-mes").value;
+  if (!mes) return;
+
+  const tarifa = tarifaDeLaCuota();
+  const activos = Object.keys(INTERNOS).length;
+  const seguro = await confirmar({
+    titulo: "¿Generar las cuotas de " + mesLegible(mes) + "?",
+    textoSi: "Sí, generar",
+    datos: [
+      ["Mes", mesLegible(mes)],
+      ["Internos activos", String(activos)],
+      ["Cuota por interno", tarifa ? quetzales(tarifa.neto) : "según el tarifario"],
+      ["Suma, como máximo", tarifa ? quetzales(tarifa.neto * activos) : "—"],
+    ],
+    // Es idempotente, y decirlo quita el miedo a pulsarlo dos veces, que es
+    // justo lo que lleva a no pulsarlo nunca y cobrar a mano.
+    aviso: "Se le cobra la estadía a cada interno activo que todavía no tenga " +
+           "la cuota de ese mes. A quien ya la tenga no se le cobra dos veces, " +
+           "así que repetir la operación es inofensivo.",
+  });
+  if (!seguro) return;
+
+  const boton = $("generar-cuotas");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Generando…";
+  try {
+    const salida = await pedir(CAJA + "/api/v1/cuotas/generar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mes }),
+    });
+    if (salida.creadas) {
+      aviso("Cuotas generadas",
+        salida.creadas + " cuota(s) de " + mesLegible(mes) + " por " +
+        quetzales(salida.montoTotalGenerado) + " en total" +
+        (salida.yaExistian ? " · " + salida.yaExistian + " ya existían" : "") + ".",
+        "ok");
+    } else {
+      // Ni error ni exito: el mes ya estaba cobrado. Decirlo asi evita que
+      // alguien lo vuelva a intentar pensando que fallo.
+      aviso("No hubo nada que generar",
+        "Los " + salida.yaExistian + " internos activos ya tenían su cuota de " +
+        mesLegible(mes) + ".", "aviso");
+    }
+    await pintarCaja();
+  } catch (error) {
+    avisarError(error, "generar las cuotas del mes");
   } finally {
     boton.disabled = false;
     boton.textContent = original;
