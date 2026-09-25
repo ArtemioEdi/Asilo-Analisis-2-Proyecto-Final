@@ -194,6 +194,12 @@
               <label for="cargo-concepto">Concepto</label>
               <input id="cargo-concepto" type="text" placeholder="Ej. Consulta de control mensual" required>
             </div>
+            <!-- Solo aparece cuando la tarifa elegida es la cuota: es el unico
+                 cargo que necesita decir que mes cubre. -->
+            <div class="campo campo--ancho" id="campo-cargo-mes" hidden>
+              <label for="cargo-mes">Mes que cubre la cuota</label>
+              <input id="cargo-mes" type="month">
+            </div>
             <button class="accion accion--ancha" type="submit">Registrar cargo</button>
           </form>
 

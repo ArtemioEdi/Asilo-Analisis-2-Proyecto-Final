@@ -85,7 +85,10 @@ for p in sys.argv[1].split("."):
         d = None
     if d is None:
         sys.exit(0)
-print(json.dumps(d, ensure_ascii=False) if isinstance(d, (dict, list)) else d)
+# Los booleanos se imprimen como JSON y no como Python: el guion compara
+# contra "true", y "True" lo haria fallar solo porque en el equipo habia
+# python en vez de node.
+print(json.dumps(d, ensure_ascii=False) if isinstance(d, (dict, list, bool)) else d)
 ' "$1"
   fi
 }
@@ -695,6 +698,247 @@ detalle "de ese total, la consulta en si aporta Q $(cat "$TEMPORAL/respuesta.jso
 comprobar "el aviso al familiar quedo asentado" "200" \
   "$(codigo GET "$GATEWAY/consultas/api/v1/correos?pacienteId=ASL-014" "$TOKEN_MEDICO")"
 detalle "$(cat "$TEMPORAL/respuesta.json" | campo total) avisos · servidor de correo configurado: $(cat "$TEMPORAL/respuesta.json" | campo smtpConfigurado)"
+
+# ---------------------------------------------------------------------------
+titulo "18. La consulta cerrada no admite nada mas"
+# ---------------------------------------------------------------------------
+# La visita del paso 16 quedo CERRADA. Lo que sigue no es una restriccion de
+# pantalla sino del servidor: una consulta firmada es un documento, y agregarle
+# un examen despues cambiaria lo que el medico ya firmo.
+comprobar "no se le puede agregar un examen (409)" "409" \
+  "$(codigo POST "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID/examenes" "$TOKEN_MEDICO" \
+     '{"nombre":"Hemograma tardio","tarifa":"laboratorio-basico"}')"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo error)"
+
+comprobar "no se le puede agregar una receta (409)" "409" \
+  "$(codigo POST "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID/indicaciones" "$TOKEN_MEDICO" \
+     '{"principioActivo":"paracetamol","nombre":"Paracetamol","dosisMg":500,"cadaHoras":8,"duracionDias":3}')"
+
+comprobar "no se le puede cambiar la ficha (409)" "409" \
+  "$(codigo PUT "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID" "$TOKEN_MEDICO" \
+     '{"motivoConsulta":"Otra cosa"}')"
+
+comprobar "no se puede cerrar dos veces (409)" "409" \
+  "$(codigo PUT "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID/cerrar" "$TOKEN_MEDICO" \
+     '{"diagnostico":"Otro","observaciones":"Otra"}')"
+
+# ---------------------------------------------------------------------------
+titulo "19. Los siete informes, cada uno con su rol y con el rol equivocado"
+# ---------------------------------------------------------------------------
+# El rango se abre de par en par: lo que se comprueba aqui es quien puede leer
+# cada informe, no cuanto suma, que ya se comprueba en otras secciones.
+DESDE=2000-01-01
+HASTA="$(date +%Y)-12-31"
+
+# informe <numero> <descripcion> <url> <token correcto> <token equivocado>
+informe() {
+  comprobar "informe $1 - $2 (200)" "200" "$(codigo GET "$3" "$4")"
+  comprobar "informe $1 - con el rol equivocado (403)" "403" "$(codigo GET "$3" "$5")"
+}
+
+informe 1 "costos de cada cita" \
+  "$GATEWAY/caja/api/v1/reportes/costo-por-visita?visitaId=$VISITA_ID" \
+  "$TOKEN_ADMINISTRACION" "$TOKEN_MEDICO"
+
+informe 2 "analisis medicos por paciente" \
+  "$GATEWAY/consultas/api/v1/reportes/ficha?pacienteId=ASL-014" \
+  "$TOKEN_MEDICO" "$TOKEN_ADMINISTRACION"
+
+informe 3 "cobros por paciente" \
+  "$GATEWAY/caja/api/v1/cargos?pacienteId=ASL-014&desde=$DESDE&hasta=$HASTA" \
+  "$TOKEN_ADMINISTRACION" "$TOKEN_ENFERMERIA"
+
+informe 4 "pagos realizados a la fundacion" \
+  "$GATEWAY/caja/api/v1/reportes/pagos-fundacion?desde=$DESDE&hasta=$HASTA" \
+  "$TOKEN_ADMINISTRACION" "$TOKEN_MEDICO"
+
+informe 5 "entradas: donaciones y cobros" \
+  "$GATEWAY/caja/api/v1/reportes/entradas?desde=$DESDE&hasta=$HASTA" \
+  "$TOKEN_ADMINISTRACION" "$TOKEN_MEDICO"
+
+informe 6 "examenes realizados por paciente" \
+  "$GATEWAY/consultas/api/v1/reportes/examenes?pacienteId=ASL-014" \
+  "$TOKEN_MEDICO" "$TOKEN_ADMINISTRACION"
+
+informe 7 "medicamentos aplicados por paciente" \
+  "$GATEWAY/pastillero/api/v1/pacientes/ASL-014/adherencia?desde=$DESDE&hasta=$HASTA" \
+  "$TOKEN_ENFERMERIA" "$TOKEN_ADMINISTRACION"
+
+# El septimo es el unico que enfermeria ve, y el medico lo ve tambien.
+comprobar "el informe 7 tambien lo lee el medico (200)" "200" \
+  "$(codigo GET "$GATEWAY/pastillero/api/v1/pacientes/ASL-014/adherencia?desde=$DESDE&hasta=$HASTA" "$TOKEN_MEDICO")"
+
+# Los siete llevan sello del servidor: quien lo genero sale del token y no del
+# navegador, por la misma razon que la bitacora.
+SELLO=$(cuerpo GET "$GATEWAY/caja/api/v1/reportes/entradas?desde=$DESDE&hasta=$HASTA" "$TOKEN_ADMINISTRACION")
+comprobar "el informe dice quien lo genero, desde el token" "Marta Solis" \
+  "$(printf '%s' "$SELLO" | campo generadoPor)"
+comprobar "y cuando se genero" "si" \
+  "$([ -n "$(printf '%s' "$SELLO" | campo generadoEn)" ] && echo si || echo no)"
+
+# ---------------------------------------------------------------------------
+titulo "20. Padron de internos: alta, modificacion y parte clinica"
+# ---------------------------------------------------------------------------
+TOKEN_ADMINISTRADOR=$(entrar admin admin2026x)
+comprobar "el administrador del padron obtiene token" "si" \
+  "$([ -n "$TOKEN_ADMINISTRADOR" ] && echo si || echo no)"
+
+# El documento lleva la hora de la corrida: es unico, y con eso esta seccion se
+# puede repetir sin limpiar la base.
+DOCUMENTO="PRUEBA-$(date +%Y%m%d%H%M%S)"
+ALTA=$(cuerpo POST "$GATEWAY/pastillero/api/v1/internos" "$TOKEN_ADMINISTRADOR" "{
+  \"nombre\":\"Candelaria Sacalxot Perez\",
+  \"documento\":\"$DOCUMENTO\",
+  \"fechaNacimiento\":\"1941-03-08\",
+  \"sexo\":\"FEMENINO\",
+  \"ingreso\":\"$(date +%F)\",
+  \"motivoIngreso\":\"Prueba de humo del padron.\",
+  \"pabellon\":\"Pabellon C\",\"cama\":\"7\",
+  \"responsable\":\"Elena Sacalxot\",
+  \"correoResponsable\":\"elena@example.com\"}")
+NUEVO=$(printf '%s' "$ALTA" | campo pacienteId)
+comprobar "el administrador da de alta a un interno" "si" \
+  "$([ -n "$NUEVO" ] && echo si || echo no)"
+comprobar "el interno nace ACTIVO" "ACTIVO" "$(printf '%s' "$ALTA" | campo estado)"
+comprobar "la edad se calcula y viene en la ficha" "si" \
+  "$([ -n "$(printf '%s' "$ALTA" | campo edad)" ] && echo si || echo no)"
+detalle "$NUEVO - documento $DOCUMENTO - edad $(printf '%s' "$ALTA" | campo edad)"
+
+comprobar "el mismo documento otra vez se rechaza (409)" "409" \
+  "$(codigo POST "$GATEWAY/pastillero/api/v1/internos" "$TOKEN_ADMINISTRADOR" "{
+     \"nombre\":\"Otra persona distinta\",
+     \"documento\":\"$DOCUMENTO\",
+     \"fechaNacimiento\":\"1950-01-01\",\"sexo\":\"MASCULINO\"}")"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo error)"
+
+comprobar "el medico NO puede dar de alta (403)" "403" \
+  "$(codigo POST "$GATEWAY/pastillero/api/v1/internos" "$TOKEN_MEDICO" \
+     '{"nombre":"Quien sea","documento":"NO-DEBE-ENTRAR","fechaNacimiento":"1950-01-01","sexo":"OTRO"}')"
+
+MODIFICADO=$(cuerpo PUT "$GATEWAY/pastillero/api/v1/internos/$NUEVO" "$TOKEN_ADMINISTRADOR" '{
+  "nombre":"Candelaria Sacalxot Perez",
+  "pabellon":"Pabellon A","cama":"12",
+  "responsable":"Elena Sacalxot de Lopez"}')
+comprobar "el administrador cambia los datos administrativos" "Pabellon A, cama 12" \
+  "$(printf '%s' "$MODIFICADO" | campo ubicacion)"
+comprobar "y el documento no se toca al modificar" "$DOCUMENTO" \
+  "$(printf '%s' "$MODIFICADO" | campo documento)"
+
+# La parte clinica es del medico y no del administrador: con ella decide
+# ms-vigia si un medicamento es seguro para este interno.
+comprobar "el administrador NO escribe la parte clinica (403)" "403" \
+  "$(codigo PUT "$GATEWAY/pastillero/api/v1/internos/$NUEVO/clinica" "$TOKEN_ADMINISTRADOR" \
+     '{"alergias":["penicilina"]}')"
+
+CLINICA=$(cuerpo PUT "$GATEWAY/pastillero/api/v1/internos/$NUEVO/clinica" "$TOKEN_MEDICO" '{
+  "psicopatologias":["Depresion mayor"],
+  "alergias":["penicilina"],
+  "medicacionPermanente":[{"principioActivo":"warfarina","nombre":"Warfarina","dosisMg":5,"cadaHoras":24}]}')
+comprobar "el medico si escribe la parte clinica" "penicilina" \
+  "$(printf '%s' "$CLINICA" | campo alergias.0)"
+
+# Y esa medicacion permanente pesa en los dictamenes igual que un plan activo.
+comprobar "el ibuprofeno a este interno queda BLOQUEADO por la warfarina" "BLOQUEADO" \
+  "$(cuerpo POST "$GATEWAY/vigia/api/v1/validaciones" "$TOKEN_MEDICO" "{
+     \"pacienteId\":\"$NUEVO\",
+     \"propuesta\":{\"principioActivo\":\"ibuprofeno\",\"dosisMg\":400,\"cadaHoras\":8,\"duracionDias\":3}}" \
+     | campo veredicto)"
+
+# ---------------------------------------------------------------------------
+titulo "21. Cuota mensual: generarla dos veces no la cobra dos veces"
+# ---------------------------------------------------------------------------
+# Mes fijo y lejano a proposito: no se cruza con la cuota que trae el sembrado
+# ni con la que alguien genere durante la demostracion.
+MES_CUOTA=2030-06
+
+PRIMERA=$(cuerpo POST "$GATEWAY/caja/api/v1/cuotas/generar" "$TOKEN_ADMINISTRACION" \
+  "{\"mes\":\"$MES_CUOTA\"}")
+ACTIVOS=$(printf '%s' "$PRIMERA" | campo internosActivos)
+CREADAS=$(printf '%s' "$PRIMERA" | campo creadas)
+EXISTIAN=$(printf '%s' "$PRIMERA" | campo yaExistian)
+comprobar "a cada interno activo le toca su cuota" "$ACTIVOS" "$((CREADAS + EXISTIAN))"
+comprobar "el interno recien dado de alta tambien entra" "si" \
+  "$(printf '%s' "$PRIMERA" | grep -q "$NUEVO" && echo si || echo no)"
+detalle "$ACTIVOS activos - $CREADAS creadas - $EXISTIAN ya existian - Q $(printf '%s' "$PRIMERA" | campo montoUnitario) cada una"
+
+SEGUNDA=$(cuerpo POST "$GATEWAY/caja/api/v1/cuotas/generar" "$TOKEN_ADMINISTRACION" \
+  "{\"mes\":\"$MES_CUOTA\"}")
+comprobar "la segunda vez no crea ninguna" "0" "$(printf '%s' "$SEGUNDA" | campo creadas)"
+comprobar "y reconoce las que ya estaban" "$ACTIVOS" "$(printf '%s' "$SEGUNDA" | campo yaExistian)"
+
+# La prueba de fondo: en la base hay una cuota por interno y no dos. Quien lo
+# impide es el indice unico sobre (paciente_id, periodo_cuota).
+comprobar "en la base hay una cuota del mes por interno, no dos" "$ACTIVOS" \
+  "$(cuerpo GET "$GATEWAY/caja/api/v1/cargos?desde=$DESDE&hasta=2099-12-31" "$TOKEN_ADMINISTRACION" \
+     | grep -o "\"periodoCuota\":\"$MES_CUOTA\"" | wc -l | tr -d ' ')"
+
+comprobar "el mes mal escrito se rechaza (400)" "400" \
+  "$(codigo POST "$GATEWAY/caja/api/v1/cuotas/generar" "$TOKEN_ADMINISTRACION" '{"mes":"junio"}')"
+comprobar "el medico NO puede generar cuotas (403)" "403" \
+  "$(codigo POST "$GATEWAY/caja/api/v1/cuotas/generar" "$TOKEN_MEDICO" "{\"mes\":\"$MES_CUOTA\"}")"
+
+# El otro camino por el que nace una cuota es el cargo a mano. Tiene que pedir
+# el mes igual que la generacion: sin el queda invisible para ella y la familia
+# terminaria pagando la misma estadia dos veces.
+comprobar "una cuota a mano sin el mes se rechaza (400)" "400" \
+  "$(codigo POST "$GATEWAY/caja/api/v1/cargos" "$TOKEN_ADMINISTRACION" "{
+     \"pacienteId\":\"$NUEVO\",\"categoria\":\"CUOTA\",
+     \"concepto\":\"Cuota atrasada\",\"tarifa\":\"cuota-mensual\"}")"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo detalles.0)"
+
+comprobar "con el mes, la cuota a mano se registra (201)" "201" \
+  "$(codigo POST "$GATEWAY/caja/api/v1/cargos" "$TOKEN_ADMINISTRACION" "{
+     \"pacienteId\":\"$NUEVO\",\"categoria\":\"CUOTA\",\"mes\":\"2030-07\",
+     \"concepto\":\"Cuota atrasada de 2030-07\",\"tarifa\":\"cuota-mensual\"}")"
+
+comprobar "la misma cuota a mano otra vez se rechaza (409)" "409" \
+  "$(codigo POST "$GATEWAY/caja/api/v1/cargos" "$TOKEN_ADMINISTRACION" "{
+     \"pacienteId\":\"$NUEVO\",\"categoria\":\"CUOTA\",\"mes\":\"2030-07\",
+     \"concepto\":\"Cuota atrasada de 2030-07, otra vez\",\"tarifa\":\"cuota-mensual\"}")"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo error)"
+
+# Y la generacion tampoco la vuelve a cobrar: ve la que se registro a mano.
+comprobar "la generacion de ese mes respeta la cuota hecha a mano" "0" \
+  "$(cuerpo POST "$GATEWAY/caja/api/v1/cuotas/generar" "$TOKEN_ADMINISTRACION" '{"mes":"2030-07"}' \
+     | campo cargos | grep -o "$NUEVO" | wc -l | tr -d ' ')"
+
+# ---------------------------------------------------------------------------
+titulo "22. Egreso: sale del padron activo y conserva su historial"
+# ---------------------------------------------------------------------------
+comprobar "el medico NO puede egresar (403)" "403" \
+  "$(codigo PUT "$GATEWAY/pastillero/api/v1/internos/$NUEVO/egreso" "$TOKEN_MEDICO" \
+     "{\"fecha\":\"$(date +%F)\",\"motivo\":\"No deberia poder\"}")"
+
+EGRESO=$(cuerpo PUT "$GATEWAY/pastillero/api/v1/internos/$NUEVO/egreso" "$TOKEN_ADMINISTRADOR" \
+  "{\"fecha\":\"$(date +%F)\",\"motivo\":\"Traslado a casa de un familiar.\"}")
+comprobar "el administrador egresa al interno" "EGRESADO" "$(printf '%s' "$EGRESO" | campo estado)"
+# Irse debiendo no lo impide, pero que nadie lo diga seria peor: la cuenta
+# sigue siendo exigible al familiar responsable.
+comprobar "el egreso avisa de la deuda pendiente" "si" \
+  "$([ -n "$(printf '%s' "$EGRESO" | campo advertencia)" ] && echo si || echo no)"
+detalle "$(printf '%s' "$EGRESO" | campo advertencia)"
+
+comprobar "ya no esta en el padron activo" "0" \
+  "$(cuerpo GET "$GATEWAY/pastillero/api/v1/internos?estado=ACTIVO" "$TOKEN_ADMINISTRADOR" \
+     | grep -o "\"$NUEVO\"" | wc -l | tr -d ' ')"
+comprobar "pero si en el padron de egresados" "1" \
+  "$(cuerpo GET "$GATEWAY/pastillero/api/v1/internos?estado=EGRESADO" "$TOKEN_ADMINISTRADOR" \
+     | grep -o "\"$NUEVO\"" | wc -l | tr -d ' ')"
+
+# Un interno NUNCA se borra: su ficha y su parte clinica siguen ahi.
+FICHA_EGRESADA=$(cuerpo GET "$GATEWAY/pastillero/api/v1/internos/$NUEVO" "$TOKEN_MEDICO")
+comprobar "su historial clinico sigue intacto" "penicilina" \
+  "$(printf '%s' "$FICHA_EGRESADA" | campo alergias.0)"
+
+comprobar "egresarlo dos veces se rechaza (409)" "409" \
+  "$(codigo PUT "$GATEWAY/pastillero/api/v1/internos/$NUEVO/egreso" "$TOKEN_ADMINISTRADOR" \
+     "{\"fecha\":\"$(date +%F)\",\"motivo\":\"Otra vez\"}")"
+
+# Ya egresado, deja de entrar en la generacion de cuotas de los meses
+# siguientes: no se le cobra la estadia a quien ya no esta.
+comprobar "un egresado ya no entra en las cuotas del mes" "0" \
+  "$(cuerpo POST "$GATEWAY/caja/api/v1/cuotas/generar" "$TOKEN_ADMINISTRACION" '{"mes":"2030-08"}' \
+     | grep -o "$NUEVO" | wc -l | tr -d ' ')"
 
 
 # ---------------------------------------------------------------------------

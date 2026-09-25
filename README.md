@@ -56,9 +56,13 @@ través del gateway, en `http://localhost:8080`, con el token de sesión.
 
 | Requisito | Endpoint | Pantalla | Usuario |
 |---|---|---|---|
+| Alta del interno en el padrón, con su documento de identificación | `POST /pastillero/api/v1/internos` | Padrón → **Dar de alta** | `admin` |
+| Datos administrativos del interno: ubicación, ingreso, familiar responsable | `PUT /pastillero/api/v1/internos/{id}` | Padrón → **Editar** | `admin` |
+| Egreso del interno, conservando su historial | `PUT /pastillero/api/v1/internos/{id}/egreso` | Padrón → **Egresar** | `admin` |
 | Ficha médica completa del interno | `GET /consultas/api/v1/reportes/ficha?pacienteId=` | Consultas → **Ver ficha médica completa** | `medico` |
-| Psicopatologías del interno | dentro de la ficha, y `GET /pastillero/api/v1/internos/{id}` | Ficha médica completa, bloque *Psicopatologías* | `medico` |
-| Alergias del interno | dentro de la ficha, y `GET /pastillero/api/v1/internos/{id}` | Ficha médica completa, bloque *Alergias* | `medico` |
+| Psicopatologías del interno | `PUT /pastillero/api/v1/internos/{id}/clinica`, y dentro de la ficha | Ficha médica completa, bloque *Psicopatologías* | `medico` |
+| Alergias del interno | `PUT /pastillero/api/v1/internos/{id}/clinica`, y dentro de la ficha | Ficha médica completa, bloque *Alergias* | `medico` |
+| Medicinas de cajón: la medicación permanente del interno | `PUT /pastillero/api/v1/internos/{id}/clinica` | Ficha médica completa, bloque *Medicación permanente* | `medico` |
 | Diagnóstico y observaciones de cada consulta | `GET /consultas/api/v1/visitas/{id}` | Ficha médica completa, *Historial de consultas* | `medico` |
 | Medicamento aplicado, cantidad y tiempo de aplicación | `GET /pastillero/api/v1/turnos` · `POST /pastillero/api/v1/tomas/{id}/administrar` | Jornada de medicación | `enfermeria` |
 
@@ -105,19 +109,35 @@ través del gateway, en `http://localhost:8080`, con el token de sesión.
 | Cobros a la familia con el descuento de la fundación | `POST /caja/api/v1/cargos` · `GET /caja/api/v1/cargos` | Caja → *Cargar a la cuenta del interno* | `administracion` |
 | Estado de cuenta y saldo de cada interno | `GET /caja/api/v1/pacientes/{id}/cuenta` | Caja → *Cuenta del interno* | `administracion` (y `medico`, solo lectura) |
 | Pagos y abonos de la familia | `POST /caja/api/v1/cargos/{id}/pagar` | Caja → botón **Pagar** de cada cargo | `administracion` |
-| Cuota mensual de estadía | tarifa `cuota-mensual` en `POST /caja/api/v1/cargos` | Caja → *Cargar a la cuenta*, tarifa *Cuota mensual* | `administracion` |
-| Entradas por donaciones | `POST /caja/api/v1/donaciones` · `GET /caja/api/v1/donaciones` | Caja → *Registrar una donación* | `administracion` |
+| Cuota mensual de estadía | `POST /caja/api/v1/cuotas/generar` para todo el padrón activo, o la tarifa `cuota-mensual` en `POST /caja/api/v1/cargos` para una sola | Caja → *Cuota mensual de estadía* | `administracion` |
+| Entradas por donaciones, en sus cuatro categorías: empresa internacional, empresa nacional, gobierno y particular | `POST /caja/api/v1/donaciones` · `GET /caja/api/v1/donaciones` | Caja → *Registrar una donación* | `administracion` |
 | Salidas por gastos operativos | `POST /caja/api/v1/gastos` · `GET /caja/api/v1/gastos` | Caja → *Registrar un gasto* | `administracion` |
 | Lo que el asilo le debe a la fundación y sus pagos | `GET /caja/api/v1/fundacion/resumen` · `POST /caja/api/v1/fundacion/pagos` | Caja → resumen superior | `administracion` |
 | Balance general de entradas y salidas | `GET /caja/api/v1/resumen` | Caja → resumen superior | `administracion` |
 
 ### Reportes
 
-| Requisito | Endpoint | Pantalla | Usuario |
+El enunciado pide siete informes. Los siete están, y todos se piden desde la
+misma pantalla —**Reportes**—, que le muestra a cada rol únicamente los que le
+tocan y los imprime con el formato de hoja del asilo.
+
+| # | Requisito | Endpoint | Quién lo ve |
 |---|---|---|---|
-| Reporte de exámenes realizados por paciente | `GET /consultas/api/v1/reportes/examenes?pacienteId=` | Consultas → **Exámenes realizados** | `medico` |
-| Reporte de medicamentos aplicados por paciente | `GET /pastillero/api/v1/pacientes/{id}/tomas` · `GET /pastillero/api/v1/pacientes/{id}/adherencia` | Jornada de medicación | `enfermeria` |
-| Reporte de cobros por paciente y rango de fecha | `GET /caja/api/v1/cargos?pacienteId=&desde=&hasta=` | Caja → *Cuenta del interno* | `administracion` |
+| 1 | Costos de cada cita por paciente | `GET /caja/api/v1/reportes/costo-por-visita?visitaId=` | `administracion` |
+| 2 | Análisis médicos por paciente | `GET /consultas/api/v1/reportes/ficha?pacienteId=` | `medico` |
+| 3 | Cobros por paciente y rango de fecha | `GET /caja/api/v1/cargos?pacienteId=&desde=&hasta=` | `administracion` |
+| 4 | Pagos realizados a la fundación | `GET /caja/api/v1/reportes/pagos-fundacion?desde=&hasta=` | `administracion` |
+| 5 | Entradas: donaciones y cobros | `GET /caja/api/v1/reportes/entradas?desde=&hasta=` | `administracion` |
+| 6 | Exámenes médicos realizados por paciente | `GET /consultas/api/v1/reportes/examenes?pacienteId=` | `medico` |
+| 7 | Medicamentos aplicados por paciente | `GET /pastillero/api/v1/pacientes/{id}/adherencia?desde=&hasta=` | `enfermeria`, `medico` |
+
+Los siete llevan al pie **quién los generó y cuándo**, y ese nombre sale del
+token en el servidor, no del navegador: un informe impreso lleva el nombre de
+quien tenía la sesión abierta. Enfermería entra a la pantalla y ve **solo el
+séptimo**, que es el único que le corresponde.
+
+| Otro reporte, fuera de los siete | Endpoint | Pantalla | Usuario |
+|---|---|---|---|
 | Bitácora de dictámenes de farmacovigilancia | `GET /vigia/api/v1/validaciones` | Recetario, tras cada validación | `medico` |
 
 ### Lo que el enunciado no pide y el sistema hace igual
@@ -280,7 +300,16 @@ importa tanto como quién puede modificarlos.
 |---|---|---|
 | `/vigia/*`      | `MEDICO`, `ENFERMERIA` | solo `MEDICO` (dictaminar una prescripción es un acto clínico) |
 | `/pastillero/*` | `MEDICO`, `ENFERMERIA` | `MEDICO` o `ENFERMERIA` (programar, administrar, omitir) · **suspender: solo `MEDICO`** |
-| `/caja/*`       | `ADMINISTRACION` | solo `ADMINISTRACION` (cargos, pagos, donaciones, gastos) |
+| `/pastillero/api/v1/internos*` | `MEDICO`, `ENFERMERIA`, `ADMINISTRACION`, `ADMINISTRADOR` | solo `ADMINISTRADOR` (alta, datos administrativos, egreso) |
+| `/pastillero/api/v1/internos/{id}/clinica` | — | solo `MEDICO` |
+| `/caja/*`       | `ADMINISTRACION` | solo `ADMINISTRACION` (cargos, pagos, donaciones, gastos, cuotas) |
+
+Las dos filas del padrón son la misma regla vista por sus dos lados, y el
+orden en que se comprueban importa: `/clinica` se mira **antes** que el resto
+del padrón, y la regla del padrón no la abarca. Si fuera al revés, quien
+gestiona el padrón podría escribir alergias por el camino de los datos
+administrativos, y son los datos con los que `ms-vigia` decide si un
+medicamento es seguro.
 
 **Dos excepciones, las dos documentadas y las dos solo de lectura:**
 
@@ -290,13 +319,13 @@ importa tanto como quién puede modificarlos.
    nunca se van a hacer. Alcanza solo la cuenta de un interno concreto: el
    médico no ve el resumen financiero del asilo, ni las donaciones, ni los
    gastos, ni la cuenta con la fundación.
-2. `GET /pastillero/api/v1/internos` la puede leer también `ADMINISTRACION`,
-   porque le cobra a la familia de cada interno y necesita saber a quién tiene
-   el asilo y quién es el familiar responsable. Pero `ms-pastillero` le
-   responde la ficha **sin la parte clínica**: sin psicopatologías, sin
-   alergias y sin medicación. Saber que Rosalía está internada aquí es un dato
-   administrativo; saber que tiene demencia mixta es un dato clínico. Y las
-   tomas, los planes y la adherencia le siguen respondiendo `403`.
+2. `GET /pastillero/api/v1/internos` la pueden leer también `ADMINISTRACION` y
+   `ADMINISTRADOR`: la primera porque le cobra a la familia de cada interno, el
+   segundo porque el padrón es su pantalla. Pero `ms-pastillero` les responde
+   la ficha **sin la parte clínica**: sin psicopatologías, sin alergias y sin
+   medicación. Saber que Rosalía está internada aquí es un dato administrativo;
+   saber que tiene demencia mixta es un dato clínico. Y las tomas, los planes y
+   la adherencia les siguen respondiendo `403`.
 
 **Por qué suspender un tratamiento es solo del médico.** Suspender no es
 registrar lo que pasó: es cambiar la indicación. Enfermería puede consignar
@@ -321,7 +350,7 @@ docker run --rm --network asilo-cabeza-de-algodon_asilo curlimages/curl \
   -s -o /dev/null -w "%{http_code}\n" \
   -X POST http://ms-caja:8083/api/v1/donaciones \
   -H 'Content-Type: application/json' \
-  -d '{"donante":"ATACANTE","tipo":"EMPRESA","monto":99999}'
+  -d '{"donante":"ATACANTE","tipo":"EMPRESA_NACIONAL","monto":99999}'
 # 401
 ```
 
@@ -451,13 +480,13 @@ Para borrar también los datos y volver a sembrar los internos de ejemplo:
 
 ### Usuarios de prueba
 
-`ms-gateway` trae seis usuarios para la demostración, definidos en
+`ms-gateway` trae siete usuarios para la demostración, definidos en
 `ms-gateway/usuarios.json` con la clave guardada como hash **bcrypt** (nunca en
 texto plano) y sesión de 8 horas. **Son credenciales de prueba de este
 prototipo académico**; en un sistema real esta lista vendría de la tabla de
 personal del módulo administrativo y no de un archivo del repositorio.
 
-Los tres primeros son **personal del asilo**. Los tres últimos son la
+Los cuatro primeros son **personal del asilo**. Los tres últimos son la
 **fundación que presta el servicio médico** y sus dos proveedores: no son
 empleados del asilo, y por eso no alcanzan el padrón de internos, ni la
 farmacovigilancia, ni la caja.
@@ -467,9 +496,18 @@ farmacovigilancia, ni la caja.
 | `medico` | `medico2026` | `MEDICO` | Dr. Angel Maltez. Receta, remite a especialidad y atiende consultas. |
 | `enfermeria` | `enfermeria2026` | `ENFERMERIA` | Administra las tomas del día y registra omisiones. |
 | `administracion` | `admin2026` | `ADMINISTRACION` | Marta Solís. Lleva la caja: cobros, pagos, donaciones y gastos. |
+| `admin` | `admin2026x` | `ADMINISTRADOR` | Ing. Dolores Ramírez. Gestiona el padrón: alta, datos administrativos y egreso de los internos. |
 | `fundacion` | `fundacion2026` | `FUNDACION` | Fundación Manos Unidas. Recibe las remisiones y les asigna médico, fecha y hora. |
 | `laboratorio` | `laboratorio2026` | `LABORATORIO` | Lab. Clínico Central. Carga el resultado de los exámenes indicados. |
 | `farmacia` | `farmacia2026` | `FARMACIA` | Farmacia de la Fundación. Entrega los medicamentos recetados. |
+
+`ADMINISTRADOR` y `ADMINISTRACION` se parecen en el nombre y no en lo que
+pueden hacer, y conviene tenerlo claro antes de la defensa. El primero **da de
+alta y egresa internos** y no toca la caja; la segunda **cobra** y puede leer
+el padrón para saber a quién le cobra, pero no lo modifica. Ninguno de los dos
+escribe la parte clínica de la ficha: las psicopatologías, las alergias y la
+medicación permanente las firma el médico, porque son los datos con los que
+`ms-vigia` decide si un medicamento es seguro.
 
 Para dar de alta a alguien o cambiarle la clave, se genera el hash y se edita
 `usuarios.json`:
@@ -511,6 +549,11 @@ Dos cosas del sembrado que conviene saber antes de grabar:
   5 mg cada 24 h sale `APROBADO` y sin hallazgos para ese interno. Sembrar algo
   que la propia farmacovigilancia del sistema marcaría sería contradecirse en la
   demostración.
+- **Los tres internos ya traen la cuota del mes en curso**, con su mes sellado.
+  Si en la demostración se generan las cuotas de ese mismo mes, la pantalla
+  dirá *«no hubo nada que generar: los 3 internos activos ya tenían su cuota»*,
+  que es la respuesta correcta y no un error. Para ver el otro lado, elija el
+  mes siguiente o genere después de dar de alta a un interno nuevo.
 
 ### El recorrido de la demostración, paso por paso
 
@@ -529,16 +572,24 @@ aceptarlo.
 | 6 | `medico` | Cajón de la consulta → **Recetar, si ms-vigia lo aprueba** | **Recetar quetiapina** (un antipsicótico) | **`ms-vigia` lo bloquea con `409`**: `FV-GER-04`, severidad `CRITICA`, "antipsicótico indicado a un paciente con demencia". La receta **no se guarda**. Este es el momento más fuerte de la demostración. |
 | 7 | `medico` | Cajón de la consulta → **Recetar, si ms-vigia lo aprueba** | Recetar paracetamol 500 mg | Pasa el dictamen y queda recetado |
 | 8 | `farmacia` | Medicamentos por entregar → **Entregar** | Entregar el paracetamol | Queda entregado y **se cobra solo**. **No ve los resultados de laboratorio.** |
-| 9 | `medico` | Cajón de la consulta → **Guardar la ficha** | Escribir diagnóstico y observaciones y guardar | Quedan en la ficha del interno. **Ojo:** *cerrar* la consulta todavía no tiene botón; queda `ABIERTA`. Si necesita mostrarla `CERRADA`, use la consulta ya sembrada de Bernardo Puac en el paso siguiente. |
+| 9 | `medico` | Cajón de la consulta → **Guardar la ficha** y luego **Cerrar la consulta** | Escribir diagnóstico y observaciones, guardar y cerrar. Pide confirmación, y avisa de que es irreversible | La consulta pasa a `CERRADA`. A partir de ahí **el servidor rechaza con `409`** agregarle exámenes, recetas o cambios de ficha: una consulta firmada es un documento. |
 | 10 | `medico` | Elegir a Bernardo Puac (ASL-022) → **Ver ficha médica completa** | Abrir la ficha | Psicopatologías, alergias, y el historial con diagnóstico, exámenes con resultado y medicamentos. Junta **dos microservicios** en un documento. |
 | 11 | `administracion` | Caja → **Costo por consulta** | Elegir a Bernardo Puac | El costo de la consulta cerrada, con su laboratorio y su farmacia sumados y el descuento de la fundación aplicado |
+| 12 | `admin` | **Padrón** → *Dar de alta* | Registrar a un interno nuevo con su documento de identificación | Aparece en el padrón activo con su edad calculada. Si se repite el documento, el alta se rechaza con `409`: la unicidad la impone el motor, no una consulta previa. |
+| 13 | `medico` | Ficha del interno nuevo → **Información clínica** | Anotarle **warfarina** como medicación permanente | Es el único sitio donde se escribe la parte clínica, y el administrador **no puede** hacerlo. |
+| 14 | `medico` | Recetario → elegir al interno nuevo | Recetarle **ibuprofeno** | **`ms-vigia` lo bloquea**: la warfarina que se anotó en el paso 13 pesa en el dictamen igual que un plan de tomas activo. La medicación permanente no es un dato decorativo de la ficha. |
+| 15 | `administracion` | Caja → **Cuota mensual de estadía** | Elegir el mes y generar | Se crea la cuota de una vez para todo el padrón activo. **Volver a pulsarlo no cobra dos veces**: lo impide un índice único sobre (interno, mes), y el aviso dice cuántas se crearon y cuántas ya existían. |
+| 16 | `administracion` | **Reportes** | Recorrer los seis informes que le tocan | Cada uno sale con filtros, totales al pie y el sello de **quién lo generó y cuándo**, tomado del token. Con el botón *Imprimir* sale una hoja limpia, sin menús. |
+| 17 | `enfermeria` | **Reportes** | Abrir la pantalla | Ve **un solo informe**, el séptimo: medicamentos aplicados por paciente. Los otros seis no están en su lista, y pedirlos a mano devuelve `403`. |
+| 18 | `admin` | Padrón → interno nuevo → **Egresar** | Egresar al interno del paso 12 | Sale del padrón activo y **conserva su historial**: un interno nunca se borra. Sus planes quedan `FINALIZADO`, sus tomas futuras `OMITIDA`, y si debe dinero el egreso lo avisa —la deuda no impide irse, pero la cuenta sigue siendo exigible al familiar—. En las cuotas del mes siguiente ya no aparece. |
 
 Si además quiere mostrar el aislamiento de datos, sin salir de la terminal:
 
 ```bash
-bash verificar.sh          # 81 comprobaciones, entre ellas las 21 puertas
-                           # cerradas de los tres roles nuevos y el aislamiento
-                           # de usr_consultas
+bash verificar.sh          # 101 comprobaciones, entre ellas las 21 puertas
+                           # cerradas de los tres roles nuevos, la matriz
+                           # completa del ADMINISTRADOR y el aislamiento de
+                           # usr_consultas
 ```
 
 ### Los dos guiones de comprobación
@@ -551,7 +602,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **96**, en 17 bloques | **81**, en 19 bloques |
+| **Comprobaciones** | **155**, en 22 bloques | **101**, en 20 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre) | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -584,8 +635,28 @@ cada paso comprueba que **ningún otro rol podía haberlo hecho**. En medio est�
 el caso que más se defiende solo: el médico receta un antipsicótico a la interna
 con demencia mixta y `ms-vigia` lo **bloquea con `409`**, con el código del
 hallazgo (`FV-GER-04`), su severidad (`CRITICA`) y la comprobación de que la
-receta **no quedó guardada**. El bloque 17 cierra pidiendo los tres reportes
-sobre esa consulta recién hecha.
+receta **no quedó guardada**. El bloque 17 pide los tres reportes sobre esa
+consulta recién hecha.
+
+Los bloques 18 a 22 cubren lo que se agregó después, y todos parten de la
+consulta del bloque 16 o del interno que ellos mismos dan de alta, para que el
+guion se pueda correr dos veces seguidas sin limpiar la base:
+
+- **18** — una consulta cerrada rechaza con `409` que le agreguen un examen,
+  una receta o un cambio de ficha, y no se puede cerrar dos veces.
+- **19** — los siete informes, cada uno pedido con su rol (`200`) y con el rol
+  equivocado (`403`), más el sello del servidor con quién los generó.
+- **20** — el padrón: alta con documento único, el documento repetido
+  rechazado con `409`, la modificación que no toca la identidad, y la parte
+  clínica que el administrador no puede escribir y el médico sí. Termina
+  recetándole ibuprofeno al interno nuevo para comprobar que la **medicación
+  permanente** que se le acaba de anotar pesa en el dictamen.
+- **21** — la cuota del mes generada dos veces sin duplicar, contada en la base
+  y no solo en la respuesta, y los dos caminos por los que nace una cuota: sin
+  el mes se rechaza, con el mes se registra, y repetirla da `409`.
+- **22** — el egreso: sale del padrón activo, sigue en el de egresados,
+  conserva su historial clínico, avisa de la deuda, no se puede egresar dos
+  veces y ya no entra en las cuotas del mes siguiente.
 
 **Qué cubre `verificar.sh`** — lo que no se ve desde la interfaz: la matriz de
 acceso rol por rol y ruta por ruta; la defensa en profundidad, comprobando que
@@ -594,7 +665,12 @@ interna; que la bitácora se firme con el token y no con el cuerpo de la
 petición; **la matriz de los tres roles nuevos** —21 puertas probadas, entre
 ellas que ninguno de los tres alcance el padrón, la farmacovigilancia ni la
 caja, y que dentro de la cadena clínica el laboratorio no lea recetas ni la
-farmacia resultados—; **el aislamiento entre las bases**, verificando que
+farmacia resultados—; **la matriz completa del rol `ADMINISTRADOR`**, que es
+el bloque 20: lo que sí le toca —leer el padrón, dar de alta, modificar y
+egresar— y lo que no —la parte clínica, la jornada de enfermería, la
+farmacovigilancia, la caja y la cadena clínica—, más la simétrica, que es la
+que suele quedar abierta: que `ADMINISTRACION` lea el padrón pero no lo
+gestione; **el aislamiento entre las bases**, verificando que
 `usr_caja` no pueda leer `asilo_vigia` y que `usr_consultas` no alcance
 ninguna de las otras tres ni pueda alterar su propio esquema; que los nombres
 con tilde sobrevivan el viaje a MySQL
@@ -675,8 +751,12 @@ devuelve `404`.
 | Método | Ruta | Para qué |
 |---|---|---|
 | GET | `/salud` · `/api/v1/turnos` | Estado y turno de enfermería vigente |
-| GET | `/api/v1/internos` | **Padrón de internos del asilo** con su ficha |
+| GET | `/api/v1/internos?estado=ACTIVO\|EGRESADO\|TODOS` | **Padrón de internos del asilo** con su ficha. Sin el parámetro, solo los activos |
 | GET | `/api/v1/internos/{id}` | Ficha de un interno: edad, cama, ingreso, psicopatologías, alergias, familiar responsable y medicación activa |
+| POST | `/api/v1/internos` | **Alta de un interno.** Exige documento de identificación único (rol `ADMINISTRADOR`) |
+| PUT | `/api/v1/internos/{id}` | Datos administrativos: nombre, ubicación, responsable. No toca documento, nacimiento ni sexo, que son la identidad (rol `ADMINISTRADOR`) |
+| PUT | `/api/v1/internos/{id}/clinica` | Psicopatologías, alergias y medicación permanente (rol `MEDICO` y solo él) |
+| PUT | `/api/v1/internos/{id}/egreso` | **Egresa al interno**: sale del padrón activo, sus planes quedan `FINALIZADO` y sus tomas futuras `OMITIDA`, en una sola transacción (rol `ADMINISTRADOR`) |
 | GET | `/api/v1/pacientes` | Internos con tratamiento activo |
 | GET | `/api/v1/pacientes/{id}/medicacion-activa` | Lo que ya recibe el interno |
 | POST | `/api/v1/planes` | **Programa un tratamiento** y genera las tomas (rol `MEDICO`/`ENFERMERIA`) |
@@ -693,14 +773,18 @@ devuelve `404`.
 |---|---|---|
 | GET | `/salud` | Sonda de vida |
 | GET | `/api/v1/tarifas` | Tarifario de la fundación (consulta, laboratorio, farmacia, cuota) |
-| POST | `/api/v1/cargos` | Carga un cobro a la cuenta del interno, ya con el descuento (rol `ADMINISTRACION`) |
-| GET | `/api/v1/cargos?pacienteId=&desde=&hasta=&estado=` | Reporte de cobros por paciente y rango de fecha |
+| POST | `/api/v1/cargos` | Carga un cobro a la cuenta del interno, ya con el descuento. Si la categoría es `CUOTA` exige además el mes que cubre (rol `ADMINISTRACION`) |
+| GET | `/api/v1/cargos?pacienteId=&desde=&hasta=&estado=` | **Informe 3**: cobros por paciente y rango de fecha |
 | GET | `/api/v1/pacientes/{id}/cuenta` | Estado de cuenta: cargos, pagos y saldo pendiente |
 | POST | `/api/v1/cargos/{id}/pagar` | Registra un pago o abono sobre un cargo (rol `ADMINISTRACION`) |
-| GET / POST | `/api/v1/donaciones` | Lista o registra una donación (empresa, gobierno, particular) |
+| POST | `/api/v1/cuotas/generar` | **Genera la cuota del mes** para todo el padrón activo. Idempotente: repetirlo no cobra dos veces (rol `ADMINISTRACION`) |
+| GET / POST | `/api/v1/donaciones` | Lista o registra una donación (empresa internacional, empresa nacional, gobierno, particular) |
 | GET / POST | `/api/v1/gastos` | Lista o registra un gasto operativo del asilo |
 | GET | `/api/v1/fundacion/resumen` | Adeudo con la fundación por consultas, laboratorio y farmacia |
 | POST | `/api/v1/fundacion/pagos` | Registra un pago del asilo a la fundación |
+| GET | `/api/v1/reportes/costo-por-visita?visitaId=` | **Informe 1**: costo de una cita, sumando consulta, laboratorio y farmacia |
+| GET | `/api/v1/reportes/pagos-fundacion?desde=&hasta=` | **Informe 4**: pagos realizados a la fundación |
+| GET | `/api/v1/reportes/entradas?desde=&hasta=` | **Informe 5**: entradas por donaciones y cobros |
 | GET | `/api/v1/resumen` | Panel general: entradas, salidas, saldo pendiente y balance |
 
 ---
@@ -792,6 +876,15 @@ el comportamiento correcto, y ahora el código y el README dicen lo mismo.
 | Rosalía Menchú (ASL-014) | Lorazepam 1 mg / 12 h | **ADVERTENCIA** — riesgo de caída; se puede programar |
 | Bernardo Puac (ASL-022) | Paracetamol 500 mg / 8 h | **APROBADO** — se programa sin observaciones |
 
+El primer caso vale la pena mirarlo de cerca: la warfarina de Bernardo **no
+viene de un plan de tomas**, sino de su medicación permanente —las "medicinas
+de cajón" que el enunciado pide registrar—. `ms-pastillero` la suma a la
+medicación actual antes de que `ms-vigia` dictamine, sin duplicar lo que ya
+viene de un plan activo. Un campo que se muestra en la ficha pero que el motor
+no mira sería peor que no tenerlo: aprobaría el ibuprofeno con toda
+naturalidad. `pruebas.sh` cubre el caso a propósito, con un interno cuyo único
+anticoagulante está en ese campo.
+
 ### Casos listos para demostrar el control de acceso
 
 | Con la sesión de… | Al intentar… | Resultado esperado |
@@ -812,7 +905,14 @@ el comportamiento correcto, y ahora el código y el README dicen lo mismo.
 | `administracion` | leer `/pastillero/api/v1/internos` | `200` — **excepción documentada 2**, pero la ficha llega sin alergias ni psicopatologías |
 | `administracion` | leer las tomas de un interno | `403` — eso sí es clínico |
 | `administracion` | registrar una donación o un gasto | `201` — se crea sin problema |
+| `administracion` | dar de alta o egresar a un interno | `403` — lee el padrón porque cobra, pero no lo gestiona |
+| `admin` (`ADMINISTRADOR`) | dar de alta, corregir o egresar a un interno | `201`/`200` — es exactamente su trabajo |
+| `admin` | escribir alergias o medicación permanente | `403` — la parte clínica la firma el médico |
+| `admin` | leer la caja, la farmacovigilancia o la jornada de enfermería | `403` — gestiona el padrón y nada más |
+| `medico` | dar de alta o egresar a un interno | `403` — atiende internos, no los administra |
 | `medico` | mandar `"alergias": []` en el cuerpo de una validación | se ignora: `ms-vigia` usa la ficha real de `ms-pastillero` |
+| `medico` | agregar un examen o una receta a una consulta ya cerrada | `409` — una consulta firmada es un documento |
+| `administracion` | generar las cuotas del mes dos veces | la segunda no cobra nada: lo impide el índice único sobre (interno, mes) |
 
 Todos estos casos están automatizados en `pruebas.sh`.
 
@@ -881,23 +981,27 @@ Las vistas son **enlazables** y el botón de atrás del navegador funciona:
 | `#/jornada` · `#/jornada/ASL-014` | Jornada de medicación |
 | `#/caja` · `#/caja/ASL-014` | Caja y donaciones |
 | `#/interno/ASL-014` | La jornada de ese interno |
+| `#/reportes` | Los siete informes, filtrados por lo que el rol puede ver |
+| `#/padron` | Padrón de internos: alta, modificación y egreso |
 
 El acceso ocupa la pantalla completa, sin nada detrás. Al entrar, la aplicación
 arranca arriba y en la vista que le toca al rol: medicina y enfermería en la
 jornada, administración en la caja. Y solo se muestran las pestañas que el rol
 puede usar — **con el nombre de lo que ese rol de verdad puede hacer**:
 
-| Rol | Segunda pestaña | Qué ve dentro |
+| Rol | Pestañas | Qué ve dentro |
 |---|---|---|
-| `ADMINISTRACION` | «Caja y donaciones» | Módulo completo: balance de entradas y salidas, estado de cuenta y formularios de cargo, donación y gasto |
-| `MEDICO` | «Cuenta del interno» | Solo los cargos y el saldo del interno seleccionado, que es su excepción de lectura. Sin balance y sin formularios |
-| `ENFERMERIA` | no aparece | — |
+| `MEDICO` | Jornada · Consultas · «Cuenta del interno» · Reportes | De la caja, solo los cargos y el saldo del interno seleccionado, que es su excepción de lectura. Sin balance y sin formularios. En Reportes, los informes 2, 6 y 7 |
+| `ENFERMERIA` | Jornada · Consultas · Reportes | Sin pestaña de caja. En Reportes, **un solo informe**: el 7 |
+| `ADMINISTRACION` | «Caja y donaciones» · Reportes | Módulo de caja completo: balance de entradas y salidas, estado de cuenta, formularios de cargo, donación, gasto y la cuota mensual. En Reportes, los informes 1, 3, 4 y 5 |
+| `ADMINISTRADOR` | Padrón | Solo el padrón: alta, edición y egreso. Ni caja, ni farmacovigilancia, ni jornada |
 
 El médico veía antes una pestaña llamada «Caja y donaciones» que prometía más
 de lo que su rol puede leer. **La interfaz no pide lo que el rol no puede
 leer**: con sesión de médico no se llega a hacer ni una petición que el gateway
-vaya a responder con `403`. Si alguien pidió `#/caja` antes de iniciar sesión, se le guarda esa
-intención y se le lleva ahí después de entrar.
+vaya a responder con `403`, y la pantalla de reportes solo ofrece los informes
+que ese rol puede pedir. Si alguien pidió `#/caja` antes de iniciar sesión, se
+le guarda esa intención y se le lleva ahí después de entrar.
 
 **Al vencerse la sesión no se expulsa de golpe:** se avisa en la pantalla de
 acceso, se conserva el usuario escrito y se recuerda en qué vista estaba, para
@@ -1022,6 +1126,7 @@ primera vez que se levanta el volumen.
 | `02-esquema-vigia.sql` | Tabla de la bitácora de farmacovigilancia |
 | `03-esquema-pastillero.sql` | Padrón de internos, planes y tomas |
 | `04-esquema-caja.sql` | Cargos, pagos, donaciones, gastos y pagos a la fundación |
+| `05-esquema-consultas.sql` | Remisiones, citas, visitas, exámenes, indicaciones y avisos al familiar |
 
 **Estos archivos son la entrega del modelo de datos** que pide el enunciado:
 se leen de arriba abajo, con las claves, los tipos, las restricciones y los
@@ -1044,8 +1149,24 @@ condicionado a `SEMBRAR=1` y solo si la tabla está vacía.
 | Fechas y horas | `DATETIME` / `DATE` | Antes eran texto ISO. Ahora los filtros por rango usan `DATE(creado_en) BETWEEN …` y el motor entiende lo que ordena |
 | Identificadores y folios | `VARCHAR` con largo definido | Con su `PRIMARY KEY`; el folio de `ms-vigia` lleva además un `UNIQUE` explícito |
 | Estados y categorías | `VARCHAR` con `CHECK` | Se eligió `CHECK` sobre `ENUM` porque es portable a SQL Server y Oracle, que el enunciado también admite. La misma convención en los tres servicios |
-| Listas cortas | `JSON` | Psicopatologías y alergias del interno, y el dictamen completo de `ms-vigia` |
+| Listas cortas | `JSON` | Psicopatologías, alergias y medicación permanente del interno, y el dictamen completo de `ms-vigia` |
 | Motor | `InnoDB` | Con claves foráneas declaradas de verdad e índices sobre lo que de verdad se consulta |
+
+Dos restricciones que hacen trabajo de verdad y no de adorno:
+
+- **`UNIQUE (documento)` en `internos`.** Dos fichas para la misma persona son
+  dos historiales clínicos incompletos. La unicidad la impone el motor y no una
+  consulta previa, porque entre el `SELECT` y el `INSERT` cabe otra alta.
+- **`UNIQUE (paciente_id, periodo_cuota)` en `cargos`.** Es lo que impide
+  cobrarle dos veces la estadía del mismo mes a una familia, la haya registrado
+  alguien a mano o la generación mensual. Los cargos que no son cuota llevan ese
+  campo en `NULL`, y MySQL no hace chocar los `NULL` entre sí, así que el resto
+  de la caja queda igual.
+
+La edad del interno, en cambio, **no se guarda**: se calcula de la fecha de
+nacimiento cada vez que se pide. Un número guardado envejece mal —el día del
+cumpleaños empieza a mentir— y aquí la edad entra en los criterios geriátricos
+con los que `ms-vigia` decide.
 
 Y **transacciones**: crear un plan con sus tomas, o registrar un pago que
 además cambia el estado del cargo, van en una sola transacción con `rollback()`
@@ -1129,7 +1250,8 @@ asilo-microservicios/
 │   ├── .dockerignore           deja node_modules y .env fuera de la imagen
 │   └── Dockerfile
 └── estacion-web/
-    ├── index.html               acceso + jornada + consultas + caja + las tres bandejas de la fundación
+    ├── index.html               acceso + jornada + consultas + caja + reportes
+    │                            + padron + las tres bandejas de la fundación
     ├── estilos.css              paleta, estados por forma y diseño para pantalla angosta
     ├── app.js                   enrutado, estados de carga/vacío/error y consumo de la API
     ├── nginx.conf                sirve la interfaz y reenvia /api /vigia /pastillero /caja /consultas a ms-gateway
@@ -1147,7 +1269,7 @@ peligroso que uno que sí.
 
 ### Seguridad
 
-- **Los seis usuarios son de demostración.** Viven en
+- **Los siete usuarios son de demostración.** Viven en
   `ms-gateway/usuarios.json` con la clave en hash bcrypt (nunca en texto
   plano), pero las credenciales están publicadas en este mismo README. En un
   sistema real la lista vendría de la tabla de personal del módulo
@@ -1215,8 +1337,16 @@ peligroso que uno que sí.
   notas de evolución seriadas: cada visita es un episodio que se abre y se
   cierra, no un seguimiento longitudinal del interno. Tampoco hay codificación
   diagnóstica (CIE-10): el diagnóstico es texto libre.
-- **No hay alta, baja ni edición de internos desde la interfaz.** El padrón se
-  lee (`GET /api/v1/internos`); se siembra al arrancar y se modifica en la base.
+- **El padrón se gestiona desde la interfaz, pero un interno nunca se borra.**
+  El rol `ADMINISTRADOR` da de alta, corrige los datos administrativos y
+  egresa; lo que no existe es el borrado, y es deliberado: las tomas y los
+  planes que firmó enfermería son documentos, y no pueden desaparecer porque
+  la persona se haya ido. Tampoco existe el reingreso de un egresado, que en
+  el sistema actual se resuelve dándolo de alta otra vez con otro documento.
+- **La cuota mensual se genera, pero nadie la genera sola.** Hay que entrar y
+  pulsar el botón cada mes: no hay tarea programada. Un sistema real tendría
+  un proceso que la corre el día 1, y la idempotencia que ya está —el índice
+  único sobre (interno, mes)— es justamente lo que haría seguro reintentarlo.
 - **El vademécum y las reglas de farmacovigilancia son un recorte docente.** 28
   principios activos y cinco familias de reglas, suficientes para demostrar el
   mecanismo. Un vademécum real tiene miles de fármacos, y las reglas deberían

@@ -104,6 +104,12 @@ TARIFARIO = {
 
 CATEGORIAS_CARGO = {"CONSULTA", "LABORATORIO", "FARMACIA", "CUOTA", "OTRO"}
 
+# El mes de una cuota, AAAA-MM. Lo exigen los dos caminos por los que puede
+# nacer una cuota —el cargo a mano y la generacion del mes— porque es lo que
+# el indice unico necesita para saber que dos cuotas son la misma y no dejar
+# que una familia pague dos veces.
+MES_VALIDO = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
 # Solo lo que la fundacion presta. La CUOTA queda fuera porque es plata que el
 # familiar le paga al asilo: contarla como deuda inflaria las salidas con un
 # gasto que no existe. OTRO es un cargo interno.
@@ -313,6 +319,8 @@ def _cargo_json(fila):
         # de agrupar por visita sin leer la base de ms-consultas.
         "visitaId": fila["visita_id"],
         "referencia": fila["referencia"],
+        # El mes que cubre la cuota. Nulo en todo lo que no es cuota.
+        "periodoCuota": fila["periodo_cuota"],
         "montoBruto": float(fila["monto_bruto"]),
         "descuentoPct": float(fila["descuento_pct"]),
         "montoNeto": neto,
@@ -337,6 +345,17 @@ def crear_cargo():
         errores.append("categoria debe ser una de: %s." % ", ".join(sorted(CATEGORIAS_CARGO)))
     if not cuerpo.get("concepto"):
         errores.append("Falta concepto.")
+
+    # Una cuota tiene que decir que mes cubre. Sin el mes el cargo queda
+    # invisible para /cuotas/generar, y el indice unico no puede impedir lo
+    # que no distingue: la familia pagaria la misma estadia dos veces, una a
+    # mano y otra generada.
+    periodo = None
+    if categoria == "CUOTA":
+        periodo = (cuerpo.get("mes") or "").strip()
+        if not MES_VALIDO.match(periodo):
+            errores.append("La cuota necesita el mes que cubre, como AAAA-MM.")
+            periodo = None
 
     tarifa_clave = cuerpo.get("tarifa")
     tarifa = TARIFARIO.get(tarifa_clave)
@@ -367,13 +386,25 @@ def crear_cargo():
             """INSERT INTO cargos
                    (id, paciente_id, paciente_nombre, categoria, concepto, referencia,
                     monto_bruto, descuento_pct, monto_neto, monto_pagado, estado,
-                    registrado_por, creado_en, visita_id)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,0,'PENDIENTE',%s,%s,%s)""",
+                    registrado_por, creado_en, visita_id, periodo_cuota)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,0,'PENDIENTE',%s,%s,%s,%s)""",
             (cargo_id, cuerpo["pacienteId"], cuerpo.get("pacienteNombre"), categoria,
              cuerpo["concepto"], cuerpo.get("referencia"), monto_bruto, descuento_pct,
-             monto_neto, firmante(), ahora, cuerpo.get("visitaId")),
+             monto_neto, firmante(), ahora, cuerpo.get("visitaId"), periodo),
         )
         bd.commit()
+    except pymysql.err.IntegrityError:
+        # Quien lo impide es el indice unico, no esta funcion: la cuota pudo
+        # haberla creado /cuotas/generar un segundo antes. Se avisa en vez de
+        # cobrar de nuevo.
+        bd.rollback()
+        return jsonify({
+            "error": "Ese interno ya tiene la cuota de %s." % periodo,
+            "detalle": ("La cuota de un mes se cobra una sola vez por interno, "
+                        "la haya registrado alguien a mano o la generacion "
+                        "mensual. Revise la cuenta del interno antes de "
+                        "volver a cobrarla."),
+        }), 409
     except Exception:
         bd.rollback()
         raise
@@ -983,8 +1014,6 @@ def reporte_entradas():
 #  la fundacion preste. Por eso su categoria queda fuera de
 #  CATEGORIAS_QUE_COBRA_LA_FUNDACION y por eso no lleva descuento.
 # ===========================================================================
-
-MES_VALIDO = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 def internos_activos(token):

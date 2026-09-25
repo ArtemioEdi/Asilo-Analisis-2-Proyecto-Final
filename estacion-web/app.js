@@ -1497,6 +1497,8 @@ async function cargarTarifasCaja() {
         (t.descuentoPct ? " (" + t.descuentoPct + "% de descuento)" : " (sin descuento)");
       select.appendChild(opcion);
     }
+    ajustarCampoMes();
+    select.addEventListener("change", ajustarCampoMes);
     // Ya hay tarifario: la nota del formulario de cuotas puede decir cuanto.
     prepararCuotas();
   } catch (_) {
@@ -1522,6 +1524,7 @@ async function enviarFormulario(formulario, construir, url, exito, accion) {
       body: JSON.stringify(cuerpo)
     });
     formulario.reset();
+    if (formulario.id === "formulario-cargo") ajustarCampoMes();
     exito(respuesta, cuerpo);
     await pintarCaja();
   } catch (error) {
@@ -1532,6 +1535,23 @@ async function enviarFormulario(formulario, construir, url, exito, accion) {
   }
 }
 
+// El mes solo tiene sentido en la cuota, asi que el campo aparece cuando la
+// tarifa elegida es de esa categoria y desaparece con las demas. Se le pone y
+// se le quita required a la vez que se muestra: un campo obligatorio y oculto
+// bloquea el envio sin decir por que.
+function ajustarCampoMes() {
+  const clave = $("cargo-tarifa").value;
+  const tarifa = TARIFAS_CAJA.find((t) => t.clave === clave);
+  const esCuota = !!tarifa && tarifa.categoria === "CUOTA";
+  $("campo-cargo-mes").hidden = !esCuota;
+  $("cargo-mes").required = esCuota;
+  if (esCuota) {
+    if (!$("cargo-mes").value) $("cargo-mes").value = mesActualISO();
+  } else {
+    $("cargo-mes").value = "";
+  }
+}
+
 $("formulario-cargo").addEventListener("submit", (evento) => {
   evento.preventDefault();
   const interno = INTERNOS[estado.interno];
@@ -1539,13 +1559,25 @@ $("formulario-cargo").addEventListener("submit", (evento) => {
     const clave = $("cargo-tarifa").value;
     const tarifa = TARIFAS_CAJA.find((t) => t.clave === clave);
     if (!tarifa) { aviso("Elija una tarifa", "Seleccione una tarifa del catálogo.", "aviso"); return null; }
-    return {
+    const cuerpo = {
       pacienteId: estado.interno,
       pacienteNombre: interno.nombre,
       categoria: tarifa.categoria,
       concepto: $("cargo-concepto").value.trim(),
       tarifa: clave
     };
+    if (tarifa.categoria === "CUOTA") {
+      // Sin el mes, ms-caja no puede distinguir esta cuota de la que genera la
+      // pantalla de cuotas, y la familia terminaria pagando la estadia dos
+      // veces. Por eso se pide aqui y el servidor tambien lo exige.
+      const mes = $("cargo-mes").value;
+      if (!mes) {
+        aviso("Falta el mes", "Indique el mes de estadía que cubre la cuota.", "aviso");
+        return null;
+      }
+      cuerpo.mes = mes;
+    }
+    return cuerpo;
   }, CAJA + "/api/v1/cargos",
     (r) => aviso("Cargo registrado",
       r.concepto + " · Q " + r.montoNeto.toFixed(2) + " a la cuenta de " + interno.nombre +

@@ -3,7 +3,7 @@
 #  Asilo de Ancianos "Cabeza de Algodon"
 #  verificar.sh · Revision de seguridad, base de datos y estado del repositorio
 # ---------------------------------------------------------------------------
-#  QUE VERIFICA (81 comprobaciones, 19 bloques)
+#  QUE VERIFICA (101 comprobaciones, 20 bloques)
 #
 #    0-1  Que el stack este arriba y que ms-vigia, ms-pastillero y ms-caja NO
 #         publiquen puerto al equipo anfitrion: solo el 8080 y el 8090.
@@ -15,9 +15,10 @@
 #         quien se salte el gateway desde la red interna.
 #    6    Que la bitacora se firme con el nombre del token y no con lo que
 #         mande el cliente en el cuerpo.
-#    7-9  Los arreglos funcionales: la cuota mensual en Q450.00 y no en cero,
-#         que el cliente no pueda mentir sobre las alergias de un interno, y
-#         que seis validaciones simultaneas den seis folios distintos.
+#    7-9  Los arreglos funcionales: la cuota mensual en Q450.00 y no en cero
+#         —y que no se acepte sin decir que mes cubre—, que el cliente no pueda
+#         mentir sobre las alergias de un interno, y que seis validaciones
+#         simultaneas den seis folios distintos.
 #    11   Que la raiz del gateway no sea un 404 y que el 404 diga que ruta se
 #         pidio.
 #    12   Que las fichas de los internos las sirva el backend y no el
@@ -34,6 +35,11 @@
 #         clinica el laboratorio no lea recetas ni la farmacia resultados.
 #    19   Que usr_consultas no pueda leer asilo_vigia, asilo_pastillero ni
 #         asilo_caja, ni alterar su propio esquema.
+#    20   La matriz del rol ADMINISTRADOR, que gestiona el padron: lo que si
+#         le toca —leer el padron sin la parte clinica, dar de alta, modificar
+#         y egresar— y lo que no —la parte clinica, la jornada de enfermeria,
+#         la farmacovigilancia, la caja y la cadena clinica—, mas la simetrica:
+#         que ADMINISTRACION lea el padron pero no lo gestione.
 #    15   El limite de intentos de login. Va al final a proposito: deja al
 #         usuario 'medico' bloqueado unos minutos.
 #
@@ -189,8 +195,13 @@ else
 fi
 
 titulo "7. Cuota mensual ya no sale en Q0.00"
+# La cuota se le carga a un interno inventado, distinto en cada corrida: una
+# cuota se cobra una sola vez por interno y mes, y ahora el indice unico lo
+# impide de verdad, asi que repetirsela a ASL-014 daria 409 la segunda vez que
+# se corra este guion.
+PACIENTE_CUOTA="ASL-V$(date +%s)"
 C=$(codigo POST "$GW/caja/api/v1/cargos" "$TOK_ADM" \
-  '{"pacienteId":"ASL-014","categoria":"CUOTA","concepto":"prueba cuota","tarifa":"cuota-mensual"}')
+  "{\"pacienteId\":\"$PACIENTE_CUOTA\",\"categoria\":\"CUOTA\",\"mes\":\"$(date +%Y-%m)\",\"concepto\":\"prueba cuota\",\"tarifa\":\"cuota-mensual\"}")
 NETO=$(numero montoNeto)
 if [ "$C" != "201" ]; then
   rojo "no se pudo crear el cargo de cuota (HTTP $C)"
@@ -199,6 +210,12 @@ elif [ -z "$NETO" ] || [ "$NETO" = "0" ] || [ "$NETO" = "0.0" ]; then
 else
   verde "la cuota mensual se cobra en Q $NETO"
 fi
+
+# El mes no es un adorno: sin el, la cuota a mano queda invisible para la
+# generacion mensual y la familia termina pagando la misma estadia dos veces.
+espera "una cuota a mano sin el mes se rechaza" 400 \
+  "$(codigo POST "$GW/caja/api/v1/cargos" "$TOK_ADM" \
+     '{"pacienteId":"ASL-014","categoria":"CUOTA","concepto":"sin mes","tarifa":"cuota-mensual"}')"
 
 titulo "8. El cliente ya no puede mentir sobre las alergias"
 # ASL-007 es alergica a sulfas y la furosemida es una sulfa.
@@ -452,6 +469,82 @@ else
       -p"${BD_CLAVE_ROOT:-$(grep -E '^BD_CLAVE_ROOT=' .env | cut -d= -f2-)}" \
       -e "ALTER TABLE asilo_consultas.solicitudes DROP COLUMN colada_por_la_prueba;" 2>/dev/null
   fi
+fi
+
+titulo "20. Matriz de acceso del rol ADMINISTRADOR (gestion del padron)"
+# El administrador del padron existe para dar de alta, corregir y egresar
+# internos. No es personal clinico ni lleva la caja, y esta seccion comprueba
+# las dos mitades: lo que si le toca y, sobre todo, lo que no.
+#
+# Sobre los 404 de mas abajo: para comprobar que TIENE permiso de escritura sin
+# modificar ningun interno real, se escribe sobre un id que no existe. El 404
+# lo responde ms-pastillero, o sea que la peticion paso el guardia; si no
+# tuviera permiso, el gateway habria cortado antes con 403. Es la unica forma
+# de verificar el permiso sin dejar rastro en el padron.
+TOK_ADMR=$(login admin admin2026x)
+if [ -z "$TOK_ADMR" ]; then
+  rojo "el usuario 'admin' (ADMINISTRADOR) no pudo iniciar sesion"
+else
+  verde "login admin (ADMINISTRADOR)"
+
+  # --- lo que si le toca ---
+  espera "administrador lee el padron" 200 \
+    "$(codigo GET "$GW/pastillero/api/v1/internos" "$TOK_ADMR")"
+  espera "administrador lee la ficha de un interno" 200 \
+    "$(codigo GET "$GW/pastillero/api/v1/internos/ASL-014" "$TOK_ADMR")"
+
+  # Lee el padron, pero ms-pastillero le sirve la ficha SIN la parte clinica:
+  # para cobrar y ubicar camas no hace falta saber las psicopatologias.
+  if grep -q '"alergias"' /tmp/v_cuerpo.json 2>/dev/null; then
+    rojo "la ficha que ve el administrador trae la parte clinica"
+  else
+    verde "y la ficha le llega SIN la parte clinica"
+  fi
+
+  espera "administrador puede dar de alta (400 por cuerpo vacio, no 403)" 400 \
+    "$(codigo POST "$GW/pastillero/api/v1/internos" "$TOK_ADMR" '{}')"
+  espera "administrador puede modificar (404 del servicio, no 403)" 404 \
+    "$(codigo PUT "$GW/pastillero/api/v1/internos/ASL-NO-EXISTE" "$TOK_ADMR" \
+       '{"nombre":"Prueba de permiso"}')"
+  espera "administrador puede egresar (404 del servicio, no 403)" 404 \
+    "$(codigo PUT "$GW/pastillero/api/v1/internos/ASL-NO-EXISTE/egreso" "$TOK_ADMR" \
+       '{"fecha":"2026-01-01","motivo":"Prueba de permiso"}')"
+
+  # --- lo que NO le toca ---
+  # La parte clinica es del medico: son los datos con los que ms-vigia decide
+  # si un medicamento es seguro, y quien los escribe responde por ellos.
+  espera "administrador NO escribe la parte clinica" 403 \
+    "$(codigo PUT "$GW/pastillero/api/v1/internos/ASL-014/clinica" "$TOK_ADMR" \
+       '{"alergias":[]}')"
+  espera "administrador NO lee la jornada de enfermeria" 403 \
+    "$(codigo GET "$GW/pastillero/api/v1/turnos" "$TOK_ADMR")"
+  espera "administrador NO lee las tomas de un interno" 403 \
+    "$(codigo GET "$GW/pastillero/api/v1/pacientes/ASL-014/tomas" "$TOK_ADMR")"
+  espera "administrador NO alcanza la farmacovigilancia" 403 \
+    "$(codigo GET "$GW/vigia/api/v1/vademecum" "$TOK_ADMR")"
+  espera "administrador NO valida recetas" 403 \
+    "$(codigo POST "$GW/vigia/api/v1/validaciones" "$TOK_ADMR" '{}')"
+  espera "administrador NO alcanza la caja" 403 \
+    "$(codigo GET "$GW/caja/api/v1/resumen" "$TOK_ADMR")"
+  espera "administrador NO genera las cuotas del mes" 403 \
+    "$(codigo POST "$GW/caja/api/v1/cuotas/generar" "$TOK_ADMR" '{"mes":"2030-01"}')"
+  espera "administrador NO registra cargos" 403 \
+    "$(codigo POST "$GW/caja/api/v1/cargos" "$TOK_ADMR" \
+       '{"pacienteId":"ASL-014","categoria":"OTRO","concepto":"x","montoBruto":1}')"
+  espera "administrador NO lee la cadena clinica" 403 \
+    "$(codigo GET "$GW/consultas/api/v1/reportes/ficha?pacienteId=ASL-014" "$TOK_ADMR")"
+
+  # La simetrica, que es la que suele quedar abierta: administracion cobra, y
+  # por eso lee el padron, pero no lo gestiona.
+  espera "administracion lee el padron pero NO da de alta" 403 \
+    "$(codigo POST "$GW/pastillero/api/v1/internos" "$TOK_ADM" \
+       '{"nombre":"Quien sea","documento":"X","fechaNacimiento":"1950-01-01","sexo":"OTRO"}')"
+  espera "y tampoco egresa" 403 \
+    "$(codigo PUT "$GW/pastillero/api/v1/internos/ASL-014/egreso" "$TOK_ADM" \
+       '{"fecha":"2026-01-01","motivo":"No deberia poder"}')"
+  espera "el medico tampoco gestiona el padron" 403 \
+    "$(codigo PUT "$GW/pastillero/api/v1/internos/ASL-014" "$TOK_MED" \
+       '{"nombre":"No deberia poder"}')"
 fi
 
 titulo "15. Limite de intentos de login (deja 'medico' bloqueado un rato)"
