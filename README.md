@@ -602,7 +602,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **155**, en 22 bloques | **101**, en 20 bloques |
+| **Comprobaciones** | **156**, en 22 bloques | **101**, en 20 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre) | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 

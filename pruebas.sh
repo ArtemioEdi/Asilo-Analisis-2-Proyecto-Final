@@ -866,11 +866,19 @@ SEGUNDA=$(cuerpo POST "$GATEWAY/caja/api/v1/cuotas/generar" "$TOKEN_ADMINISTRACI
 comprobar "la segunda vez no crea ninguna" "0" "$(printf '%s' "$SEGUNDA" | campo creadas)"
 comprobar "y reconoce las que ya estaban" "$ACTIVOS" "$(printf '%s' "$SEGUNDA" | campo yaExistian)"
 
-# La prueba de fondo: en la base hay una cuota por interno y no dos. Quien lo
-# impide es el indice unico sobre (paciente_id, periodo_cuota).
-comprobar "en la base hay una cuota del mes por interno, no dos" "$ACTIVOS" \
-  "$(cuerpo GET "$GATEWAY/caja/api/v1/cargos?desde=$DESDE&hasta=2099-12-31" "$TOKEN_ADMINISTRACION" \
-     | grep -o "\"periodoCuota\":\"$MES_CUOTA\"" | wc -l | tr -d ' ')"
+# La prueba de fondo: en la cuenta de un interno hay UNA cuota de ese mes y no
+# dos. Quien lo impide es el indice unico sobre (paciente_id, periodo_cuota).
+#
+# Se cuenta interno por interno y no en el total del mes a proposito: si una
+# corrida anterior dejo internos egresados con su cuota, el total del mes es
+# mayor que el numero de activos sin que nada este duplicado. Lo que importa no
+# es cuantas cuotas hay, sino que ninguna familia tenga dos.
+cuotas_de() {
+  cuerpo GET "$GATEWAY/caja/api/v1/cargos?pacienteId=$1&desde=$DESDE&hasta=2099-12-31" \
+    "$TOKEN_ADMINISTRACION" | grep -o "\"periodoCuota\":\"$MES_CUOTA\"" | wc -l | tr -d ' '
+}
+comprobar "el interno nuevo tiene una sola cuota del mes, no dos" "1" "$(cuotas_de "$NUEVO")"
+comprobar "y un interno del sembrado, tambien una sola" "1" "$(cuotas_de ASL-014)"
 
 comprobar "el mes mal escrito se rechaza (400)" "400" \
   "$(codigo POST "$GATEWAY/caja/api/v1/cuotas/generar" "$TOKEN_ADMINISTRACION" '{"mes":"junio"}')"
