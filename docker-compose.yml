@@ -24,6 +24,7 @@ services:
       BD_CLAVE_PASTILLERO: ${BD_CLAVE_PASTILLERO:?falta BD_CLAVE_PASTILLERO. Copie .env.ejemplo a .env}
       BD_CLAVE_CAJA: ${BD_CLAVE_CAJA:?falta BD_CLAVE_CAJA. Copie .env.ejemplo a .env}
       BD_CLAVE_CONSULTAS: ${BD_CLAVE_CONSULTAS:?falta BD_CLAVE_CONSULTAS. Copie .env.ejemplo a .env}
+      BD_CLAVE_ACCESO: ${BD_CLAVE_ACCESO:?falta BD_CLAVE_ACCESO. Copie .env.ejemplo a .env}
     volumes:
       - bd-datos:/var/lib/mysql
       # Los archivos de inicializacion se montan UNO POR UNO y no el directorio
@@ -36,6 +37,7 @@ services:
       - ./sql/03-esquema-pastillero.sql:/docker-entrypoint-initdb.d/03-esquema-pastillero.sql:ro
       - ./sql/04-esquema-caja.sql:/docker-entrypoint-initdb.d/04-esquema-caja.sql:ro
       - ./sql/05-esquema-consultas.sql:/docker-entrypoint-initdb.d/05-esquema-consultas.sql:ro
+      - ./sql/06-esquema-acceso.sql:/docker-entrypoint-initdb.d/06-esquema-acceso.sql:ro
     # Descomente para inspeccionar la base con MySQL Workbench. En la entrega
     # la base no se expone al equipo anfitrion.
     # ports:
@@ -157,6 +159,13 @@ services:
       # Apagada por defecto: las credenciales de demostracion no se imprimen en
       # la pantalla de acceso salvo que se pida expresamente en el .env.
       MOSTRAR_USUARIOS_DEMO: ${MOSTRAR_USUARIOS_DEMO:-0}
+      # Las cuentas del personal viven en su propia base. usr_acceso no tiene
+      # DELETE: las cuentas se desactivan, no se borran.
+      BD_HOST: bd-asilo
+      BD_PUERTO: "3306"
+      BD_NOMBRE: asilo_acceso
+      BD_USUARIO: usr_acceso
+      BD_CLAVE: ${BD_CLAVE_ACCESO:?falta BD_CLAVE_ACCESO. Copie .env.ejemplo a .env}
       VIGIA_URL: http://ms-vigia:8081
       PASTILLERO_URL: http://ms-pastillero:8082
       CAJA_URL: http://ms-caja:8083

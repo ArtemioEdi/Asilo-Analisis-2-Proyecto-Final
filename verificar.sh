@@ -3,7 +3,7 @@
 #  Asilo de Ancianos "Cabeza de Algodon"
 #  verificar.sh · Revision de seguridad, base de datos y estado del repositorio
 # ---------------------------------------------------------------------------
-#  QUE VERIFICA (101 comprobaciones, 20 bloques)
+#  QUE VERIFICA (112 comprobaciones, 21 bloques)
 #
 #    0-1  Que el stack este arriba y que ms-vigia, ms-pastillero y ms-caja NO
 #         publiquen puerto al equipo anfitrion: solo el 8080 y el 8090.
@@ -23,9 +23,10 @@
 #         pidio.
 #    12   Que las fichas de los internos las sirva el backend y no el
 #         navegador.
-#    13   Auditoria estatica del repositorio: sin claves en texto plano, sin
-#         rastros de SQLite, con .env ignorado, con el dinero en DECIMAL y sin
-#         el puerto de MySQL publicado.
+#    13   Auditoria estatica del repositorio: sin claves de demostracion en
+#         texto plano en el codigo, sin usuarios.json, sin rastros de SQLite,
+#         con .env ignorado, con el dinero en DECIMAL y sin el puerto de MySQL
+#         publicado.
 #    14   Corre pruebas.sh entera y exige que pase.
 #    16   Aislamiento entre bases: que usr_caja NO pueda leer asilo_vigia.
 #    17   Que los nombres con tildes sobrevivan el viaje a MySQL y de vuelta.
@@ -40,7 +41,10 @@
 #         y egresar— y lo que no —la parte clinica, la jornada de enfermeria,
 #         la farmacovigilancia, la caja y la cadena clinica—, mas la simetrica:
 #         que ADMINISTRACION lea el padron pero no lo gestione.
-#    15   El limite de intentos de login. Va al final a proposito: deja al
+#    21   La base de cuentas: que usr_acceso lea asilo_acceso pero NO pueda
+#         hacer DELETE —las cuentas se desactivan, no se borran—, que no lea
+#         las bases de los otros servicios, y que ninguno de ellos lea la suya.
+#    15   El limite de intentos de login, ahora contra las cuentas en la base. Va al final a proposito: deja al
 #         usuario 'medico' bloqueado unos minutos.
 #
 #  EN QUE SE DIFERENCIA DE pruebas.sh
@@ -261,9 +265,25 @@ elif [ "$C" = "200" ]; then
 fi
 
 titulo "13. Auditoria estatica del repositorio"
-grep -rqi "medico2026\|admin2026\|enfermeria2026" --include="*.js" --include="*.py" --include="*.yml" . 2>/dev/null \
-  && rojo "hay claves en texto plano en el codigo" \
-  || verde "no hay claves en texto plano en el codigo"
+# Se revisa el codigo del sistema: los servicios, la estacion, el esquema y el
+# compose. Los guiones de prueba (pruebas.sh, este, pruebas-interfaz/) quedan
+# fuera a proposito: entran con las claves de demostracion del README, igual
+# que lo haria una persona. Tampoco se mira index.html: su recuadro de ayuda
+# las imprime solo con MOSTRAR_USUARIOS_DEMO=1, que esta apagado por defecto.
+CLAVES_DEMO="medico2026\|enfermeria2026\|admin2026\|fundacion2026\|laboratorio2026\|farmacia2026"
+grep -rqi "$CLAVES_DEMO" --exclude-dir=node_modules \
+     --include="*.js" --include="*.py" --include="*.json" --include="*.sql" --include="*.sh" \
+     ms-gateway ms-vigia ms-pastillero ms-caja ms-consultas estacion-web sql docker-compose.yml 2>/dev/null \
+  && rojo "hay claves de demostracion en texto plano en el codigo" \
+  || verde "no hay claves de demostracion en texto plano en el codigo"
+# Las cuentas viven en asilo_acceso. Un usuarios.json que reapareciera seria
+# una segunda lista de personal, horneada en la imagen y sin bitacora.
+[ -e ms-gateway/usuarios.json ] \
+  && rojo "ms-gateway/usuarios.json sigue existiendo" \
+  || verde "ms-gateway/usuarios.json ya no existe: las cuentas viven en la base"
+grep -q "usuarios.json" ms-gateway/Dockerfile ms-gateway/server.js 2>/dev/null \
+  && rojo "ms-gateway todavia hace referencia a usuarios.json" \
+  || verde "ni el Dockerfile ni el gateway mencionan usuarios.json"
 grep -q 'GATEWAY_SECRETO: *"' docker-compose.yml 2>/dev/null \
   && rojo "el secreto sigue escrito en docker-compose.yml" \
   || verde "el secreto no esta en docker-compose.yml"
@@ -546,6 +566,63 @@ else
     "$(codigo PUT "$GW/pastillero/api/v1/internos/ASL-014" "$TOK_MED" \
        '{"nombre":"No deberia poder"}')"
 fi
+
+titulo "21. La base de cuentas"
+# Las cuentas del personal viven en asilo_acceso, con su propio usuario de
+# MySQL. Ese usuario no tiene DELETE: que una cuenta nunca se borre no depende
+# del codigo del gateway, lo impone el motor.
+CLAVE_ACCESO=${BD_CLAVE_ACCESO:-$(grep -E '^BD_CLAVE_ACCESO=' .env 2>/dev/null | cut -d= -f2-)}
+if [ -z "$CLAVE_ACCESO" ]; then
+  rojo "no encontre BD_CLAVE_ACCESO en .env; no puedo revisar la base de cuentas"
+else
+  # Control positivo primero: sin el, todo lo de abajo pasaria tambien con una
+  # clave equivocada.
+  PROPIA=$(docker compose exec -T bd-asilo mysql -N -u usr_acceso -p"$CLAVE_ACCESO" \
+           -e "SELECT COUNT(*) FROM asilo_acceso.usuarios;" 2>/dev/null | tr -d '\r')
+  if printf "%s" "$PROPIA" | grep -qE '^[0-9]+$' && [ "$PROPIA" -ge 7 ]; then
+    verde "usr_acceso lee su base asilo_acceso ($PROPIA cuentas)"
+  else
+    rojo "usr_acceso no pudo leer asilo_acceso.usuarios — obtuvo '$PROPIA'"
+  fi
+
+  # El WHERE no coincide con nada a proposito: si el motor lo dejara pasar no
+  # se borraria ninguna fila. Lo que se prueba es el permiso, no el efecto.
+  for TABLA in usuarios bitacora_usuarios; do
+    BORRADO=$(docker compose exec -T bd-asilo mysql -u usr_acceso -p"$CLAVE_ACCESO" \
+              -e "DELETE FROM asilo_acceso.$TABLA WHERE usuario = 'no-existe-nunca';" 2>&1)
+    if printf "%s" "$BORRADO" | grep -qi "DELETE command denied"; then
+      verde "usr_acceso NO puede hacer DELETE en $TABLA (el motor se lo niega)"
+    else
+      rojo "usr_acceso pudo ejecutar DELETE en $TABLA — revisa los GRANT de sql/01"
+    fi
+  done
+
+  for par in asilo_caja:cargos asilo_pastillero:internos; do
+    BASE=${par%%:*}; TABLA=${par#*:}
+    FUGA=$(docker compose exec -T bd-asilo mysql -u usr_acceso -p"$CLAVE_ACCESO" \
+           -e "SELECT COUNT(*) FROM $BASE.$TABLA;" 2>&1)
+    if printf "%s" "$FUGA" | grep -qi "SELECT command denied"; then
+      verde "usr_acceso NO puede leer $BASE"
+    else
+      rojo "usr_acceso pudo leer $BASE — revisa los GRANT de sql/01"
+    fi
+  done
+fi
+
+# Y al reves: ningun microservicio alcanza las cuentas. Si ms-caja pudiera
+# leer asilo_acceso tendria a mano los hashes de todo el personal.
+for USR in vigia pastillero caja consultas; do
+  VAR=$(printf 'BD_CLAVE_%s' "$USR" | tr '[:lower:]' '[:upper:]')
+  CLAVE_USR=$(eval "printf '%s' \"\${$VAR:-}\"")
+  [ -z "$CLAVE_USR" ] && CLAVE_USR=$(grep -E "^$VAR=" .env 2>/dev/null | cut -d= -f2-)
+  FUGA=$(docker compose exec -T bd-asilo mysql -u "usr_$USR" -p"$CLAVE_USR" \
+         -e "SELECT COUNT(*) FROM asilo_acceso.usuarios;" 2>&1)
+  if printf "%s" "$FUGA" | grep -qi "SELECT command denied"; then
+    verde "usr_$USR NO puede leer asilo_acceso"
+  else
+    rojo "usr_$USR pudo leer asilo_acceso — revisa los GRANT de sql/01"
+  fi
+done
 
 titulo "15. Limite de intentos de login (deja 'medico' bloqueado un rato)"
 ULT=""

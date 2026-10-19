@@ -142,14 +142,15 @@ séptimo**, que es el único que le corresponde.
 
 ### Lo que el enunciado no pide y el sistema hace igual
 
-Estas tres no salen del enunciado; están porque sin ellas el prototipo no
+Estas cuatro no salen del enunciado; están porque sin ellas el prototipo no
 resistiría una pregunta incómoda en la defensa.
 
 | | Qué hace | Dónde se ve |
 |---|---|---|
 | **Farmacovigilancia** (`ms-vigia`) | Antes de guardar una receta comprueba alergias, interacciones, duplicidad terapéutica, criterios geriátricos y dosis máxima. Si el veredicto es `BLOQUEADO` la receta **no se guarda** y responde `409` con el motivo. | Recetario, y al recetar dentro de una consulta |
 | **Control de acceso** (`ms-gateway`) | Inicio de sesión, JWT firmado, revocación al cerrar sesión, límite de intentos y una matriz de acceso por rol y por ruta. | Pantalla de acceso, y los `403` de cada rol |
-| **Separación de datos** | Una base por microservicio, un usuario de MySQL por base, y ningún usuario con permiso sobre la base de otro. Lo comprueba `verificar.sh` en sus bloques 16 y 19. | `bash verificar.sh` |
+| **Separación de datos** | Una base por microservicio, un usuario de MySQL por base, y ningún usuario con permiso sobre la base de otro. Lo comprueba `verificar.sh` en sus bloques 16, 19 y 21. | `bash verificar.sh` |
+| **Administración de cuentas** (`ms-gateway`) | El `ADMINISTRADOR` da de alta al personal con una clave temporal que se muestra una sola vez y vence a las 72 horas; quien la recibe tiene que cambiarla en su primer ingreso. Restablecer, desactivar o cambiar el rol cierra al instante las sesiones abiertas de esa persona. Las cuentas **no se borran**: se desactivan, y el usuario de MySQL del gateway ni siquiera tiene permiso de `DELETE`. Cada acción queda en una bitácora firmada con el token. | `/api/usuarios`, y el bloque 24 de `pruebas.sh` |
 
 ---
 
@@ -505,11 +506,13 @@ Para borrar también los datos y volver a sembrar los internos de ejemplo:
 
 ### Usuarios de prueba
 
-`ms-gateway` trae siete usuarios para la demostración, definidos en
-`ms-gateway/usuarios.json` con la clave guardada como hash **bcrypt** (nunca en
-texto plano) y sesión de 8 horas. **Son credenciales de prueba de este
-prototipo académico**; en un sistema real esta lista vendría de la tabla de
-personal del módulo administrativo y no de un archivo del repositorio.
+Las cuentas del personal viven en la base `asilo_acceso`, que gestiona
+`ms-gateway`. La primera vez que MySQL arranca, `sql/06-esquema-acceso.sql`
+**siembra siete cuentas** para la demostración, con la clave guardada como hash
+**bcrypt** (nunca en texto plano), clave definitiva —no piden cambiarla— y
+sesión de 8 horas. **Son credenciales de prueba de este prototipo académico.**
+A partir de ahí, el `ADMINISTRADOR` da de alta, edita, restablece y desactiva
+cuentas desde `/api/usuarios`, sin tocar ningún archivo.
 
 Los cuatro primeros son **personal del asilo**. Los tres últimos son la
 **fundación que presta el servicio médico** y sus dos proveedores: no son
@@ -521,7 +524,7 @@ farmacovigilancia, ni la caja.
 | `medico` | `medico2026` | `MEDICO` | Dr. Angel Maltez. Receta, remite a especialidad y atiende consultas. |
 | `enfermeria` | `enfermeria2026` | `ENFERMERIA` | Administra las tomas del día y registra omisiones. |
 | `administracion` | `admin2026` | `ADMINISTRACION` | Marta Solís. Lleva la caja: cobros, pagos, donaciones y gastos. |
-| `admin` | `admin2026x` | `ADMINISTRADOR` | Ing. Dolores Ramírez. Gestiona el padrón: alta, datos administrativos y egreso de los internos. |
+| `admin` | `admin2026x` | `ADMINISTRADOR` | Ing. Dolores Ramírez. Gestiona el padrón —alta, datos administrativos y egreso de los internos— y las cuentas del personal. |
 | `fundacion` | `fundacion2026` | `FUNDACION` | Fundación Manos Unidas. Recibe las remisiones y les asigna médico, fecha y hora. |
 | `laboratorio` | `laboratorio2026` | `LABORATORIO` | Lab. Clínico Central. Carga el resultado de los exámenes indicados. |
 | `farmacia` | `farmacia2026` | `FARMACIA` | Farmacia de la Fundación. Entrega los medicamentos recetados. |
@@ -534,13 +537,25 @@ escribe la parte clínica de la ficha: las psicopatologías, las alergias y la
 medicación permanente las firma el médico, porque son los datos con los que
 `ms-vigia` decide si un medicamento es seguro.
 
-Para dar de alta a alguien o cambiarle la clave, se genera el hash y se edita
-`usuarios.json`:
+**El ciclo de una cuenta nueva.** El administrador la da de alta con usuario,
+nombre y rol, y el gateway responde con una **clave temporal** de 10
+caracteres —sin `0 O o 1 l I`, que se confunden al dictarla—, **esta única
+vez**: no se guarda en ningún lado salvo como hash. Vence a las 72 horas. Con
+ella la persona entra, pero solo a elegir su clave definitiva: el token que
+recibe tiene el rol `CAMBIO_DE_CLAVE`, que no existe en ninguna matriz, así que
+ni el gateway ni ningún microservicio lo dejan pasar a otra cosa. La clave
+nueva necesita al menos 8 caracteres, con una letra y un dígito, distinta de la
+actual y del nombre de usuario. Al guardarla recibe un token normal y sigue
+trabajando.
 
-```bash
-docker compose run --rm --entrypoint node ms-gateway \
-  -e "console.log(require('bcryptjs').hashSync('LA_CLAVE_NUEVA', 10))"
-```
+**Cuándo se cierra una sesión abierta.** Cada cuenta lleva un número de
+versión que viaja dentro del token, y el gateway lo compara en cada petición
+con el de la base. Restablecer la clave, desactivar, reactivar, cambiar el rol
+o cambiar la propia clave lo incrementan: todos los tokens anteriores de esa
+persona dejan de servir **al instante**, sin esperar a que venzan.
+
+Si la base de cuentas no responde, el login devuelve `503` y no deja entrar a
+nadie: nunca se da acceso porque no se pudo comprobar quién es.
 
 El acceso está endurecido: cinco intentos fallidos del mismo usuario en cinco
 minutos y el gateway responde `429` con `Retry-After`. Además, un login
@@ -611,7 +626,7 @@ aceptarlo.
 Si además quiere mostrar el aislamiento de datos, sin salir de la terminal:
 
 ```bash
-bash verificar.sh          # 101 comprobaciones, entre ellas las 21 puertas
+bash verificar.sh          # 112 comprobaciones, entre ellas las 21 puertas
                            # cerradas de los tres roles nuevos, la matriz
                            # completa del ADMINISTRADOR y el aislamiento de
                            # usr_consultas
@@ -627,7 +642,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **174**, en 23 bloques | **101**, en 20 bloques |
+| **Comprobaciones** | **205**, en 24 bloques | **112**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -663,8 +678,8 @@ hallazgo (`FV-GER-04`), su severidad (`CRITICA`) y la comprobación de que la
 receta **no quedó guardada**. El bloque 17 pide los tres reportes sobre esa
 consulta recién hecha.
 
-Los bloques 18 a 22 cubren lo que se agregó después, y todos parten de la
-consulta del bloque 16 o del interno que ellos mismos dan de alta, para que el
+Los bloques 18 a 22 y el 24 cubren lo que se agregó después, y todos parten de la
+consulta del bloque 16 o de lo que ellos mismos dan de alta, para que el
 guion se pueda correr dos veces seguidas sin limpiar la base:
 
 - **18** — una consulta cerrada rechaza con `409` que le agreguen un examen,
@@ -682,6 +697,16 @@ guion se pueda correr dos veces seguidas sin limpiar la base:
 - **22** — el egreso: sale del padrón activo, sigue en el de egresados,
   conserva su historial clínico, avisa de la deuda, no se puede egresar dos
   veces y ya no entra en las cuotas del mes siguiente.
+- **24** — la administración de cuentas, con una cuenta de nombre único en
+  cada corrida (las cuentas no se borran, así que se acumulan desactivadas).
+  Solo el `ADMINISTRADOR` las ve; el alta devuelve la clave temporal; con ella
+  se entra solo a cambiarla, y ese token no pasa ni por el gateway ni directo
+  a `ms-pastillero` desde la red interna; la clave débil y la repetida se
+  rechazan; restablecer y desactivar cierran la sesión viva al instante; la
+  desactivada no entra pero sigue en la lista; reactivar emite otra clave
+  temporal; el administrador no puede desactivarse a sí mismo; `DELETE` da
+  `405`; el usuario repetido, `409`; cada acción queda en la bitácora firmada
+  con el token, y **ninguna respuesta lleva un hash bcrypt**.
 
 **Qué cubre `verificar.sh`** — lo que no se ve desde la interfaz: la matriz de
 acceso rol por rol y ruta por ruta; la defensa en profundidad, comprobando que
@@ -697,11 +722,14 @@ farmacovigilancia, la caja y la cadena clínica—, más la simétrica, que es l
 que suele quedar abierta: que `ADMINISTRACION` lea el padrón pero no lo
 gestione; **el aislamiento entre las bases**, verificando que
 `usr_caja` no pueda leer `asilo_vigia` y que `usr_consultas` no alcance
-ninguna de las otras tres ni pueda alterar su propio esquema; que los nombres
-con tilde sobrevivan el viaje a MySQL
-y de vuelta; y una **auditoría estática del repositorio**: sin claves en texto
-plano, sin rastros de SQLite, con `.env` ignorado, el dinero en `DECIMAL` y el
-puerto de MySQL sin publicar.
+ninguna de las otras tres ni pueda alterar su propio esquema; **la base de
+cuentas**, en el bloque 21: que `usr_acceso` lea la suya pero el motor le
+niegue el `DELETE`, que no lea las bases de los otros servicios y que ninguno
+de ellos lea la suya; que los nombres con tilde sobrevivan el viaje a MySQL y
+de vuelta; y una **auditoría estática del repositorio**: sin claves de
+demostración en texto plano en el código, sin `usuarios.json`, sin rastros de
+SQLite, con `.env` ignorado, el dinero en `DECIMAL` y el puerto de MySQL sin
+publicar.
 
 Para partir de datos limpios (los internos y cargos de ejemplo recién
 sembrados), borre los volúmenes antes. **La primera vez tarda entre 60 y 90
@@ -738,10 +766,23 @@ bash verificar.sh
 | Método | Ruta | Para qué |
 |---|---|---|
 | GET | `/salud` | Sonda de vida propia (no exige sesión) |
-| POST | `/api/auth/login` | `{ usuario, clave }` → `{ token, usuario, nombre, rol }` |
+| POST | `/api/auth/login` | `{ usuario, clave }` → `{ token, usuario, nombre, rol }`. Con clave temporal → `{ token, usuario, nombre, debeCambiarClave: true }`, un token de 15 minutos que solo sirve para las tres rutas siguientes. `403` si la cuenta está desactivada, `401` si la clave temporal venció, `503` si la base de cuentas no responde |
 | GET | `/api/auth/me` | Devuelve el usuario dueño del token vigente |
 | POST | `/api/auth/logout` | Revoca el token vigente: deja de servir aunque no haya vencido |
+| POST | `/api/auth/cambiar-clave` | `{ claveActual, claveNueva }`. Para el cambio obligatorio y el voluntario; exige la clave actual en los dos. Devuelve un token normal nuevo y el anterior deja de servir |
+| GET | `/api/usuarios` | **Solo `ADMINISTRADOR`.** Las cuentas, activas y desactivadas, sin el hash de la clave |
+| POST | `/api/usuarios` | `{ usuario, nombre, rol }` → `201` con la cuenta y la `claveTemporal`, esta única vez. `409` si el usuario ya existe, aunque esté desactivado |
+| PUT | `/api/usuarios/{usuario}` | `{ nombre, rol }`. Cambiar el rol cierra las sesiones abiertas de esa persona |
+| POST | `/api/usuarios/{usuario}/restablecer` | Clave temporal nueva, devuelta una sola vez; cierra sus sesiones abiertas |
+| POST | `/api/usuarios/{usuario}/desactivar` | `{ motivo }`, obligatorio. Cierra sus sesiones abiertas |
+| POST | `/api/usuarios/{usuario}/reactivar` | Activa la cuenta **con una clave temporal nueva**: la anterior ya no se da por segura |
+| GET | `/api/usuarios/{usuario}/bitacora` | Historial de la cuenta: qué se hizo, quién y cuándo |
+| DELETE | `/api/usuarios/{usuario}` | **No existe**: `405`, «Las cuentas no se borran: se desactivan.» |
 | * | `/vigia/*`, `/pastillero/*`, `/caja/*`, `/consultas/*` | Reenvía la petición al microservicio correspondiente, ya autenticada |
+
+El administrador no puede desactivarse ni cambiarse el rol a sí mismo, y nadie
+puede dejar al sistema sin un `ADMINISTRADOR` activo: las dos salvaguardas
+responden `409` con su motivo.
 
 ### ms-vigia — detrás del gateway en `/vigia` (no tiene puerto propio en el anfitrión)
 
@@ -1096,10 +1137,12 @@ con el eje girado 90°, que es lo que funciona en pantalla angosta.
 Motor: **MySQL 8.4**, en el contenedor `bd-asilo`. El enunciado exige MySQL,
 SQL Server u Oracle; el prototipo empezó con SQLite y se migró.
 
-### Una instancia, cuatro bases separadas
+### Una instancia, cinco bases separadas
 
 Se conserva el patrón **database per service**: cada microservicio tiene su
-propia base, su propio usuario y sus propios permisos.
+propia base, su propio usuario y sus propios permisos. La quinta es la del
+gateway, que guarda las cuentas del personal: autenticar ya era su trabajo, así
+que no hizo falta otro microservicio.
 
 | Base | Usuario | Servicio | Tablas |
 |---|---|---|---|
@@ -1107,6 +1150,7 @@ propia base, su propio usuario y sus propios permisos.
 | `asilo_pastillero` | `usr_pastillero` | ms-pastillero | `internos`, `planes`, `tomas` |
 | `asilo_caja` | `usr_caja` | ms-caja | `cargos`, `pagos`, `donaciones`, `gastos`, `pagos_fundacion` |
 | `asilo_consultas` | `usr_consultas` | ms-consultas | `solicitudes`, `visitas`, `examenes`, `indicaciones`, `correos_enviados` |
+| `asilo_acceso` | `usr_acceso` | ms-gateway | `usuarios`, `bitacora_usuarios` |
 
 Cada usuario recibe `SELECT, INSERT, UPDATE, DELETE` **solo sobre su propia
 base**, y nada más: ni `CREATE`, ni `DROP`, ni `ALTER`. Un servicio no puede
@@ -1116,6 +1160,21 @@ leer ni escribir la base de otro, y eso se comprueba en `verificar.sh`:
 docker compose exec bd-asilo mysql -u usr_caja -p"$BD_CLAVE_CAJA" \
   -e "SELECT COUNT(*) FROM asilo_vigia.validaciones;"
 # ERROR 1142 (42000): SELECT command denied to user 'usr_caja'@'...'
+```
+
+**`usr_acceso` tampoco tiene `DELETE`.** Solo `SELECT, INSERT, UPDATE` sobre
+`asilo_acceso`. Una cuenta del personal no se borra nunca, se desactiva:
+borrarla dejaría su bitácora sin dueño y permitiría volver a crear el mismo
+nombre de usuario para firmar como otra persona, en una base donde las tomas,
+los dictámenes y los cobros llevan ese nombre como firma. Que eso no pase no
+depende de la buena voluntad del código del gateway: lo prohíbe el motor. Por
+eso mismo la bitácora puede colgar de `usuarios` con una clave foránea sin
+miedo a quedar huérfana. `verificar.sh` lo comprueba en su bloque 21:
+
+```bash
+docker compose exec bd-asilo mysql -u usr_acceso -p"$BD_CLAVE_ACCESO" \
+  -e "DELETE FROM asilo_acceso.usuarios WHERE usuario = 'no-existe-nunca';"
+# ERROR 1142 (42000): DELETE command denied to user 'usr_acceso'@'...'
 ```
 
 ### Por qué una sola instancia, y qué se sacrificó
@@ -1155,18 +1214,19 @@ primera vez que se levanta el volumen.
 
 | Archivo | Qué hace |
 |---|---|
-| `01-bases-y-usuarios.sh` | Crea las cuatro bases, los cuatro usuarios y sus permisos. **Es un `.sh` y no un `.sql` a propósito:** MySQL ejecuta los `.sql` literalmente, sin expandir variables, así que un `.sql` obligaría a escribir las cuatro claves dentro y versionarlas. El script las toma del entorno del contenedor, que el compose llena desde el `.env` |
+| `01-bases-y-usuarios.sh` | Crea las cinco bases, los cinco usuarios y sus permisos. **Es un `.sh` y no un `.sql` a propósito:** MySQL ejecuta los `.sql` literalmente, sin expandir variables, así que un `.sql` obligaría a escribir las cinco claves dentro y versionarlas. El script las toma del entorno del contenedor, que el compose llena desde el `.env` |
 | `01-bases-y-usuarios.ejemplo.sql` | **No se ejecuta.** Las mismas sentencias `CREATE USER` y `GRANT`, con claves de marcador, para poder leer el modelo de permisos sin leer shell |
 | `02-esquema-vigia.sql` | Tabla de la bitácora de farmacovigilancia |
 | `03-esquema-pastillero.sql` | Padrón de internos, planes y tomas |
 | `04-esquema-caja.sql` | Cargos, pagos, donaciones, gastos y pagos a la fundación |
 | `05-esquema-consultas.sql` | Remisiones, citas, visitas, exámenes, indicaciones y avisos al familiar |
+| `06-esquema-acceso.sql` | Cuentas del personal y su bitácora, con la siembra de las siete cuentas de demostración. Es el único esquema que siembra desde SQL, y por eso abre con `SET NAMES utf8mb4`: sin él, el cliente del entrypoint lee el archivo como latin1 y «Fundación» se guarda con la codificación rota |
 
 **Estos archivos son la entrega del modelo de datos** que pide el enunciado:
 se leen de arriba abajo, con las claves, los tipos, las restricciones y los
 índices a la vista.
 
-Los cuatro que sí se ejecutan se montan **uno por uno** en el
+Los seis que sí se ejecutan se montan **uno por uno** en el
 `docker-compose.yml`, y no montando el directorio `sql/` completo. Si se
 montara entero, MySQL ejecutaría también `01-bases-y-usuarios.ejemplo.sql`
 —termina en `.sql`— y crearía los usuarios con las claves de marcador antes
@@ -1225,7 +1285,7 @@ y vuelva a levantar (`docker compose up -d`). Luego, en MySQL Workbench:
 | Username | `root` (o `usr_vigia` / `usr_pastillero` / `usr_caja`) |
 | Password | el valor de `BD_CLAVE_ROOT` en su archivo `.env` |
 
-Con `root` se ven las cuatro bases; con cada usuario de servicio se ve solo la
+Con `root` se ven las cinco bases; con cada usuario de servicio se ve solo la
 suya, que es justamente lo que conviene enseñar en la defensa. **Vuelva a
 comentar las dos líneas** cuando termine.
 
@@ -1244,15 +1304,17 @@ docker compose exec bd-asilo mysql -u root -p"$BD_CLAVE_ROOT" \
 asilo-microservicios/
 ├── docker-compose.yml          orquesta los siete contenedores
 ├── sql/                        el modelo de datos, como entrega legible
-│   ├── 01-bases-y-usuarios.sh    cuatro bases, cuatro usuarios y sus permisos
+│   ├── 01-bases-y-usuarios.sh    cinco bases, cinco usuarios y sus permisos
 │   │                             (toma las claves del entorno · SE VERSIONA)
 │   ├── 01-bases-y-usuarios.ejemplo.sql  el mismo modelo de permisos, legible,
 │   │                             con claves de marcador · NO se ejecuta
 │   ├── 02-esquema-vigia.sql      bitacora de farmacovigilancia
 │   ├── 03-esquema-pastillero.sql padron de internos, planes y tomas
 │   ├── 04-esquema-caja.sql       cargos, pagos, donaciones y gastos
-│   └── 05-esquema-consultas.sql  remisiones, consultas, examenes, recetas
-│                                 y la bitacora de avisos al familiar
+│   ├── 05-esquema-consultas.sql  remisiones, consultas, examenes, recetas
+│   │                             y la bitacora de avisos al familiar
+│   └── 06-esquema-acceso.sql     cuentas del personal y su bitacora, con la
+│                                 siembra de las siete de demostracion
 ├── .env.ejemplo                plantilla de configuración (se copia a .env)
 ├── .env                        secreto de esta instalación · NO se versiona
 ├── pruebas.sh                  prueba de humo funcional, toda vía el gateway
@@ -1279,8 +1341,8 @@ asilo-microservicios/
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── ms-gateway/
-│   ├── server.js               login, JWT, revocación y proxy autorizado por rol
-│   ├── usuarios.json           personal de demostración, con hash bcrypt
+│   ├── server.js               login, JWT, revocación, cuentas del personal
+│   │                           (en asilo_acceso) y proxy autorizado por rol
 │   ├── package.json
 │   ├── package-lock.json       versiones exactas · lo usa npm ci
 │   ├── .dockerignore           deja node_modules y .env fuera de la imagen
@@ -1305,12 +1367,22 @@ peligroso que uno que sí.
 
 ### Seguridad
 
-- **Los siete usuarios son de demostración.** Viven en
-  `ms-gateway/usuarios.json` con la clave en hash bcrypt (nunca en texto
-  plano), pero las credenciales están publicadas en este mismo README. En un
-  sistema real la lista vendría de la tabla de personal del módulo
-  administrativo, con altas, bajas y cambio de clave obligatorio al primer
-  ingreso. **No use estas credenciales fuera de la demostración.**
+- **Las siete cuentas sembradas son de demostración.** Viven en la base
+  `asilo_acceso` con la clave en hash bcrypt (nunca en texto plano), pero sus
+  credenciales están publicadas en este mismo README, y se siembran con clave
+  definitiva para que la demostración no tropiece con el cambio obligatorio.
+  Las cuentas que da de alta el administrador sí nacen con clave temporal y
+  cambio obligatorio al primer ingreso. En una instalación real, lo primero
+  sería restablecer o desactivar las siete. **No use estas credenciales fuera
+  de la demostración.**
+- **Una cuenta desactivada se corta en el gateway, no dentro de cada
+  microservicio.** El gateway consulta la cuenta en cada petición, y desactivar
+  a alguien o restablecerle la clave le cierra las sesiones al instante. Los
+  microservicios, en cambio, siguen validando solo la firma y el rol del token:
+  no tienen acceso a `asilo_acceso`, a propósito. Alcanza porque el gateway es
+  la única entrada publicada; pero alguien que ya estuviera dentro de la red de
+  Docker con un token vigente de una cuenta recién desactivada podría seguir
+  usándolo contra un microservicio hasta que venza, como mucho 8 horas.
 - **Las credenciales ya no se imprimen en la pantalla de acceso.** Tenerlas
   escritas en el login era cómodo para grabar el video y contradecía todo lo
   demás. Ahora dependen de la bandera `MOSTRAR_USUARIOS_DEMO`, **apagada por
@@ -1325,8 +1397,8 @@ peligroso que uno que sí.
   tránsito: haría falta TLS terminado en nginx (o un proxy inverso delante) con
   certificados, `Strict-Transport-Security` y las cookies/tokens marcados en
   consecuencia.
-- **El límite de intentos y la lista de revocación viven en la memoria del
-  proceso.** Con una sola instancia del gateway funcionan; con varias, cada una
+- **El límite de intentos y la lista de revocación del `logout` viven en la
+  memoria del proceso.** Con una sola instancia del gateway funcionan; con varias, cada una
   llevaría su propia cuenta y el límite se multiplicaría, y un token revocado en
   una seguiría sirviendo en las otras. En producción ambas cosas van en Redis.
   Está anotado en el código, donde toca.
@@ -1339,7 +1411,7 @@ peligroso que uno que sí.
 
 ### Datos y persistencia
 
-- **Una sola instancia de MySQL para las cuatro bases.** Se explica y se
+- **Una sola instancia de MySQL para las cinco bases.** Se explica y se
   cuantifica en la sección 9: se conserva el aislamiento lógico de los datos,
   pero se pierde el aislamiento de fallos y de recursos, y la posibilidad de
   escalar cada base por separado.
@@ -1351,8 +1423,8 @@ peligroso que uno que sí.
   `.env`, que no se versiona, y `sql/01-bases-y-usuarios.sh` las toma de las
   variables de entorno del contenedor al crear los usuarios. Ese script sí se
   versiona —es parte del despliegue— y no contiene ninguna clave: solo
-  referencias a `${BD_CLAVE_VIGIA}`, `${BD_CLAVE_PASTILLERO}` y
-  `${BD_CLAVE_CAJA}`. En producción vendrían de un gestor de secretos en vez
+  referencias a `${BD_CLAVE_VIGIA}`, `${BD_CLAVE_PASTILLERO}`,
+  `${BD_CLAVE_CAJA}`, `${BD_CLAVE_CONSULTAS}` y `${BD_CLAVE_ACCESO}`. En producción vendrían de un gestor de secretos en vez
   de un archivo en el disco.
 - **Los usuarios de MySQL se crean una sola vez**, cuando el volumen de datos
   está vacío. Cambiar una clave en el `.env` después no surte efecto: hay que

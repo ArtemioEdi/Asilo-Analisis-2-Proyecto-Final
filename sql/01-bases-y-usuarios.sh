@@ -16,6 +16,7 @@
 #     asilo_pastillero    usr_pastillero    ms-pastillero
 #     asilo_caja          usr_caja          ms-caja
 #     asilo_consultas     usr_consultas     ms-consultas
+#     asilo_acceso        usr_acceso        ms-gateway  (sin DELETE)
 #
 # Todo el trabajo va dentro de una funcion y sin "set -e" global: si el archivo
 # no tiene permiso de ejecucion, el entrypoint lo carga con "." dentro de su
@@ -24,7 +25,7 @@
 asilo_crear_bases_y_usuarios() {
     local faltantes=""
     local nombre
-    for nombre in MYSQL_ROOT_PASSWORD BD_CLAVE_VIGIA BD_CLAVE_PASTILLERO BD_CLAVE_CAJA BD_CLAVE_CONSULTAS; do
+    for nombre in MYSQL_ROOT_PASSWORD BD_CLAVE_VIGIA BD_CLAVE_PASTILLERO BD_CLAVE_CAJA BD_CLAVE_CONSULTAS BD_CLAVE_ACCESO; do
         if [ -z "$(eval "printf '%s' \"\${$nombre:-}\"")" ]; then
             faltantes="$faltantes $nombre"
         fi
@@ -35,7 +36,7 @@ asilo_crear_bases_y_usuarios() {
         return 1
     fi
 
-    echo "[01-bases-y-usuarios] creando las cuatro bases y sus usuarios..."
+    echo "[01-bases-y-usuarios] creando las cinco bases y sus usuarios..."
 
     # Durante la inicializacion el servidor todavia no escucha en la red: se
     # entra por el socket local. Las claves viajan por la entrada estandar,
@@ -54,6 +55,8 @@ CREATE DATABASE IF NOT EXISTS asilo_caja
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS asilo_consultas
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS asilo_acceso
+    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- --- Usuarios ----------------------------------------------------------
 -- '%' y no 'localhost': cada microservicio se conecta desde su propio
@@ -62,14 +65,22 @@ CREATE USER IF NOT EXISTS 'usr_vigia'@'%'      IDENTIFIED BY '${BD_CLAVE_VIGIA}'
 CREATE USER IF NOT EXISTS 'usr_pastillero'@'%' IDENTIFIED BY '${BD_CLAVE_PASTILLERO}';
 CREATE USER IF NOT EXISTS 'usr_caja'@'%'       IDENTIFIED BY '${BD_CLAVE_CAJA}';
 CREATE USER IF NOT EXISTS 'usr_consultas'@'%'  IDENTIFIED BY '${BD_CLAVE_CONSULTAS}';
+CREATE USER IF NOT EXISTS 'usr_acceso'@'%'     IDENTIFIED BY '${BD_CLAVE_ACCESO}';
 
 -- --- Permisos ----------------------------------------------------------
 -- Cada usuario, solo sobre su base. No se otorga CREATE, DROP ni ALTER: el
--- esquema lo definen los archivos 02, 03, 04 y 05, no la aplicacion.
+-- esquema lo definen los archivos 02 a 06, no la aplicacion.
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_vigia.*      TO 'usr_vigia'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_pastillero.* TO 'usr_pastillero'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_caja.*       TO 'usr_caja'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_consultas.*  TO 'usr_consultas'@'%';
+
+-- usr_acceso, el del gateway, tampoco tiene DELETE. Las cuentas del personal
+-- no se borran, se desactivan: borrar una dejaria su bitacora sin dueno y
+-- permitiria reusar el nombre de usuario para firmar como otra persona. Que
+-- eso no pase no depende de la buena voluntad del codigo: lo prohibe el
+-- motor, y un DELETE contra asilo_acceso falla aunque el gateway lo intente.
+GRANT SELECT, INSERT, UPDATE ON asilo_acceso.* TO 'usr_acceso'@'%';
 
 FLUSH PRIVILEGES;
 SQL
@@ -79,7 +90,7 @@ SQL
         echo "[01-bases-y-usuarios] ERROR: MySQL rechazo las sentencias." >&2
         return "$estado"
     fi
-    echo "[01-bases-y-usuarios] listo: asilo_vigia, asilo_pastillero, asilo_caja y asilo_consultas."
+    echo "[01-bases-y-usuarios] listo: asilo_vigia, asilo_pastillero, asilo_caja, asilo_consultas y asilo_acceso."
 }
 
 asilo_crear_bases_y_usuarios

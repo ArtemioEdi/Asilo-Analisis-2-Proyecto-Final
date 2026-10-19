@@ -7,7 +7,8 @@
 --
 --  El que MySQL ejecuta de verdad es 01-bases-y-usuarios.sh, que corre estas
 --  mismas sentencias pero tomando las claves del entorno del contenedor
---  (BD_CLAVE_VIGIA, BD_CLAVE_PASTILLERO y BD_CLAVE_CAJA), que el compose
+--  (BD_CLAVE_VIGIA, BD_CLAVE_PASTILLERO, BD_CLAVE_CAJA, BD_CLAVE_CONSULTAS y
+--  BD_CLAVE_ACCESO), que el compose
 --  llena desde el archivo .env, que no se versiona. Aqui aparecen como
 --  marcadores: CAMBIE_ESTA_CLAVE_*.
 --
@@ -26,6 +27,7 @@
 --      asilo_pastillero    usr_pastillero    ms-pastillero
 --      asilo_caja          usr_caja          ms-caja
 --      asilo_consultas     usr_consultas     ms-consultas
+--      asilo_acceso        usr_acceso        ms-gateway  (sin DELETE)
 --
 --  Para comprobar que el aislamiento es real:
 --      docker compose exec bd-asilo \
@@ -46,13 +48,16 @@ CREATE DATABASE IF NOT EXISTS asilo_caja
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS asilo_consultas
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS asilo_acceso
+    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- --- Usuarios --------------------------------------------------------------
 -- '%' y no 'localhost': cada microservicio se conecta desde su propio
 -- contenedor, o sea desde otra direccion dentro de la red de Docker.
 --
 -- Las claves reales NO estan aqui: el script .sh las toma de las variables
--- BD_CLAVE_VIGIA, BD_CLAVE_PASTILLERO, BD_CLAVE_CAJA y BD_CLAVE_CONSULTAS.
+-- BD_CLAVE_VIGIA, BD_CLAVE_PASTILLERO, BD_CLAVE_CAJA, BD_CLAVE_CONSULTAS y
+-- BD_CLAVE_ACCESO.
 CREATE USER IF NOT EXISTS 'usr_vigia'@'%'
     IDENTIFIED BY 'CAMBIE_ESTA_CLAVE_VIGIA';
 CREATE USER IF NOT EXISTS 'usr_pastillero'@'%'
@@ -61,13 +66,22 @@ CREATE USER IF NOT EXISTS 'usr_caja'@'%'
     IDENTIFIED BY 'CAMBIE_ESTA_CLAVE_CAJA';
 CREATE USER IF NOT EXISTS 'usr_consultas'@'%'
     IDENTIFIED BY 'CAMBIE_ESTA_CLAVE_CONSULTAS';
+CREATE USER IF NOT EXISTS 'usr_acceso'@'%'
+    IDENTIFIED BY 'CAMBIE_ESTA_CLAVE_ACCESO';
 
 -- --- Permisos --------------------------------------------------------------
 -- Cada usuario, solo sobre su base. No se otorga CREATE, DROP ni ALTER: el
--- esquema lo definen los archivos 02, 03, 04 y 05, no la aplicacion.
+-- esquema lo definen los archivos 02 a 06, no la aplicacion.
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_vigia.*      TO 'usr_vigia'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_pastillero.* TO 'usr_pastillero'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_caja.*       TO 'usr_caja'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON asilo_consultas.*  TO 'usr_consultas'@'%';
+
+-- usr_acceso, el del gateway, tampoco tiene DELETE. Las cuentas del personal
+-- no se borran, se desactivan: borrar una dejaria su bitacora sin dueno y
+-- permitiria reusar el nombre de usuario para firmar como otra persona. Que
+-- eso no pase no depende de la buena voluntad del codigo: lo prohibe el
+-- motor, y un DELETE contra asilo_acceso falla aunque el gateway lo intente.
+GRANT SELECT, INSERT, UPDATE ON asilo_acceso.* TO 'usr_acceso'@'%';
 
 FLUSH PRIVILEGES;

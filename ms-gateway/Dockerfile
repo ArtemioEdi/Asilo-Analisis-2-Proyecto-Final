@@ -14,7 +14,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-COPY server.js usuarios.json ./
+COPY server.js ./
 
 EXPOSE 8080
 HEALTHCHECK --interval=20s --timeout=4s --start-period=10s --retries=3 \

@@ -986,6 +986,149 @@ else
   done
 fi
 
+# ---------------------------------------------------------------------------
+titulo "24. Administracion de cuentas"
+# ---------------------------------------------------------------------------
+# Cada corrida da de alta una cuenta con nombre propio, sufijo de fecha y hora,
+# para poder repetir el guion sin limpiar nada. Las cuentas no se borran nunca,
+# asi que se van acumulando como desactivadas, y esta bien que sea asi.
+SUFIJO=$(date +%m%d%H%M%S)
+CUENTA="enf.prueba.$SUFIJO"
+BITACORA_CUENTAS="$TEMPORAL/cuentas.log"
+: > "$BITACORA_CUENTAS"
+# Todo lo que responde /api/usuarios se junta aqui para buscar hashes al final.
+juntar() { cat "$TEMPORAL/respuesta.json" >> "$BITACORA_CUENTAS"; echo >> "$BITACORA_CUENTAS"; }
+
+# login_completo <usuario> <clave> -> codigo HTTP; el cuerpo queda en respuesta.json
+login_completo() {
+  codigo POST "$GATEWAY/api/auth/login" "" "{\"usuario\":\"$1\",\"clave\":\"$2\"}"
+}
+
+TOKEN_ADMR=$(entrar admin admin2026x)
+
+for par in "medico:$TOKEN_MEDICO" "administracion:$TOKEN_ADMINISTRACION" "enfermeria:$TOKEN_ENFERMERIA"; do
+  comprobar "${par%%:*} NO lee las cuentas del personal (403)" "403" \
+    "$(codigo GET "$GATEWAY/api/usuarios" "${par#*:}")"
+done
+
+comprobar "admin da de alta una cuenta de ENFERMERIA (201)" "201" \
+  "$(codigo POST "$GATEWAY/api/usuarios" "$TOKEN_ADMR" \
+     "{\"usuario\":\"$CUENTA\",\"nombre\":\"Enf. Prueba $SUFIJO\",\"rol\":\"ENFERMERIA\"}")"
+juntar
+TEMPORAL_1=$(campo claveTemporal < "$TEMPORAL/respuesta.json")
+comprobar "el alta devuelve la clave temporal, esta unica vez" "si" \
+  "$([ ${#TEMPORAL_1} -eq 10 ] && echo si || echo no)"
+detalle "cuenta $CUENTA, vence $(campo claveTemporalVence < "$TEMPORAL/respuesta.json")"
+
+# --- La clave temporal solo sirve para elegir la propia ----------------------
+comprobar "con la clave temporal el login pide cambiarla" "true" \
+  "$(login_completo "$CUENTA" "$TEMPORAL_1" >/dev/null; campo debeCambiarClave < "$TEMPORAL/respuesta.json")"
+TOKEN_CAMBIO=$(campo token < "$TEMPORAL/respuesta.json")
+
+comprobar "el token de cambio NO entra a la jornada (403)" "403" \
+  "$(codigo GET "$GATEWAY/pastillero/api/v1/turnos" "$TOKEN_CAMBIO")"
+detalle "$(campo error < "$TEMPORAL/respuesta.json")"
+
+# Saltandose el gateway, desde la red interna: el microservicio no conoce el
+# rol CAMBIO_DE_CLAVE y lo rechaza por su cuenta.
+if docker compose exec -T ms-gateway node -v >/dev/null 2>&1; then
+  DIRECTO=$(docker compose exec -T ms-gateway node -e "
+    fetch('http://ms-pastillero:8082/api/v1/turnos', { headers: { Authorization: 'Bearer $TOKEN_CAMBIO' } })
+      .then((r) => console.log(r.status)).catch(() => console.log('err'));" 2>/dev/null | tr -d '\r')
+  comprobar "directo a ms-pastillero, el token de cambio tambien se rechaza (403)" "403" "$DIRECTO"
+else
+  detalle "omitida la prueba directa a ms-pastillero: no hay docker a mano"
+fi
+
+comprobar "cambiar a una clave debil se rechaza (400)" "400" \
+  "$(codigo POST "$GATEWAY/api/auth/cambiar-clave" "$TOKEN_CAMBIO" \
+     "{\"claveActual\":\"$TEMPORAL_1\",\"claveNueva\":\"corta1\"}")"
+detalle "$(campo error < "$TEMPORAL/respuesta.json")"
+
+comprobar "cambiar a la misma clave temporal se rechaza (400)" "400" \
+  "$(codigo POST "$GATEWAY/api/auth/cambiar-clave" "$TOKEN_CAMBIO" \
+     "{\"claveActual\":\"$TEMPORAL_1\",\"claveNueva\":\"$TEMPORAL_1\"}")"
+detalle "$(campo error < "$TEMPORAL/respuesta.json")"
+
+CLAVE_PROPIA="Propia${SUFIJO}a"
+comprobar "cambiar a una clave valida responde 200" "200" \
+  "$(codigo POST "$GATEWAY/api/auth/cambiar-clave" "$TOKEN_CAMBIO" \
+     "{\"claveActual\":\"$TEMPORAL_1\",\"claveNueva\":\"$CLAVE_PROPIA\"}")"
+TOKEN_PROPIO=$(campo token < "$TEMPORAL/respuesta.json")
+comprobar "el token nuevo SI entra a la jornada (200)" "200" \
+  "$(codigo GET "$GATEWAY/pastillero/api/v1/turnos" "$TOKEN_PROPIO")"
+comprobar "el token de cambio anterior ya no sirve (401)" "401" \
+  "$(codigo GET "$GATEWAY/api/auth/me" "$TOKEN_CAMBIO")"
+
+# --- Restablecer corta la sesion abierta -------------------------------------
+comprobar "admin restablece la clave (200)" "200" \
+  "$(codigo POST "$GATEWAY/api/usuarios/$CUENTA/restablecer" "$TOKEN_ADMR")"
+juntar
+TEMPORAL_2=$(campo claveTemporal < "$TEMPORAL/respuesta.json")
+comprobar "restablecer invalida el token vivo de esa persona (401)" "401" \
+  "$(codigo GET "$GATEWAY/pastillero/api/v1/turnos" "$TOKEN_PROPIO")"
+detalle "$(campo error < "$TEMPORAL/respuesta.json")"
+comprobar "con la clave vieja ya no entra (401)" "401" "$(login_completo "$CUENTA" "$CLAVE_PROPIA")"
+comprobar "con la temporal nueva si (200)" "200" "$(login_completo "$CUENTA" "$TEMPORAL_2")"
+TOKEN_CAMBIO=$(campo token < "$TEMPORAL/respuesta.json")
+
+CLAVE_PROPIA_2="Otra${SUFIJO}b"
+codigo POST "$GATEWAY/api/auth/cambiar-clave" "$TOKEN_CAMBIO" \
+  "{\"claveActual\":\"$TEMPORAL_2\",\"claveNueva\":\"$CLAVE_PROPIA_2\"}" >/dev/null
+TOKEN_VIVO=$(campo token < "$TEMPORAL/respuesta.json")
+
+# --- Desactivar: corta la sesion, no deja entrar y no borra nada --------------
+comprobar "admin desactiva la cuenta (200)" "200" \
+  "$(codigo POST "$GATEWAY/api/usuarios/$CUENTA/desactivar" "$TOKEN_ADMR" \
+     '{"motivo":"Fin de la prueba automatica"}')"
+juntar
+comprobar "desactivar invalida el token vivo (401)" "401" \
+  "$(codigo GET "$GATEWAY/pastillero/api/v1/turnos" "$TOKEN_VIVO")"
+comprobar "la cuenta desactivada no entra (403)" "403" "$(login_completo "$CUENTA" "$CLAVE_PROPIA_2")"
+comprobar "y el aviso dice que esta desactivada" "si" \
+  "$(campo error < "$TEMPORAL/respuesta.json" | grep -q "desactivada" && echo si || echo no)"
+
+codigo GET "$GATEWAY/api/usuarios" "$TOKEN_ADMR" >/dev/null
+juntar
+FICHA_CUENTA=$(grep -o "{\"usuario\":\"$CUENTA\"[^}]*}" "$TEMPORAL/respuesta.json")
+comprobar "la cuenta desactivada sigue en la lista, como desactivada" "si" \
+  "$(printf '%s' "$FICHA_CUENTA" | grep -q '"activo":false' && echo si || echo no)"
+
+comprobar "reactivar responde 200" "200" \
+  "$(codigo POST "$GATEWAY/api/usuarios/$CUENTA/reactivar" "$TOKEN_ADMR")"
+juntar
+TEMPORAL_3=$(campo claveTemporal < "$TEMPORAL/respuesta.json")
+comprobar "reactivar emite una clave temporal nueva" "si" \
+  "$([ ${#TEMPORAL_3} -eq 10 ] && [ "$TEMPORAL_3" != "$TEMPORAL_2" ] && echo si || echo no)"
+comprobar "y con ella la cuenta vuelve a entrar, a cambiarla" "true" \
+  "$(login_completo "$CUENTA" "$TEMPORAL_3" >/dev/null; campo debeCambiarClave < "$TEMPORAL/respuesta.json")"
+
+# --- Salvaguardas ------------------------------------------------------------
+comprobar "admin NO puede desactivarse a si mismo (409)" "409" \
+  "$(codigo POST "$GATEWAY/api/usuarios/admin/desactivar" "$TOKEN_ADMR" '{"motivo":"Probar la salvaguarda"}')"
+juntar
+comprobar "DELETE de una cuenta responde 405" "405" \
+  "$(codigo DELETE "$GATEWAY/api/usuarios/$CUENTA" "$TOKEN_ADMR")"
+detalle "$(campo error < "$TEMPORAL/respuesta.json")"
+comprobar "un usuario repetido responde 409" "409" \
+  "$(codigo POST "$GATEWAY/api/usuarios" "$TOKEN_ADMR" \
+     "{\"usuario\":\"$CUENTA\",\"nombre\":\"Otra persona\",\"rol\":\"MEDICO\"}")"
+juntar
+
+# --- La bitacora firma con el token --------------------------------------------
+codigo GET "$GATEWAY/api/usuarios/$CUENTA/bitacora" "$TOKEN_ADMR" >/dev/null
+juntar
+FIRMAS=0
+for accion in ALTA RESTABLECIMIENTO DESACTIVACION REACTIVACION; do
+  grep -q "\"accion\":\"$accion\",\"hechoPor\":\"admin\"" "$TEMPORAL/respuesta.json" && FIRMAS=$((FIRMAS + 1))
+done
+comprobar "alta, restablecimiento, desactivacion y reactivacion firmadas por admin" "4" "$FIRMAS"
+comprobar "los dos cambios de clave, firmados por la propia persona" "2" \
+  "$(grep -o "\"accion\":\"CAMBIO_DE_CLAVE\",\"hechoPor\":\"$CUENTA\"" "$TEMPORAL/respuesta.json" | wc -l | tr -d ' ')"
+
+comprobar "ninguna respuesta de /api/usuarios trae un hash ni el campo de la clave" "0" \
+  "$(grep -cE '\$2[ab]\$|claveHash|clave_hash' "$BITACORA_CUENTAS")"
+
 
 # ---------------------------------------------------------------------------
 printf "\n%s== Resultado%s\n" "$CIAN" "$FIN"
