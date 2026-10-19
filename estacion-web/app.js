@@ -34,7 +34,8 @@ function servicioDe(url) {
 async function pedir(url, opciones) {
   opciones = opciones || {};
   const encabezados = Object.assign({}, opciones.headers || {});
-  if (SESION.token) encabezados["Authorization"] = "Bearer " + SESION.token;
+  const tokenDeLaPeticion = SESION.token;
+  if (tokenDeLaPeticion) encabezados["Authorization"] = "Bearer " + tokenDeLaPeticion;
 
   let respuesta;
   try {
@@ -49,6 +50,14 @@ async function pedir(url, opciones) {
 
   let cuerpo = null;
   try { cuerpo = await respuesta.json(); } catch (_) { cuerpo = null; }
+
+  // Si la sesion se cerro mientras la respuesta venia en camino, esos datos
+  // son de quien ya se fue: no se pintan en la pantalla del que llega.
+  if (SESION.token !== tokenDeLaPeticion) {
+    const ajena = new Error("sesion-cambiada");
+    ajena.sesionCambiada = true;
+    throw ajena;
+  }
 
   if (!respuesta.ok) {
     const error = new Error("http-" + respuesta.status);
@@ -198,6 +207,7 @@ function aviso(titulo, texto, tipo, alReintentar) {
 }
 
 function avisarError(error, accion, alReintentar) {
+  if (error && error.sesionCambiada) return;
   if (error && error.sesionExpirada) { sesionExpirada(); return; }
   const e = explicarError(error, accion);
   let texto = e.texto;
@@ -328,6 +338,8 @@ function vacio(nodo, titulo, texto, accion) {
 }
 
 function problema(nodo, error, accion, alReintentar) {
+  // Una respuesta de la sesion anterior no es un problema de esta.
+  if (error && error.sesionCambiada) return;
   const e = explicarError(error, accion);
   nodo.textContent = "";
   const caja = document.createElement("div");
@@ -473,14 +485,82 @@ function mostrarAcceso(mensajeReanudar) {
   $("acceso-usuario").select();
 }
 
+// Todo lo que pinto la sesion que se va. Las vistas estan en el DOM aunque
+// esten ocultas, y una vista solo se repinta cuando se entra a ella; un panel
+// que el rol nuevo no repinta enseña lo que pidio el anterior. Asi
+// administracion veia la hoja "Medicamentos aplicados" que genero el medico,
+// y el medico veia el costo por consulta que armo administracion.
+const PANELES_DE_SESION = [
+  // la lateral y la cabecera
+  "lista-internos", "internos-vacio", "superior-interno-nombre", "superior-interno-codigo",
+  "sesion-nombre", "sesion-rol",
+  // jornada
+  "meta-interno", "datos-interno", "regla", "parte", "registro",
+  // caja
+  "caja-meta", "caja-resumen", "caja-saldo", "caja-cargos", "costos-conteo", "lista-costos",
+  // consultas
+  "consultas-meta", "consultas-conteo", "lista-solicitudes", "correos-conteo", "correos-nota",
+  "lista-correos", "examenes-conteo", "lista-examenes", "historial-conteo", "historial",
+  // padron y bandejas
+  "padron-meta", "padron-lista", "agenda-conteo", "bandeja-agenda",
+  "laboratorio-conteo", "bandeja-laboratorio", "farmacia-conteo", "bandeja-farmacia",
+  // reportes: el selector se rearma con los informes del rol que entre
+  "reportes-meta", "reporte-ayuda", "reporte-cual", "reporte-interno", "reporte-visita",
+  // los cajones
+  "dictamen", "ficha-cuerpo", "ficha-pie", "visita-cabecera", "visita-examenes",
+  "visita-indicaciones", "dictamen-indicacion", "egreso-cabecera", "confirmar-cuerpo",
+  // los avisos que quedaron abiertos hablan de lo que hizo el anterior
+  "avisos",
+];
+
+// Lo que la persona escribio y no envio tampoco es del que llega.
+const FORMULARIOS_DE_SESION = [
+  "formulario", "formulario-remision", "formulario-visita", "formulario-examen",
+  "formulario-indicacion", "formulario-interno", "formulario-egreso",
+  "formulario-cargo", "formulario-donacion", "formulario-gasto", "formulario-reporte",
+];
+
+function vaciarInforme() {
+  $("reporte-hoja").hidden = true;
+  for (const id of ["reporte-estado", "reporte-titulo", "reporte-alcance", "reporte-sello", "reporte-cuerpo"]) {
+    $(id).textContent = "";
+  }
+}
+
+function vaciarPantallas() {
+  // Un dialogo de confirmacion abierto se cancela: nadie dijo que si.
+  if (!$("confirmar").hidden) $("confirmar-no").click();
+  cerrarCajon(); cerrarFicha(); cerrarVisita(); cerrarRemision();
+  cerrarFormularioInterno(); cerrarEgreso();
+
+  for (const id of PANELES_DE_SESION) $(id).textContent = "";
+  for (const id of FORMULARIOS_DE_SESION) $(id).reset();
+  $("nombre-interno").textContent = "—";
+  $("caja-interno-nombre").textContent = "—";
+  $("superior-interno").hidden = true;
+  $("internos-vacio").hidden = true;
+  $("bloque-costos").hidden = true;
+  $("buscador-campo").value = "";
+  vaciarInforme();
+
+  // La memoria de la pagina tambien: el padron que cargo el medico le pondria
+  // nombre a los internos en la bandeja de un rol que no lee el padron.
+  Object.keys(INTERNOS).forEach((k) => delete INTERNOS[k]);
+  Object.assign(estado, { interno: null, medicacion: [], dictamen: null, receta: null });
+  Object.assign(estadoConsultas, { visitaAbierta: null, solicitudes: [], visitas: [] });
+  Object.assign(estadoPadron, { internos: [], editando: null, egresando: null });
+  TARIFAS_CAJA = [];
+}
+
 // No se expulsa de golpe: se avisa y se guarda donde estaba, para devolverla
-// ahi cuando vuelva a entrar.
+// ahi cuando vuelva a entrar. La ruta se guarda; lo pintado no, porque quien
+// entre despues puede ser otra persona con otro rol.
 function sesionExpirada() {
   if (!SESION.token) return;
   rutaPretendida = location.hash || "";
   const usuario = SESION.usuario;
   limpiarSesion();
-  cerrarCajon();
+  vaciarPantallas();
   rutaActual = { vista: null, interno: null };
   clearInterval(relojBarra);
   $("acceso-usuario").value = usuario || "";
@@ -495,7 +575,7 @@ async function cerrarSesion() {
   const token = SESION.token;
   if (token) pedir(AUTH + "/logout", { method: "POST" }).catch(() => { });
   limpiarSesion();
-  cerrarCajon();
+  vaciarPantallas();
   rutaActual = { vista: null, interno: null };
   rutaPretendida = "";
   clearInterval(relojBarra);
@@ -3659,8 +3739,8 @@ async function llenarConsultasDelReporte() {
 }
 
 $("reporte-cual").addEventListener("change", () => {
-  $("reporte-hoja").hidden = true;
-  $("reporte-estado").textContent = "";
+  // Esconder la hoja no bastaba: seguia en el DOM con el informe anterior.
+  vaciarInforme();
   ajustarFiltrosDelReporte();
 });
 

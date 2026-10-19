@@ -948,6 +948,44 @@ comprobar "un egresado ya no entra en las cuotas del mes" "0" \
   "$(cuerpo POST "$GATEWAY/caja/api/v1/cuotas/generar" "$TOKEN_ADMINISTRACION" '{"mes":"2030-08"}' \
      | grep -o "$NUEVO" | wc -l | tr -d ' ')"
 
+# ---------------------------------------------------------------------------
+titulo "23. La pantalla no le hereda nada al siguiente usuario"
+# ---------------------------------------------------------------------------
+# Esto no se ve con curl: el servidor ya separaba bien los roles, pero la
+# estacion dejaba pintado el informe del que cerro sesion y el siguiente lo
+# veia. pruebas-interfaz/cambio-de-sesion.js carga la estacion que se esta
+# sirviendo en un DOM minimo y la maneja con medico y administracion, uno
+# detras del otro.
+#
+# Corre dentro de ms-gateway, que ya trae node y alcanza a estacion-web por la
+# red interna; si docker no esta a mano, con el node del equipo.
+RECORRIDO=pruebas-interfaz/cambio-de-sesion.js
+if docker compose exec -T ms-gateway node -v >/dev/null 2>&1; then
+  SALIDA_RECORRIDO=$(docker compose exec -T -e WEB=http://estacion-web -e GATEWAY=http://localhost:8080 \
+    ms-gateway node - < "$RECORRIDO" 2>&1)
+elif command -v node >/dev/null 2>&1; then
+  SALIDA_RECORRIDO=$(WEB=http://localhost:8090 GATEWAY="$GATEWAY" node "$RECORRIDO" 2>&1)
+else
+  SALIDA_RECORRIDO="no hay docker ni node para correr el recorrido"
+fi
+
+while IFS=$'\t' read -r RESULTADO DESCRIPCION; do
+  case "$RESULTADO" in
+    si|no) comprobar "$DESCRIPCION" "si" "$RESULTADO" ;;
+  esac
+done <<< "$SALIDA_RECORRIDO"
+
+# Si el recorrido se cae a la mitad, lo que no llego a comprobar no puede
+# contar como aprobado.
+if printf '%s\n' "$SALIDA_RECORRIDO" | grep -qx "FIN"; then
+  comprobar "el recorrido de interfaz llego hasta el final" "si" "si"
+else
+  comprobar "el recorrido de interfaz llego hasta el final" "si" "no"
+  printf '%s\n' "$SALIDA_RECORRIDO" | grep -vE $'^(si|no)\t' | head -8 | while IFS= read -r LINEA; do
+    detalle "$LINEA"
+  done
+fi
+
 
 # ---------------------------------------------------------------------------
 printf "\n%s== Resultado%s\n" "$CIAN" "$FIN"

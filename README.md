@@ -430,6 +430,31 @@ quedaba firmado en la bitácora clínica o en el libro de caja. La hoja de
 administración de medicamentos es un documento legal: la firma quien inició
 sesión, no quien escribe el JSON.
 
+### Lo que queda en pantalla al cerrar sesión
+
+El servidor nunca le entregó a un rol lo que no le toca, pero la pantalla sí
+lo mostraba. La estación es una sola página: las vistas siguen en el DOM
+aunque estén ocultas, y cada una se repinta solo cuando se entra a ella. Al
+cerrar sesión no se borraba lo pintado, y el siguiente usuario veía lo que
+había dejado el anterior. Administración veía la hoja «Medicamentos aplicados
+por paciente» que generó el médico. El médico veía en la cuenta del interno el
+bloque «Costo por consulta» que armó administración, y la hoja «Costos de cada
+cita por paciente».
+
+Ahora, al cerrar sesión o cuando la sesión expira, `vaciarPantallas()` deja la
+estación en blanco antes de volver al acceso:
+
+- vacía los paneles de todas las vistas: informes, caja, ficha, consultas,
+  padrón y bandejas;
+- cierra los cajones y cancela una confirmación que haya quedado abierta;
+- limpia los formularios a medio llenar y quita los avisos;
+- olvida el padrón que había cargado. Si no, una bandeja de un rol que no lee
+  el padrón pondría nombres que ese rol no debería ver.
+
+Una respuesta que llega después de cerrar sesión tampoco se pinta: `pedir()`
+la descarta si el token cambió mientras venía en camino. Al cambiar de informe
+en el selector, la hoja anterior se vacía, no solo se oculta.
+
 ---
 
 ## 5. Cómo ejecutarlo
@@ -602,9 +627,9 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **156**, en 22 bloques | **101**, en 20 bloques |
+| **Comprobaciones** | **174**, en 23 bloques | **101**, en 20 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
-| **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre) | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
+| **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
 ```bash
 bash pruebas.sh   ; echo "código de salida: $?"
@@ -694,6 +719,15 @@ bash verificar.sh
 > `node_modules` y un navegador descargable en un proyecto cuyo único requisito
 > debe seguir siendo Docker. `pruebas.sh` cubre los servicios, que es lo que se
 > puede verificar sin dependencias extra.
+>
+> Con una excepción: el cambio de sesión. **El bloque 23 de `pruebas.sh`**
+> corre `pruebas-interfaz/cambio-de-sesion.js`, que carga el `index.html` y el
+> `app.js` que sirve `estacion-web` en un DOM mínimo escrito a mano, sin
+> dependencias. Con ese DOM entra como médico, genera un informe, cierra
+> sesión, entra como administración y comprueba que no quede nada del
+> anterior. También hace el camino inverso. No reemplaza a un navegador: el
+> DOM cubre solo lo que `app.js` usa. Pero si `app.js` empieza a usar algo que
+> ese DOM no tiene, el recorrido falla en lugar de pasar en falso.
 
 ---
 
@@ -1222,6 +1256,8 @@ asilo-microservicios/
 ├── .env.ejemplo                plantilla de configuración (se copia a .env)
 ├── .env                        secreto de esta instalación · NO se versiona
 ├── pruebas.sh                  prueba de humo funcional, toda vía el gateway
+├── pruebas-interfaz/
+│   └── cambio-de-sesion.js     recorrido de la estación en un DOM mínimo (bloque 23)
 ├── verificar.sh                revisión de seguridad, permisos y repositorio
 ├── README.md
 ├── ms-vigia/
