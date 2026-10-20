@@ -649,7 +649,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **244**, en 25 bloques | **112**, en 21 bloques |
+| **Comprobaciones** | **247**, en 25 bloques | **112**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -720,7 +720,9 @@ guion se pueda correr dos veces seguidas sin limpiar la base:
   correcto; pagada completa ya no aparece; los filtros por interno y por fecha
   funcionan y una fecha mal escrita da `400`; el conteo del resumen de la caja
   coincide con el informe; `medico`, `enfermeria` y el administrador del padrón
-  reciben `403`. Al final salda lo que creó.
+  reciben `403`. Al final salda lo que creó, y comprueba que los tres cargos
+  que dejó la consulta del bloque 16 llevan el nombre del interno, en la lista
+  de cargos y en el informe.
 
 **Qué cubre `verificar.sh`** — lo que no se ve desde la interfaz: la matriz de
 acceso rol por rol y ruta por ruta; la defensa en profundidad, comprobando que

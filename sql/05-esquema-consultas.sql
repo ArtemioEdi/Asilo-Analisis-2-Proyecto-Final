@@ -27,6 +27,14 @@ CREATE TABLE IF NOT EXISTS solicitudes (
     -- SOL-2026-XXXXXXXX
     id                      VARCHAR(24)   NOT NULL,
     paciente_id             VARCHAR(16)   NOT NULL,
+    -- El nombre del interno al remitirlo, tomado de la ficha que la remision
+    -- ya consulta en ms-pastillero para comprobar que existe. Solo sirve para
+    -- mandarselo a la caja con cada cargo que nace de esta consulta: sin el,
+    -- los cobros de consulta, laboratorio y farmacia quedaban sin nombre.
+    -- No se devuelve en la API: la fundacion, el laboratorio y la farmacia
+    -- trabajan con el codigo del interno. NULO si no se pudo saber; un cobro
+    -- no se detiene por un nombre.
+    paciente_nombre         VARCHAR(120)  NULL,
     motivo                  TEXT          NOT NULL,
     especialidad_solicitada VARCHAR(80),
     -- Quien acompaña al interno a la cita. En un asilo casi nunca va solo.

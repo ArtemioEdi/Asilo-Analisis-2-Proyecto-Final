@@ -366,7 +366,7 @@ def consultar_dictamen(paciente_id, principio_activo, dosis_mg, cada_horas, via=
     return None, "MS-VIGIA respondio con codigo %d." % r.status_code, 503
 
 
-def crear_cargo(paciente_id, categoria, concepto, tarifa, visita_id=None):
+def crear_cargo(paciente_id, categoria, concepto, tarifa, visita_id=None, paciente_nombre=None):
     """Crea el cargo en ms-caja. Devuelve (cargo_id, advertencia).
 
     visita_id viaja con el cobro a proposito. La caja no puede averiguar por
@@ -374,6 +374,11 @@ def crear_cargo(paciente_id, categoria, concepto, tarifa, visita_id=None):
     viven en asilo_consultas y usr_caja no tiene permiso para leer esa base.
     Mandandoselo aqui, la caja puede responder despues cuanto costo una
     consulta completa sin llamar a nadie.
+
+    paciente_nombre tambien viaja: sin el, los informes de dinero de la caja
+    devolvian estos cargos sin nombre. Sale de la solicitud, que lo guardo al
+    remitir; no se pide de nuevo a ms-pastillero, que podria no responder. Si
+    no se tiene, va nulo y el cargo se crea igual.
 
     Si ms-caja no responde, devuelve (None, advertencia) y el llamador guarda
     igual el dato clinico: no se pierde un examen ni una receta por un fallo
@@ -385,6 +390,7 @@ def crear_cargo(paciente_id, categoria, concepto, tarifa, visita_id=None):
             headers={"Authorization": "Bearer " + token_de_servicio()},
             json={
                 "pacienteId": paciente_id,
+                "pacienteNombre": paciente_nombre,
                 "categoria": categoria,
                 "concepto": concepto,
                 "tarifa": tarifa,
@@ -401,6 +407,13 @@ def crear_cargo(paciente_id, categoria, concepto, tarifa, visita_id=None):
                       "codigo %d. El dato clinico quedo guardado." % r.status_code)
     return r.json().get("id"), None
 
+
+
+def nombre_de_la_solicitud(solicitud_id):
+    """El nombre que la solicitud guardo al remitir, o None. Nunca falla por eso."""
+    fila = consultar_uno("SELECT paciente_nombre FROM solicitudes WHERE id = %s",
+                         (solicitud_id,))
+    return fila["paciente_nombre"] if fila else None
 
 
 def redactar_aviso(ficha, solicitud):
@@ -677,10 +690,13 @@ def crear_solicitud():
     try:
         ejecutar(
             """INSERT INTO solicitudes
-                   (id, paciente_id, motivo, especialidad_solicitada,
+                   (id, paciente_id, paciente_nombre, motivo, especialidad_solicitada,
                     enfermero_acompanante, solicitado_por, creada_en, estado)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,'PENDIENTE')""",
-            (solicitud_id, cuerpo["pacienteId"], cuerpo["motivo"].strip(),
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PENDIENTE')""",
+            # El nombre sale de la ficha que acaba de traer existe_el_interno:
+            # ninguna llamada nueva.
+            (solicitud_id, cuerpo["pacienteId"], (ficha or {}).get("nombre"),
+             cuerpo["motivo"].strip(),
              cuerpo.get("especialidadSolicitada"), cuerpo.get("enfermeroAcompanante"),
              firmante(), creada),
         )
@@ -861,7 +877,8 @@ def crear_visita():
         solicitud["paciente_id"], "CONSULTA",
         "Consulta de %s (visita %s)"
         % (solicitud["especialidad_asignada"] or "especialidad no indicada", visita_id),
-        cuerpo.get("tarifa", "consulta-especialista"), visita_id)
+        cuerpo.get("tarifa", "consulta-especialista"), visita_id,
+        solicitud.get("paciente_nombre"))
 
     bd = conexion()
     # Crear la visita y marcar la solicitud atendida van juntas: si no, la
@@ -985,7 +1002,8 @@ def indicar_examen(visita_id):
     cargo_id, advertencia = crear_cargo(
         visita["paciente_id"], "LABORATORIO",
         "%s (visita %s)" % (nombre, visita_id),
-        cuerpo.get("tarifa", "laboratorio-basico"), visita_id)
+        cuerpo.get("tarifa", "laboratorio-basico"), visita_id,
+        nombre_de_la_solicitud(visita["solicitud_id"]))
 
     examen_id = folio("EX")
     bd = conexion()
@@ -1157,8 +1175,10 @@ def recetar(visita_id):
 def entregar_indicacion(indicacion_id):
     """Farmacia entrega el medicamento y se le carga a la cuenta del interno."""
     fila = consultar_uno(
-        """SELECT i.*, v.paciente_id FROM indicaciones i
-           JOIN visitas v ON v.id = i.visita_id WHERE i.id = %s""",
+        """SELECT i.*, v.paciente_id, s.paciente_nombre FROM indicaciones i
+           JOIN visitas v ON v.id = i.visita_id
+           LEFT JOIN solicitudes s ON s.id = v.solicitud_id
+           WHERE i.id = %s""",
         (indicacion_id,))
     if fila is None:
         return jsonify({"error": "No existe la indicacion %s." % indicacion_id}), 404
@@ -1173,7 +1193,7 @@ def entregar_indicacion(indicacion_id):
         "%s %s mg (indicacion %s)" % (fila["nombre"], fila["dosis_mg"], indicacion_id),
         request.get_json(silent=True).get("tarifa", "farmacia-generico")
         if request.get_json(silent=True) else "farmacia-generico",
-        fila["visita_id"])
+        fila["visita_id"], fila["paciente_nombre"])
 
     bd = conexion()
     try:
@@ -1429,12 +1449,16 @@ def sembrar():
         for s in solicitudes:
             cursor.execute(
                 """INSERT INTO solicitudes
-                       (id, paciente_id, motivo, especialidad_solicitada,
+                       (id, paciente_id, paciente_nombre, motivo, especialidad_solicitada,
                         enfermero_acompanante, solicitado_por, creada_en, estado,
                         medico_asignado, especialidad_asignada, agendada_para,
                         agendada_por)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (s["id"], s["paciente_id"], s["motivo"], s["especialidad_solicitada"],
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                # Mismo dato que el camino en vivo: una solicitud sembrada sin
+                # nombre daria cargos sin nombre en cuanto se atendiera.
+                (s["id"], s["paciente_id"],
+                 FICHAS_SEMBRADAS.get(s["paciente_id"], {}).get("nombre"),
+                 s["motivo"], s["especialidad_solicitada"],
                  s["enfermero_acompanante"], s["solicitado_por"], s["creada_en"],
                  s["estado"], s["medico_asignado"], s["especialidad_asignada"],
                  s["agendada_para"], s["agendada_por"]),

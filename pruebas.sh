@@ -1234,6 +1234,42 @@ comprobar "el administrador del padrón tampoco (403)" "403" "$(codigo GET "$CIT
 # Se salda la segunda consulta: la caja queda como estaba.
 pagar_cargo "$C2" 80 >/dev/null
 
+# --- Los cargos que nacen de una consulta llevan el nombre del interno ---------
+# La consulta del bloque 16 (ASL-014) dejo tres cargos sin pagar: la consulta,
+# el examen y la entrega de farmacia. Los tres los creo ms-consultas, que antes
+# no mandaba el nombre. Se comparan contra el nombre de la ficha del padron
+# dentro del interprete: un nombre con tildes pasado por argumentos o por la
+# consola de Windows llega alterado, y la prueba fallaria por la consola.
+nombres_de_la_visita() { # stdin: {ficha, cargos, citas}; $1: visitaId
+  if [ "$INTERPRETE" = "node" ]; then
+    node -e '
+      let e = ""; process.stdin.on("data", (c) => (e += c)).on("end", () => {
+        const d = JSON.parse(e), v = process.argv[1], n = d.ficha.nombre;
+        const cs = (d.cargos.cargos || []).filter((c) => c.visitaId === v);
+        const cita = (d.citas.citas || []).find((c) => c.visitaId === v);
+        console.log(cs.length + " " + cs.filter((c) => c.pacienteNombre === n).length + " " +
+          (cita && cita.interno.nombre === n ? "si" : "no"));
+      });' "$1"
+  else
+    "$INTERPRETE" -c '
+import json, sys
+d = json.load(sys.stdin); v = sys.argv[1]; n = d["ficha"]["nombre"]
+cs = [c for c in d["cargos"].get("cargos", []) if c.get("visitaId") == v]
+cita = next((c for c in d["citas"].get("citas", []) if c["visitaId"] == v), None)
+print("%d %d %s" % (len(cs), sum(1 for c in cs if c.get("pacienteNombre") == n),
+                    "si" if cita and cita["interno"]["nombre"] == n else "no"))
+' "$1"
+  fi
+}
+FICHA_014=$(cuerpo GET "$GATEWAY/pastillero/api/v1/internos/ASL-014" "$TOKEN_MEDICO")
+CARGOS_014=$(cuerpo GET "$GATEWAY/caja/api/v1/cargos?pacienteId=ASL-014" "$TOKEN_ADMINISTRACION")
+CITAS_014=$(cuerpo GET "$CITAS?pacienteId=ASL-014" "$TOKEN_ADMINISTRACION")
+read -r CARGOS_VISITA CON_NOMBRE EN_INFORME <<< "$(printf '{"ficha":%s,"cargos":%s,"citas":%s}' \
+  "$FICHA_014" "$CARGOS_014" "$CITAS_014" | nombres_de_la_visita "$VISITA_ID")"
+comprobar "la consulta del bloque 16 dejó sus tres cargos en la caja" "3" "${CARGOS_VISITA:-0}"
+comprobar "los tres traen pacienteNombre en GET /caja/api/v1/cargos" "3" "${CON_NOMBRE:-0}"
+comprobar "y el informe de citas pendientes trae el nombre del interno" "si" "${EN_INFORME:-no}"
+
 
 # ---------------------------------------------------------------------------
 printf "\n%s== Resultado%s\n" "$CIAN" "$FIN"
