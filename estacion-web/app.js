@@ -568,6 +568,7 @@ function vaciarPantallas() {
   Object.assign(estadoUsuarios, { cuentas: [], editando: null, desactivando: null });
   $("usuarios-estado").value = "ACTIVAS";
   TARIFAS_CAJA = [];
+  informePedido = null;
 }
 
 // No se expulsa de golpe: se avisa y se guarda donde estaba, para devolverla
@@ -1473,6 +1474,20 @@ async function programar(boton) {
 }
 
 
+// El conteo lleva al informe completo: el mismo dato, con el detalle.
+function enlaceCitasPendientes(n) {
+  const enlace = document.createElement("a");
+  enlace.href = "#/reportes";
+  enlace.className = "enlace-dato";
+  enlace.textContent = n + " · ver el informe";
+  enlace.addEventListener("click", (evento) => {
+    evento.preventDefault();
+    informePedido = "citas-pendientes";
+    irA({ vista: "reportes", interno: estado.interno });
+  });
+  return enlace;
+}
+
 async function pintarCaja() {
   const interno = INTERNOS[estado.interno];
   if (!interno) return;
@@ -1494,7 +1509,8 @@ async function pintarCaja() {
         campo("Entradas (donaciones + cobros)", "Q " + resumen.entradas.total.toFixed(2)),
         campo("Salidas (gastos + adeudo fundación)", "Q " + resumen.salidas.total.toFixed(2)),
         campo("Saldo pendiente de familiares", "Q " + resumen.saldoPendienteFamiliares.toFixed(2)),
-        campo("Balance", "Q " + resumen.balance.toFixed(2))
+        campo("Balance", "Q " + resumen.balance.toFixed(2)),
+        campo("Citas con saldo pendiente", enlaceCitasPendientes(resumen.citasConSaldoPendiente))
       );
     } catch (error) {
       problema(resumenNodo, error, "consultar el resumen financiero", pintarCaja);
@@ -3259,7 +3275,32 @@ const INFORMES = [
                 "/adherencia?desde=" + f.desde + "&hasta=" + f.hasta,
     pintar: informeMedicamentos,
   },
+  // Adicional: no es uno de los siete informes del enunciado, sino el control
+  // que el enunciado pide en el modulo de caja. Por eso va al final y se
+  // rotula aparte. Todos sus filtros son opcionales.
+  {
+    clave: "citas-pendientes",
+    titulo: "Citas con saldo pendiente",
+    adicional: true,
+    nota: "Las consultas que la familia aún no termina de pagar: «sin pagar» si no se ha " +
+          "abonado nada, «abono parcial» si se pagó una parte. Sin interno ni fechas salen " +
+          "todas; las fechas se cuentan por el primer cargo de cada consulta.",
+    roles: ["ADMINISTRACION"],
+    pide: ["internoOpcional", "rangoOpcional"],
+    url: (f) => {
+      const partes = [];
+      if (f.interno) partes.push("pacienteId=" + encodeURIComponent(f.interno));
+      if (f.desde) partes.push("desde=" + f.desde);
+      if (f.hasta) partes.push("hasta=" + f.hasta);
+      return CAJA + "/api/v1/reportes/citas-pendientes" + (partes.length ? "?" + partes.join("&") : "");
+    },
+    pintar: informeCitasPendientes,
+  },
 ];
+
+// Un informe que otra vista pidio abrir, como el dato «Citas con saldo
+// pendiente» del resumen de la caja. Lo recoge pintarReportes al entrar.
+let informePedido = null;
 
 function informesDelRol() {
   return INFORMES.filter((i) => i.roles.includes(SESION.rol));
@@ -3467,6 +3508,50 @@ function informeAnalisisMedicos(d) {
   return trozos;
 }
 
+
+const ETIQUETA_SALDO_CITA = { PENDIENTE: "sin pagar", PARCIAL: "abono parcial" };
+
+function informeCitasPendientes(d) {
+  const trozos = document.createDocumentFragment();
+  trozos.appendChild(cifrasInforme([
+    // Como texto: lineaDato toma el 0 por un dato sin llenar, y aqui el cero
+    // es justamente la respuesta.
+    ["Citas con saldo", String(d.totales.citas)],
+    ["Sin ningún pago", String(d.totales.pendientes)],
+    ["Con abono parcial", String(d.totales.parciales)],
+    ["Saldo por cobrar", quetzales(d.totales.saldo)],
+  ]));
+
+  if (!d.total) {
+    trozos.appendChild(sinDatos(
+      "No hay citas con saldo pendiente con estos filtros: todas las consultas con " +
+      "cargos están completamente pagadas."));
+    return trozos;
+  }
+
+  const plural = { CONSULTA: ["consulta", "consultas"], LABORATORIO: ["laboratorio", "laboratorios"],
+                   FARMACIA: ["farmacia", "farmacia"], OTRO: ["otro", "otros"] };
+  trozos.appendChild(tablaInforme(
+    [{ rotulo: "Consulta" }, { rotulo: "Interno" }, { rotulo: "Primer cargo" },
+     { rotulo: "Cargos" }, { rotulo: "Neto", alinear: "derecha" },
+     { rotulo: "Pagado", alinear: "derecha" }, { rotulo: "Saldo", alinear: "derecha" },
+     { rotulo: "Estado" }],
+    d.citas.map((c) => {
+      // El nombre, del padron si esta; si no, el que trae el cargo; si no, el codigo.
+      const id = c.interno.pacienteId;
+      const nombre = INTERNOS[id] ? INTERNOS[id].nombre : c.interno.nombre;
+      const cargos = Object.entries(c.cargosPorCategoria)
+        .filter(([, n]) => n > 0)
+        .map(([cat, n]) => n + " " + plural[cat][n === 1 ? 0 : 1])
+        .join(" · ");
+      return [c.visitaId, nombre ? nombre + " · " + id : id, fechaLegible(c.primerCargo),
+              cargos, quetzales(c.neto), quetzales(c.pagado), quetzales(c.saldo),
+              marbeteEstado(c.estado, ETIQUETA_SALDO_CITA[c.estado])];
+    }),
+    ["Totales", d.totales.citas + (d.totales.citas === 1 ? " cita" : " citas"), "", "",
+     quetzales(d.totales.neto), quetzales(d.totales.pagado), quetzales(d.totales.saldo), ""]));
+  return trozos;
+}
 
 function informeCobrosPaciente(d) {
   const trozos = document.createDocumentFragment();
@@ -3676,26 +3761,57 @@ function pintarReportes() {
   // Se rearma solo la primera vez: rehacerlo perderia lo que ya eligio.
   if (selector.options.length !== disponibles.length) {
     selector.textContent = "";
-    disponibles.forEach((informe, i) => {
+    let numero = 0;
+    disponibles.forEach((informe) => {
       const opcion = document.createElement("option");
       opcion.value = informe.clave;
-      opcion.textContent = (i + 1) + ". " + informe.titulo;
+      // Los del enunciado se numeran; el adicional se dice como tal.
+      opcion.textContent = informe.adicional
+        ? "Adicional · " + informe.titulo : (++numero) + ". " + informe.titulo;
       selector.appendChild(opcion);
     });
+  }
+
+  const pedido = informePedido;
+  informePedido = null;
+  const abrirPedido = pedido && disponibles.some((i) => i.clave === pedido);
+  if (abrirPedido) {
+    selector.value = pedido;
+    vaciarInforme();
+    limpiarFiltrosOpcionales();
   }
 
   $("reportes-meta").textContent =
     disponibles.length + (disponibles.length === 1 ? " informe disponible" : " informes disponibles") +
     " para el rol " + SESION.rol;
 
-  llenarInternosDelReporte();
   ajustarFiltrosDelReporte();
+  if (abrirPedido) $("formulario-reporte").requestSubmit();
 }
 
-function llenarInternosDelReporte() {
+// Al elegir un informe de filtros opcionales se arranca sin acotar: lo que
+// quedo de otro informe —un interno, el ultimo mes— lo recortaria en silencio.
+function limpiarFiltrosOpcionales() {
+  const informe = informeElegido();
+  if (!informe) return;
+  if (informe.pide.includes("internoOpcional")) $("reporte-interno").value = "";
+  if (informe.pide.includes("rangoOpcional")) {
+    $("reporte-desde").value = "";
+    $("reporte-hasta").value = "";
+  }
+}
+
+function llenarInternosDelReporte(opcional) {
   const selector = $("reporte-interno");
-  const elegido = selector.value || estado.interno;
+  const previo = selector.value;
+  const elegido = opcional ? previo : (previo || estado.interno);
   selector.textContent = "";
+  if (opcional) {
+    const todos = document.createElement("option");
+    todos.value = "";
+    todos.textContent = "Todos los internos";
+    selector.appendChild(todos);
+  }
   for (const id of Object.keys(INTERNOS)) {
     const opcion = document.createElement("option");
     opcion.value = id;
@@ -3712,10 +3828,13 @@ function ajustarFiltrosDelReporte() {
   if (!informe) return;
   const pide = informe.pide;
 
-  $("campo-reporte-interno").hidden = !pide.includes("interno");
+  const conInterno = pide.includes("interno") || pide.includes("internoOpcional");
+  const conRango = pide.includes("rango") || pide.includes("rangoOpcional");
+  llenarInternosDelReporte(pide.includes("internoOpcional"));
+  $("campo-reporte-interno").hidden = !conInterno;
   $("campo-reporte-visita").hidden = !pide.includes("visita");
-  $("campo-reporte-desde").hidden = !pide.includes("rango");
-  $("campo-reporte-hasta").hidden = !pide.includes("rango");
+  $("campo-reporte-desde").hidden = !conRango;
+  $("campo-reporte-hasta").hidden = !conRango;
   $("reporte-ayuda").textContent = informe.nota;
 
   if (pide.includes("rango") && !$("reporte-desde").value) {
@@ -3777,6 +3896,7 @@ async function llenarConsultasDelReporte() {
 $("reporte-cual").addEventListener("change", () => {
   // Esconder la hoja no bastaba: seguia en el DOM con el informe anterior.
   vaciarInforme();
+  limpiarFiltrosOpcionales();
   ajustarFiltrosDelReporte();
 });
 
@@ -3804,8 +3924,8 @@ $("formulario-reporte").addEventListener("submit", async (evento) => {
     return;
   }
   // El servidor tambien lo valida y responde 400; esto solo evita el viaje.
-  if (informe.pide.includes("rango") && filtros.desde && filtros.hasta &&
-      filtros.desde > filtros.hasta) {
+  if ((informe.pide.includes("rango") || informe.pide.includes("rangoOpcional")) &&
+      filtros.desde && filtros.hasta && filtros.desde > filtros.hasta) {
     aviso("El rango está al revés",
       "La fecha inicial es posterior a la final.", "aviso");
     return;
@@ -3856,6 +3976,15 @@ function alcanceDelInforme(informe, filtros) {
   if (informe.pide.includes("visita") && filtros.visita) partes.push("consulta " + filtros.visita);
   if (informe.pide.includes("rango")) {
     partes.push("del " + (filtros.desde || "inicio") + " al " + (filtros.hasta || "hoy"));
+  }
+  if (informe.pide.includes("internoOpcional")) {
+    partes.push(!filtros.interno ? "todos los internos"
+      : INTERNOS[filtros.interno] ? INTERNOS[filtros.interno].nombre + " (" + filtros.interno + ")"
+      : filtros.interno);
+  }
+  if (informe.pide.includes("rangoOpcional")) {
+    partes.push(!filtros.desde && !filtros.hasta ? "todas las fechas"
+      : "primer cargo del " + (filtros.desde || "inicio") + " al " + (filtros.hasta || "hoy"));
   }
   return partes.join(" · ");
 }

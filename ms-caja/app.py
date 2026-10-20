@@ -706,6 +706,9 @@ def resumen_general():
         "salidas": {"gastosOperativos": round(gastos, 2), "adeudoFundacion": round(adeudo_fundacion, 2),
                     "total": salidas},
         "saldoPendienteFamiliares": round(pendiente, 2),
+        # Las visitas que la familia aun no termina de pagar; el detalle esta en
+        # /api/v1/reportes/citas-pendientes, con la misma consulta.
+        "citasConSaldoPendiente": contar_citas_pendientes(),
         "balance": round(entradas - salidas, 2),
         "hora": datetime.now().isoformat(timespec="seconds"),
     })
@@ -1000,6 +1003,132 @@ def reporte_entradas():
     })
     return jsonify(salida)
 
+
+
+# ===========================================================================
+#  Citas que todavia no estan completamente canceladas
+#
+#  El enunciado lo pide en el modulo de caja: el control de las consultas que
+#  la familia aun no termina de pagar. Igual que costo-por-visita, todo sale
+#  de la base de la caja, agrupando los cargos por visita_id: no se le
+#  pregunta a ms-consultas, porque usr_caja no tiene permiso sobre su base y
+#  porque un control de dinero no puede depender de que este arriba un
+#  servicio clinico.
+#
+#  "Cita" aqui es una visita con al menos un cargo. Una consulta sin ningun
+#  cargo no le debe nada a nadie, asi que no puede estar pendiente de pago.
+# ===========================================================================
+
+def _citas_pendientes_sql(paciente, desde, hasta):
+    """La consulta agrupada por visita, con sus filtros. Devuelve (sql, params).
+
+    La comparten el informe y el resumen de la caja, para que el contador del
+    resumen y el informe no puedan decir cosas distintas.
+
+    El interno filtra los cargos (WHERE); las fechas filtran la visita por la
+    fecha de su primer cargo (HAVING), que es lo mas parecido a la fecha de la
+    cita que la caja conoce. Filtrar los cargos por fecha partiria una visita
+    en dos y daria un saldo que no es el suyo.
+    """
+    donde, params = ["visita_id IS NOT NULL"], []
+    if paciente:
+        donde.append("paciente_id = %s")
+        params.append(paciente)
+    tener = ["SUM(monto_neto - monto_pagado) > 0"]
+    if desde:
+        tener.append("DATE(MIN(creado_en)) >= %s")
+        params.append(desde)
+    if hasta:
+        tener.append("DATE(MIN(creado_en)) <= %s")
+        params.append(hasta)
+
+    # Las sumas y el estado los calcula MySQL sobre DECIMAL, no Python sobre
+    # float. MAX(paciente_id): una visita es de un solo interno; MAX solo lo
+    # toma sin que el GROUP BY se queje.
+    sql = """
+        SELECT visita_id,
+               MAX(paciente_id)                              AS paciente_id,
+               MAX(paciente_nombre)                          AS paciente_nombre,
+               MIN(creado_en)                                AS primer_cargo,
+               COUNT(*)                                      AS cargos,
+               SUM(categoria = 'CONSULTA')                   AS consultas,
+               SUM(categoria = 'LABORATORIO')                AS laboratorios,
+               SUM(categoria = 'FARMACIA')                   AS farmacia,
+               SUM(categoria NOT IN ('CONSULTA', 'LABORATORIO', 'FARMACIA')) AS otros,
+               SUM(monto_neto)                               AS neto,
+               SUM(monto_pagado)                             AS pagado,
+               SUM(monto_neto - monto_pagado)                AS saldo,
+               CASE WHEN SUM(monto_pagado) = 0 THEN 'PENDIENTE' ELSE 'PARCIAL' END AS estado
+          FROM cargos
+         WHERE """ + " AND ".join(donde) + """
+         GROUP BY visita_id
+        HAVING """ + " AND ".join(tener)
+    return sql, params
+
+
+@app.get("/api/v1/reportes/citas-pendientes")
+def reporte_citas_pendientes():
+    """Las visitas con saldo: PENDIENTE si no se pago nada, PARCIAL si una parte.
+
+    Filtros opcionales: pacienteId, desde y hasta (sobre el primer cargo de la
+    visita). Una visita pagada completa no aparece.
+    """
+    desde, hasta, error = _rango_de_fechas()
+    if error:
+        return error
+    paciente = (request.args.get("pacienteId") or "").strip() or None
+
+    sql, params = _citas_pendientes_sql(paciente, desde, hasta)
+    filas = consultar(sql + " ORDER BY primer_cargo, visita_id", params)
+    totales = consultar_uno(
+        """SELECT COUNT(*)                         AS visitas,
+                  COALESCE(SUM(estado = 'PENDIENTE'), 0) AS pendientes,
+                  COALESCE(SUM(estado = 'PARCIAL'), 0)   AS parciales,
+                  COALESCE(SUM(neto), 0)           AS neto,
+                  COALESCE(SUM(pagado), 0)         AS pagado,
+                  COALESCE(SUM(saldo), 0)          AS saldo
+             FROM (""" + sql + ") AS citas",
+        params)
+
+    salida = _cabecera_informe("Citas con saldo pendiente", desde, hasta)
+    salida.update({
+        "filtros": {"pacienteId": paciente, "desde": desde, "hasta": hasta},
+        "total": len(filas),
+        "citas": [
+            {
+                "visitaId": f["visita_id"],
+                "interno": {"pacienteId": f["paciente_id"], "nombre": f["paciente_nombre"]},
+                "primerCargo": f["primer_cargo"].isoformat(timespec="seconds"),
+                "cantidadCargos": int(f["cargos"]),
+                "cargosPorCategoria": {
+                    "CONSULTA": int(f["consultas"]),
+                    "LABORATORIO": int(f["laboratorios"]),
+                    "FARMACIA": int(f["farmacia"]),
+                    "OTRO": int(f["otros"]),
+                },
+                "neto": float(f["neto"]),
+                "pagado": float(f["pagado"]),
+                "saldo": float(f["saldo"]),
+                "estado": f["estado"],
+            }
+            for f in filas
+        ],
+        "totales": {
+            "citas": int(totales["visitas"]),
+            "pendientes": int(totales["pendientes"]),
+            "parciales": int(totales["parciales"]),
+            "neto": round(float(totales["neto"]), 2),
+            "pagado": round(float(totales["pagado"]), 2),
+            "saldo": round(float(totales["saldo"]), 2),
+        },
+    })
+    return jsonify(salida)
+
+
+def contar_citas_pendientes():
+    """Cuantas visitas tienen saldo, para el resumen de la caja."""
+    sql, params = _citas_pendientes_sql(None, None, None)
+    return int(consultar_uno("SELECT COUNT(*) AS n FROM (" + sql + ") AS citas", params)["n"])
 
 
 

@@ -114,6 +114,7 @@ través del gateway, en `http://localhost:8080`, con el token de sesión.
 | Salidas por gastos operativos | `POST /caja/api/v1/gastos` · `GET /caja/api/v1/gastos` | Caja → *Registrar un gasto* | `administracion` |
 | Lo que el asilo le debe a la fundación y sus pagos | `GET /caja/api/v1/fundacion/resumen` · `POST /caja/api/v1/fundacion/pagos` | Caja → resumen superior | `administracion` |
 | Balance general de entradas y salidas | `GET /caja/api/v1/resumen` | Caja → resumen superior | `administracion` |
+| Control de las citas que aún no están completamente canceladas | `GET /caja/api/v1/reportes/citas-pendientes?pacienteId=&desde=&hasta=` (todos los filtros opcionales) | Caja → resumen superior, dato **Citas con saldo pendiente**, que lleva a Reportes → *Adicional · Citas con saldo pendiente* | `administracion` |
 
 ### Reportes
 
@@ -138,6 +139,7 @@ séptimo**, que es el único que le corresponde.
 
 | Otro reporte, fuera de los siete | Endpoint | Pantalla | Usuario |
 |---|---|---|---|
+| **Citas con saldo pendiente**: cada consulta que la familia aún no termina de pagar, con sus cargos por categoría, neto, pagado, saldo y estado (*sin pagar* o *abono parcial*), y los totales | `GET /caja/api/v1/reportes/citas-pendientes?pacienteId=&desde=&hasta=` | Reportes → *Adicional · Citas con saldo pendiente*, con hoja e impresión como los siete | `administracion` |
 | Bitácora de dictámenes de farmacovigilancia | `GET /vigia/api/v1/validaciones` | Recetario, tras cada validación | `medico` |
 
 ### Lo que el enunciado no pide y el sistema hace igual
@@ -647,7 +649,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **222**, en 24 bloques | **112**, en 21 bloques |
+| **Comprobaciones** | **244**, en 25 bloques | **112**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -683,7 +685,7 @@ hallazgo (`FV-GER-04`), su severidad (`CRITICA`) y la comprobación de que la
 receta **no quedó guardada**. El bloque 17 pide los tres reportes sobre esa
 consulta recién hecha.
 
-Los bloques 18 a 22 y el 24 cubren lo que se agregó después, y todos parten de la
+Los bloques 18 a 22, el 24 y el 25 cubren lo que se agregó después, y todos parten de la
 consulta del bloque 16 o de lo que ellos mismos dan de alta, para que el
 guion se pueda correr dos veces seguidas sin limpiar la base:
 
@@ -712,6 +714,13 @@ guion se pueda correr dos veces seguidas sin limpiar la base:
   temporal; el administrador no puede desactivarse a sí mismo; `DELETE` da
   `405`; el usuario repetido, `409`; cada acción queda en la bitácora firmada
   con el token, y **ninguna respuesta lleva un hash bcrypt**.
+- **25** — las citas con saldo pendiente, sobre dos internos y dos consultas
+  inventados en cada corrida: sin pagar aparece como `PENDIENTE` con su saldo
+  y sus cargos por categoría; tras un abono parcial, `PARCIAL` con el saldo
+  correcto; pagada completa ya no aparece; los filtros por interno y por fecha
+  funcionan y una fecha mal escrita da `400`; el conteo del resumen de la caja
+  coincide con el informe; `medico`, `enfermeria` y el administrador del padrón
+  reciben `403`. Al final salda lo que creó.
 
 **Qué cubre `verificar.sh`** — lo que no se ve desde la interfaz: la matriz de
 acceso rol por rol y ruta por ruta; la defensa en profundidad, comprobando que
@@ -870,7 +879,8 @@ devuelve `404`.
 | GET | `/api/v1/reportes/costo-por-visita?visitaId=` | **Informe 1**: costo de una cita, sumando consulta, laboratorio y farmacia |
 | GET | `/api/v1/reportes/pagos-fundacion?desde=&hasta=` | **Informe 4**: pagos realizados a la fundación |
 | GET | `/api/v1/reportes/entradas?desde=&hasta=` | **Informe 5**: entradas por donaciones y cobros |
-| GET | `/api/v1/resumen` | Panel general: entradas, salidas, saldo pendiente y balance |
+| GET | `/api/v1/reportes/citas-pendientes?pacienteId=&desde=&hasta=` | **Citas con saldo pendiente**: las visitas con saldo mayor que cero, agrupando los cargos por `visita_id` en la base de la caja, sin preguntarle a ms-consultas. `PENDIENTE` si no se pagó nada, `PARCIAL` si una parte; las sumas las hace MySQL sobre `DECIMAL`. Las fechas filtran por el primer cargo de cada visita. Filtros opcionales |
+| GET | `/api/v1/resumen` | Panel general: entradas, salidas, saldo pendiente, balance y cuántas citas tienen saldo |
 
 ---
 

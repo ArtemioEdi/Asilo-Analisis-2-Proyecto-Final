@@ -1152,6 +1152,88 @@ comprobar "desactivado, su token ya no puede dar de alta una cuenta (401)" "401"
 comprobar "y la cuenta que intento crear no existe" "0" \
   "$(cuerpo GET "$GATEWAY/api/usuarios" "$TOKEN_ADMR" | grep -o "\"usuario\":\"$CUENTA_FANTASMA\"" | wc -l | tr -d ' ')"
 
+# ---------------------------------------------------------------------------
+titulo "25. Citas con saldo pendiente (modulo de caja)"
+# ---------------------------------------------------------------------------
+# Dos internos y dos consultas inventados en cada corrida, para que los
+# filtros se prueben sin depender de lo sembrado: cada interno tiene una sola
+# consulta, asi que filtrado por el su cita es la primera de la lista. Al
+# final se salda todo lo creado y la caja queda como estaba.
+MARCA=$(date +%s)
+P1="ASL-C1$MARCA"; P2="ASL-C2$MARCA"
+V1="VM-PRUEBA-$MARCA-1"; V2="VM-PRUEBA-$MARCA-2"
+HOY=$(date +%F)
+AYER=$(date -d yesterday +%F 2>/dev/null || date -v-1d +%F)
+MANANA=$(date -d tomorrow +%F 2>/dev/null || date -v+1d +%F)
+CITAS="$GATEWAY/caja/api/v1/reportes/citas-pendientes"
+
+# cargo_cita <paciente> <visita> <categoria> <monto> -> imprime el id del cargo
+cargo_cita() {
+  cuerpo POST "$GATEWAY/caja/api/v1/cargos" "$TOKEN_ADMINISTRACION" \
+    "{\"pacienteId\":\"$1\",\"visitaId\":\"$2\",\"categoria\":\"$3\",\"concepto\":\"prueba de citas\",\"montoBruto\":$4,\"descuentoPct\":0}" \
+    | campo id
+}
+pagar_cargo() { codigo POST "$GATEWAY/caja/api/v1/cargos/$1/pagar" "$TOKEN_ADMINISTRACION" "{\"monto\":$2}"; }
+# Un campo de la ultima respuesta; los montos a dos decimales, porque python
+# imprime 150.0 y node 150.
+de_la_respuesta() { campo "$1" < "$TEMPORAL/respuesta.json"; }
+monto_de() { printf "%.2f" "$(de_la_respuesta "$1")"; }
+
+C1=$(cargo_cita "$P1" "$V1" CONSULTA 100)
+L1=$(cargo_cita "$P1" "$V1" LABORATORIO 50)
+C2=$(cargo_cita "$P2" "$V2" CONSULTA 80)
+comprobar "se registran los tres cargos de prueba" "si" \
+  "$([ -n "$C1" ] && [ -n "$L1" ] && [ -n "$C2" ] && echo si || echo no)"
+
+# --- Sin pagar -------------------------------------------------------------
+comprobar "administracion lee el informe (200)" "200" "$(codigo GET "$CITAS?pacienteId=$P1" "$TOKEN_ADMINISTRACION")"
+comprobar "una consulta con cargos sin pagar aparece como PENDIENTE" "$V1 PENDIENTE" \
+  "$(de_la_respuesta citas.0.visitaId) $(de_la_respuesta citas.0.estado)"
+comprobar "con su saldo completo: Q150.00" "150.00" "$(monto_de citas.0.saldo)"
+comprobar "y sus cargos contados por categoría (1 consulta, 1 laboratorio)" "1 1" \
+  "$(de_la_respuesta citas.0.cargosPorCategoria.CONSULTA) $(de_la_respuesta citas.0.cargosPorCategoria.LABORATORIO)"
+comprobar "el informe lleva el sello de quien lo pidió, tomado del token" "Marta Solis" \
+  "$(de_la_respuesta generadoPor)"
+comprobar "y los totales generales" "1 150.00" "$(de_la_respuesta totales.citas) $(monto_de totales.saldo)"
+
+# --- Filtros ---------------------------------------------------------------
+codigo GET "$CITAS?pacienteId=$P2" "$TOKEN_ADMINISTRACION" >/dev/null
+comprobar "filtrar por interno trae solo sus consultas" "1 $V2" \
+  "$(de_la_respuesta total) $(de_la_respuesta citas.0.visitaId)"
+codigo GET "$CITAS?pacienteId=$P2&desde=$HOY&hasta=$HOY" "$TOKEN_ADMINISTRACION" >/dev/null
+comprobar "filtrar por la fecha de hoy la incluye" "$V2" "$(de_la_respuesta citas.0.visitaId)"
+codigo GET "$CITAS?pacienteId=$P2&desde=$MANANA" "$TOKEN_ADMINISTRACION" >/dev/null
+comprobar "desde mañana ya no aparece" "0" "$(de_la_respuesta total)"
+codigo GET "$CITAS?pacienteId=$P2&hasta=$AYER" "$TOKEN_ADMINISTRACION" >/dev/null
+comprobar "hasta ayer tampoco" "0" "$(de_la_respuesta total)"
+comprobar "una fecha mal escrita se rechaza (400)" "400" \
+  "$(codigo GET "$CITAS?desde=19-10-2026" "$TOKEN_ADMINISTRACION")"
+
+# El conteo del resumen de la caja sale de la misma consulta que el informe.
+TOTAL_INFORME=$(cuerpo GET "$CITAS" "$TOKEN_ADMINISTRACION" | campo total)
+comprobar "el resumen de la caja cuenta las mismas citas que el informe" "$TOTAL_INFORME" \
+  "$(cuerpo GET "$GATEWAY/caja/api/v1/resumen" "$TOKEN_ADMINISTRACION" | campo citasConSaldoPendiente)"
+
+# --- Abono parcial y pago completo -------------------------------------------
+pagar_cargo "$C1" 60 >/dev/null
+codigo GET "$CITAS?pacienteId=$P1" "$TOKEN_ADMINISTRACION" >/dev/null
+comprobar "tras un abono parcial aparece como PARCIAL" "PARCIAL" "$(de_la_respuesta citas.0.estado)"
+comprobar "con el saldo correcto: Q90.00, pagados Q60.00" "90.00 60.00" \
+  "$(monto_de citas.0.saldo) $(monto_de citas.0.pagado)"
+
+pagar_cargo "$C1" 40 >/dev/null
+pagar_cargo "$L1" 50 >/dev/null
+codigo GET "$CITAS?pacienteId=$P1" "$TOKEN_ADMINISTRACION" >/dev/null
+comprobar "pagada completa ya no aparece" "0" "$(de_la_respuesta total)"
+
+# --- Quien no lo lee ----------------------------------------------------------
+comprobar "medico NO lee el informe (403)" "403" "$(codigo GET "$CITAS" "$TOKEN_MEDICO")"
+comprobar "enfermeria NO lee el informe (403)" "403" "$(codigo GET "$CITAS" "$TOKEN_ENFERMERIA")"
+comprobar "el administrador del padrón tampoco (403)" "403" "$(codigo GET "$CITAS" "$TOKEN_ADMR")"
+
+# Se salda la segunda consulta: la caja queda como estaba.
+pagar_cargo "$C2" 80 >/dev/null
+
 
 # ---------------------------------------------------------------------------
 printf "\n%s== Resultado%s\n" "$CIAN" "$FIN"

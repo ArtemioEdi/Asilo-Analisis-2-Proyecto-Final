@@ -73,6 +73,9 @@ class Nodo {
     return this.hijos.map((h) => (typeof h === "string" ? h : h.textContent)).join("");
   }
   set textContent(v) {
+    // Como en el navegador: al rehacer las opciones de un select vuelve a
+    // quedar elegida la primera.
+    if (this.tagName === "SELECT") this._valor = undefined;
     for (const h of this.hijos) if (typeof h !== "string") h.padre = null;
     this.hijos = v === "" || v == null ? [] : [String(v)];
   }
@@ -134,6 +137,9 @@ class Nodo {
   get options() { return this.descendientes().filter((n) => n.tagName === "OPTION"); }
   get value() {
     if (this.tagName === "SELECT") {
+      // null: se le asigno un valor sin opcion que coincida, y el navegador
+      // lo deja sin nada elegido (selectedIndex -1, value "").
+      if (this._valor === null) return "";
       const opciones = this.options;
       const elegida = opciones.find((o) => o.value === this._valor);
       return elegida ? elegida.value : (opciones[0] ? opciones[0].value : "");
@@ -142,7 +148,13 @@ class Nodo {
     if (this.atributos.value !== undefined) return this.atributos.value;
     return this.tagName === "OPTION" || this.tagName === "TEXTAREA" ? this.textContent : "";
   }
-  set value(v) { this._valor = String(v); }
+  set value(v) {
+    if (this.tagName === "SELECT") {
+      this._valor = this.options.some((o) => o.value === String(v)) ? String(v) : null;
+      return;
+    }
+    this._valor = String(v);
+  }
   reset() {
     for (const n of this.descendientes()) {
       if (["INPUT", "SELECT", "TEXTAREA"].includes(n.tagName)) n._valor = undefined;
@@ -448,7 +460,7 @@ async function principal() {
     hojaVacia() && !$("vista-reportes").textContent.includes("Medicamentos aplicados"));
   const ofrecidos = $("reporte-cual").options.map((o) => o.value).sort().join(",");
   comprobar("el selector de informes solo ofrece los de administracion",
-    ofrecidos === "cobros-paciente,costos-cita,entradas,pagos-fundacion");
+    ofrecidos === "citas-pendientes,cobros-paciente,costos-cita,entradas,pagos-fundacion");
 
   // --- 5. Administracion arma el costo por consulta ---------------------
   await irA("caja", INTERNO);
@@ -459,6 +471,17 @@ async function principal() {
   comprobar("administracion ve la hoja de costos de cada cita",
     visible($("reporte-hoja")) &&
     $("reporte-titulo").textContent === "Costos de cada cita por paciente");
+
+  // El informe adicional de la caja, sin filtros: todas las citas con saldo.
+  await elegirInforme("citas-pendientes");
+  comprobar("el informe de citas pendientes arranca sin interno ni fechas",
+    $("reporte-interno").value === "" && $("reporte-desde").value === "" &&
+    $("reporte-hasta").value === "");
+  $("formulario-reporte").disparar("submit");
+  await esperar();
+  comprobar("administracion ve la hoja de citas con saldo pendiente",
+    visible($("reporte-hoja")) && $("reporte-titulo").textContent === "Citas con saldo pendiente" &&
+    $("reporte-alcance").textContent === "todos los internos · todas las fechas");
   await salir();
 
   // --- 6. El medico no hereda lo de administracion ----------------------
@@ -470,6 +493,9 @@ async function principal() {
   await irA("reportes", INTERNO);
   comprobar("el medico no ve la hoja de costos que genero administracion",
     hojaVacia() && !$("vista-reportes").textContent.includes("Costos de cada cita"));
+  comprobar("ni la de citas con saldo pendiente",
+    !$("vista-reportes").textContent.includes("Citas con saldo pendiente") &&
+    !$("reporte-cual").options.some((o) => o.value === "citas-pendientes"));
 
   // --- 7. Una respuesta que llega despues de cerrar sesion no se pinta --
   await elegirInforme("medicamentos", INTERNO);

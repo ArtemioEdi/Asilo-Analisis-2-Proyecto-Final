@@ -1514,3 +1514,20 @@ button { font-family: inherit; }
 @media print {
   #cambio-clave, .cuadro-clave, .velo--clave { display: none !important; }
 }
+
+/* ---------------------------------------------------------------------
+   Citas con saldo pendiente
+   «Sin pagar» usa el pendiente de la cadena (○); el abono parcial lleva su
+   propia forma, medio lleno, ademas de la palabra.
+--------------------------------------------------------------------- */
+.marbete-estado[data-estado="PARCIAL"]         { color: var(--ambar); }
+.marbete-estado[data-estado="PARCIAL"]::before { content: "◐"; }
+
+/* El conteo del resumen lleva al informe: se ve y se usa como enlace. */
+.enlace-dato {
+  color: var(--cobalto);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.enlace-dato:hover { color: #162c7d; }
