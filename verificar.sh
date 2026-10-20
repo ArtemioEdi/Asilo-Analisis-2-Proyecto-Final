@@ -3,7 +3,7 @@
 #  Asilo de Ancianos "Cabeza de Algodon"
 #  verificar.sh · Revision de seguridad, base de datos y estado del repositorio
 # ---------------------------------------------------------------------------
-#  QUE VERIFICA (112 comprobaciones, 21 bloques)
+#  QUE VERIFICA (115 comprobaciones, 21 bloques)
 #
 #    0-1  Que el stack este arriba y que ms-vigia, ms-pastillero y ms-caja NO
 #         publiquen puerto al equipo anfitrion: solo el 8080 y el 8090.
@@ -24,7 +24,8 @@
 #    12   Que las fichas de los internos las sirva el backend y no el
 #         navegador.
 #    13   Auditoria estatica del repositorio: sin claves de demostracion en
-#         texto plano en el codigo, sin usuarios.json, sin rastros de SQLite,
+#         texto plano en el codigo, sin usuarios.json, con la instancia de la
+#         base completa y sin claves, sin rastros de SQLite,
 #         con .env ignorado, con el dinero en DECIMAL y sin el puerto de MySQL
 #         publicado.
 #    14   Corre pruebas.sh entera y exige que pase.
@@ -285,6 +286,29 @@ grep -rqi "$CLAVES_DEMO" --exclude-dir=node_modules \
 grep -q "usuarios.json" ms-gateway/Dockerfile ms-gateway/server.js 2>/dev/null \
   && rojo "ms-gateway todavia hace referencia a usuarios.json" \
   || verde "ni el Dockerfile ni el gateway mencionan usuarios.json"
+# La instancia de la base para la entrega: que este, que traiga las cinco
+# bases y que no se haya colado ninguna clave de esta instalacion. Se busca el
+# VALOR de cada clave del .env, no su nombre: es lo que no puede publicarse.
+INSTANCIA=sql/instancia/asilo-instancia.sql
+if [ -f "$INSTANCIA" ]; then
+  verde "existe la instancia de la base ($INSTANCIA)"
+  BASES_INSTANCIA=$(grep -cE '^CREATE DATABASE .*`asilo_(vigia|pastillero|caja|consultas|acceso)`' "$INSTANCIA")
+  [ "$BASES_INSTANCIA" = "5" ] \
+    && verde "la instancia trae las cinco bases del sistema" \
+    || rojo "la instancia trae $BASES_INSTANCIA de las cinco bases"
+  CLAVE_FILTRADA=""
+  for VAR in $(grep -E '^(BD_CLAVE_[A-Z_]+|GATEWAY_SECRETO)=' .env 2>/dev/null | cut -d= -f1); do
+    VALOR=$(grep -E "^$VAR=" .env | cut -d= -f2- | tr -d "\r\"'")
+    [ -n "$VALOR" ] && grep -qF "$VALOR" "$INSTANCIA" && CLAVE_FILTRADA="$CLAVE_FILTRADA $VAR"
+  done
+  [ -z "$CLAVE_FILTRADA" ] \
+    && verde "la instancia no contiene ninguna clave del .env" \
+    || rojo "la instancia contiene el valor de:$CLAVE_FILTRADA"
+else
+  rojo "falta la instancia de la base ($INSTANCIA)"
+  rojo "no se puede revisar que traiga las cinco bases"
+  rojo "no se puede revisar que no traiga claves"
+fi
 grep -q 'GATEWAY_SECRETO: *"' docker-compose.yml 2>/dev/null \
   && rojo "el secreto sigue escrito en docker-compose.yml" \
   || verde "el secreto no esta en docker-compose.yml"

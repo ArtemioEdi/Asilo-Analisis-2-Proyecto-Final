@@ -638,7 +638,7 @@ aceptarlo.
 Si además quiere mostrar el aislamiento de datos, sin salir de la terminal:
 
 ```bash
-bash verificar.sh          # 112 comprobaciones, entre ellas las 21 puertas
+bash verificar.sh          # 115 comprobaciones, entre ellas las 21 puertas
                            # cerradas de los tres roles nuevos, la matriz
                            # completa del ADMINISTRADOR y el aislamiento de
                            # usr_consultas y de usr_acceso
@@ -654,7 +654,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **247**, en 25 bloques | **112**, en 21 bloques |
+| **Comprobaciones** | **247**, en 25 bloques | **115**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -748,8 +748,8 @@ cuentas**, en el bloque 21: que `usr_acceso` lea la suya pero el motor le
 niegue el `DELETE`, que no lea las bases de los otros servicios y que ninguno
 de ellos lea la suya; que los nombres con tilde sobrevivan el viaje a MySQL y
 de vuelta; y una **auditoría estática del repositorio**: sin claves de
-demostración en texto plano en el código, sin `usuarios.json`, sin rastros de
-SQLite, con `.env` ignorado, el dinero en `DECIMAL` y el puerto de MySQL sin
+demostración en texto plano en el código, sin `usuarios.json`, con la instancia
+de la base completa y sin claves, sin rastros de SQLite, con `.env` ignorado, el dinero en `DECIMAL` y el puerto de MySQL sin
 publicar.
 
 Para partir de datos limpios (los internos y cargos de ejemplo recién
@@ -1365,6 +1365,36 @@ docker compose exec bd-asilo mysql -u root -p"$BD_CLAVE_ROOT" \
   -e "SELECT * FROM asilo_pastillero.internos\G"
 ```
 
+### La instancia de la base, para la entrega
+
+La fase de implementación pide entregar una instancia de la base de datos. Es
+**`sql/instancia/asilo-instancia.sql`**: el volcado de las cinco bases tal como
+quedan recién levantado el stack, con el escenario de demostración sembrado y
+sin ningún registro de prueba. Lo hace `mysqldump` con `--databases` y las
+cinco bases nombradas, nunca con `--all-databases`, así que **no trae los
+usuarios de MySQL ni sus claves**; las únicas claves que contiene son los hashes
+bcrypt de las siete cuentas de demostración, los mismos de
+`06-esquema-acceso.sql`. La cabecera del archivo dice de qué commit salió.
+
+No se ejecuta al arrancar: el stack sigue creando el esquema desde `sql/01` a
+`sql/06`. Para restaurarla, con cualquier MySQL 8:
+
+```bash
+mysql -u root -p --default-character-set=utf8mb4 < sql/instancia/asilo-instancia.sql
+```
+
+o en MySQL Workbench: *Server → Data Import → Import from Self-Contained File*,
+elegir el archivo y *Start Import*. Crea las cinco bases si no existen, y si
+existen **reemplaza sus tablas**. Se comprobó restaurándola en un MySQL 8.4
+vacío y aparte: las dieciséis tablas tienen las mismas filas que el original y
+los nombres con tilde llegan intactos.
+
+**Se regenera** si cambia el esquema o la siembra: `docker compose down -v &&
+docker compose up -d`, esperar a que todo esté sano y, antes de correr ninguna
+prueba, volver a volcar con los mismos parámetros. `verificar.sh` comprueba en
+su bloque 13 que el archivo exista, que traiga las cinco bases y que no
+contenga el valor de ninguna clave del `.env`.
+
 ---
 
 ## 10. Estructura de archivos
@@ -1382,8 +1412,11 @@ asilo-microservicios/
 │   ├── 04-esquema-caja.sql       cargos, pagos, donaciones y gastos
 │   ├── 05-esquema-consultas.sql  remisiones, consultas, examenes, recetas
 │   │                             y la bitacora de avisos al familiar
-│   └── 06-esquema-acceso.sql     cuentas del personal y su bitacora, con la
-│                                 siembra de las siete de demostracion
+│   ├── 06-esquema-acceso.sql     cuentas del personal y su bitacora, con la
+│   │                             siembra de las siete de demostracion
+│   └── instancia/
+│       └── asilo-instancia.sql   la instancia de entrega: las cinco bases con
+│                                 el escenario sembrado · NO se ejecuta
 ├── .env.ejemplo                plantilla de configuración (se copia a .env)
 ├── .env                        secreto de esta instalación · NO se versiona
 ├── pruebas.sh                  prueba de humo funcional, toda vía el gateway
@@ -1492,7 +1525,9 @@ peligroso que uno que sí.
   está vacío. Cambiar una clave en el `.env` después no surte efecto: hay que
   recrear el volumen con `docker compose down -v`, lo que borra los datos.
 - **Sin copias de seguridad ni réplica.** El volumen `bd-datos` es el único
-  lugar donde viven los datos.
+  lugar donde viven los datos. La instancia de `sql/instancia/` no es una copia
+  de seguridad: es una foto del escenario sembrado, para la entrega, y no trae
+  nada de lo que se registre después.
 - **Los datos de ejemplo se siembran solos** (`SEMBRAR=1`) la primera vez. Los
   tres internos, sus tratamientos y los movimientos de caja son inventados para
   la demostración.
