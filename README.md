@@ -1425,15 +1425,6 @@ peligroso que uno que sí.
   la única entrada publicada; pero alguien que ya estuviera dentro de la red de
   Docker con un token vigente de una cuenta recién desactivada podría seguir
   usándolo contra un microservicio hasta que venza, como mucho 8 horas.
-- **Las credenciales ya no se imprimen en la pantalla de acceso.** Tenerlas
-  escritas en el login era cómodo para grabar el video y contradecía todo lo
-  demás. Ahora dependen de la bandera `MOSTRAR_USUARIOS_DEMO`, **apagada por
-  defecto**. Para encenderla solo mientras se graba, ponga `MOSTRAR_USUARIOS_DEMO=1`
-  en el `.env` y reinicie el gateway. Como la estación web es HTML estático
-  servido por nginx y no puede leer variables de entorno, la consulta en
-  `GET /api/config`, que es público y no devuelve ninguna credencial: solo el
-  sí o el no. Si el gateway no responde, el bloque se queda oculto — el valor
-  seguro por defecto.
 - **No hay HTTPS.** Todo viaja en HTTP plano dentro de `localhost` y de la red
   interna de Docker. En una red real, el token de sesión se puede leer en
   tránsito: haría falta TLS terminado en nginx (o un proxy inverso delante) con

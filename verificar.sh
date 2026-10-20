@@ -268,11 +268,12 @@ titulo "13. Auditoria estatica del repositorio"
 # Se revisa el codigo del sistema: los servicios, la estacion, el esquema y el
 # compose. Los guiones de prueba (pruebas.sh, este, pruebas-interfaz/) quedan
 # fuera a proposito: entran con las claves de demostracion del README, igual
-# que lo haria una persona. Tampoco se mira index.html: su recuadro de ayuda
-# las imprime solo con MOSTRAR_USUARIOS_DEMO=1, que esta apagado por defecto.
+# que lo haria una persona. La estacion se revisa entera, index.html incluido:
+# un recuadro oculto con claves se lee igual en "ver codigo fuente".
 CLAVES_DEMO="medico2026\|enfermeria2026\|admin2026\|fundacion2026\|laboratorio2026\|farmacia2026"
 grep -rqi "$CLAVES_DEMO" --exclude-dir=node_modules \
      --include="*.js" --include="*.py" --include="*.json" --include="*.sql" --include="*.sh" \
+     --include="*.html" --include="*.css" --include="*.conf" \
      ms-gateway ms-vigia ms-pastillero ms-caja ms-consultas estacion-web sql docker-compose.yml 2>/dev/null \
   && rojo "hay claves de demostracion en texto plano en el codigo" \
   || verde "no hay claves de demostracion en texto plano en el codigo"

@@ -14,7 +14,6 @@ const DURACION_SESION = process.env.GATEWAY_DURACION_SESION || "8h";
 const DURACION_CAMBIO = "15m";
 const ORIGEN_PERMITIDO = process.env.ORIGEN_PERMITIDO || "http://localhost:8090";
 
-const MOSTRAR_USUARIOS_DEMO = process.env.MOSTRAR_USUARIOS_DEMO === "1";
 
 const SECRETO = process.env.GATEWAY_SECRETO;
 if (!SECRETO || SECRETO.trim().length < 16) {
@@ -137,7 +136,6 @@ app.get("/", (_req, res) => {
       publicas: {
         "GET /": "Este directorio de rutas.",
         "GET /salud": "Sonda de vida del gateway.",
-        "GET /api/config": "Ajustes que la estacion web necesita antes de iniciar sesion.",
         "POST /api/auth/login":
           "{ usuario, clave } devuelve { token, nombre, rol }. Si la clave es " +
           "temporal devuelve { token, debeCambiarClave: true }: ese token solo " +
@@ -180,16 +178,8 @@ app.get("/", (_req, res) => {
     },
     comoAutenticarse:
       "Envie el token en el encabezado: Authorization: Bearer <token>",
-    mostrarUsuariosDemo: MOSTRAR_USUARIOS_DEMO,
     hora: new Date().toISOString(),
   });
-});
-
-// Publico a proposito: no revela credenciales, solo dice si las de
-// demostracion se imprimen en la pantalla de acceso. Va bajo /api porque es el
-// prefijo que nginx reenvia al gateway.
-app.get("/api/config", (_req, res) => {
-  res.json({ mostrarUsuariosDemo: MOSTRAR_USUARIOS_DEMO });
 });
 
 app.get("/salud", (_req, res) => {
@@ -599,7 +589,7 @@ async function buscarCuenta(conexion, usuario, bloquear) {
   return filas[0] || null;
 }
 
-// Cuantos administradores activos quedan, bloqueando sus filas para que dos
+// Los administradores activos, bloqueando sus filas para que dos
 // desactivaciones simultaneas no dejen al sistema sin ninguno.
 //
 // Con una sola peticion por vez esta salvaguarda no se alcanza: quien la pide
@@ -607,11 +597,34 @@ async function buscarCuenta(conexion, usuario, bloquear) {
 // carrera: dos administradores que se desactivan mutuamente en el mismo
 // instante pasan los dos el control de sesion, pero el FOR UPDATE los pone en
 // fila y el segundo encuentra que ya solo queda uno.
+//
+// Se llama SIEMPRE ANTES de bloquear la fila del objetivo. Al reves se cruzan:
+// A bloquea la fila de B y espera la suya, B bloquea la de A y espera la de B,
+// e InnoDB aborta a una de las dos con un interbloqueo que salia como 500.
+// Con el mismo orden en todas las transacciones no hay ciclo posible: la
+// segunda espera, lee que ya queda un solo administrador y responde 409.
+//
+// Y se recorre la clave primaria, no el indice (rol, activo). Por ese indice,
+// InnoDB bloquea tambien el hueco entre sus entradas; desactivar mueve la
+// entrada de la cuenta dentro de ese mismo indice, y esa insercion chocaba con
+// el bloqueo que la otra transaccion tenia en espera: seguia habiendo
+// interbloqueo, comprobado en la carrera. Por la clave primaria nadie retiene
+// nada en el indice secundario. Se bloquean todas las filas, pero la tabla es
+// el personal de un asilo y las lecturas sin FOR UPDATE —el control de sesion
+// de cada peticion— no esperan.
 async function administradoresActivos(conexion) {
   const [filas] = await conexion.execute(
-    "SELECT usuario FROM usuarios WHERE rol = 'ADMINISTRADOR' AND activo = 1 FOR UPDATE"
+    "SELECT usuario FROM usuarios FORCE INDEX (PRIMARY) " +
+      "WHERE rol = 'ADMINISTRADOR' AND activo = 1 ORDER BY usuario FOR UPDATE"
   );
-  return filas.length;
+  return filas.map((f) => f.usuario);
+}
+
+// Quien actua paso el control de sesion al llegar, pero en la misma carrera
+// pudieron desactivarlo mientras esperaba su turno. Con las filas de los
+// administradores ya bloqueadas, se confirma que sigue siendo uno de ellos.
+function exigirAdministradorVigente(administradores, quien) {
+  if (!administradores.includes(quien)) throw new Rechazo(401, MENSAJE_SESION_INVALIDA);
 }
 
 class Rechazo extends Error {
@@ -629,6 +642,13 @@ function administrar(fn) {
       await fn(req, res);
     } catch (error) {
       if (error instanceof Rechazo) return res.status(error.estado).json({ error: error.message });
+      // Red de seguridad por si algun camino nuevo rompe el orden de los
+      // bloqueos: un choque entre dos operaciones no es un error interno.
+      if (error.code === "ER_LOCK_DEADLOCK" || error.code === "ER_LOCK_WAIT_TIMEOUT") {
+        return res.status(409).json({
+          error: "Otra operación sobre las cuentas se cruzó con esta. Vuelva a intentarlo.",
+        });
+      }
       throw error;
     }
   });
@@ -714,6 +734,8 @@ cuentas.put("/:usuario", administrar(async (req, res) => {
   }
 
   const fila = await enTransaccion(async (conexion) => {
+    // Primero los administradores, despues el objetivo: ver administradoresActivos.
+    const administradores = await administradoresActivos(conexion);
     const actual = await buscarCuenta(conexion, objetivo, true);
     if (!actual) throw new Rechazo(404, "No existe la cuenta '" + objetivo + "'.");
     if (actual.activo !== 1) {
@@ -726,9 +748,10 @@ cuentas.put("/:usuario", administrar(async (req, res) => {
     if (cambiaRol && objetivo === admin) {
       throw new Rechazo(409, "No puede cambiarse el rol a sí mismo: pídaselo a otro administrador.");
     }
-    if (cambiaRol && actual.rol === "ADMINISTRADOR" && (await administradoresActivos(conexion)) <= 1) {
+    if (cambiaRol && actual.rol === "ADMINISTRADOR" && administradores.length <= 1) {
       throw new Rechazo(409, "Es el último ADMINISTRADOR activo: el sistema se quedaría sin quien gestione las cuentas.");
     }
+    exigirAdministradorVigente(administradores, admin);
 
     const cambios = [];
     if (nombreNuevo !== actual.nombre) cambios.push("nombre '" + actual.nombre + "' → '" + nombreNuevo + "'");
@@ -790,12 +813,15 @@ cuentas.post("/:usuario/desactivar", administrar(async (req, res) => {
   }
 
   const fila = await enTransaccion(async (conexion) => {
+    // Primero los administradores, despues el objetivo: ver administradoresActivos.
+    const administradores = await administradoresActivos(conexion);
     const actual = await buscarCuenta(conexion, objetivo, true);
     if (!actual) throw new Rechazo(404, "No existe la cuenta '" + objetivo + "'.");
     if (actual.activo !== 1) throw new Rechazo(409, "La cuenta ya está desactivada.");
-    if (actual.rol === "ADMINISTRADOR" && (await administradoresActivos(conexion)) <= 1) {
+    if (actual.rol === "ADMINISTRADOR" && administradores.length <= 1) {
       throw new Rechazo(409, "Es el último ADMINISTRADOR activo: el sistema se quedaría sin quien gestione las cuentas.");
     }
+    exigirAdministradorVigente(administradores, admin);
     await conexion.execute(
       "UPDATE usuarios SET activo = 0, desactivado_en = NOW(), desactivado_por = ?, " +
         "motivo_desactivacion = ?, version_sesion = version_sesion + 1, " +

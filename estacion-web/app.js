@@ -2,7 +2,6 @@
 // Todo pasa por ms-gateway: es el unico origen que conoce el navegador.
 
 const AUTH = "/api/auth";
-const CONFIG = "/api/config";
 const VIGIA = "/vigia";
 const PASTILLERO = "/pastillero";
 const CAJA = "/caja";
@@ -3133,19 +3132,6 @@ async function iniciarApp() {
   clearInterval(relojBarra);
   relojBarra = setInterval(refrescarBarra, 30000);
 }
-
-// Solo si el gateway dice que MOSTRAR_USUARIOS_DEMO está encendida. Apagada
-// por defecto: las claves escritas en la pantalla de acceso contradicen el
-// resto del trabajo de seguridad. El endpoint devuelve el sí o el no, nunca
-// las credenciales.
-(async function ajustarAyudaDeAcceso() {
-  try {
-    const config = await pedir(CONFIG);
-    $("acceso-ayuda").hidden = !config.mostrarUsuariosDemo;
-  } catch (_) {
-    // Si no se puede preguntar, oculto: el valor seguro por defecto.
-  }
-})();
 
 // Una sesion guardada se valida contra el gateway antes de saltarse la
 // pantalla de acceso.

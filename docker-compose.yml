@@ -156,9 +156,6 @@ services:
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
       GATEWAY_DURACION_SESION: ${GATEWAY_DURACION_SESION:-8h}
       ORIGEN_PERMITIDO: ${ORIGEN_PERMITIDO:-http://localhost:8090}
-      # Apagada por defecto: las credenciales de demostracion no se imprimen en
-      # la pantalla de acceso salvo que se pida expresamente en el .env.
-      MOSTRAR_USUARIOS_DEMO: ${MOSTRAR_USUARIOS_DEMO:-0}
       # Las cuentas del personal viven en su propia base. usr_acceso no tiene
       # DELETE: las cuentas se desactivan, no se borran.
       BD_HOST: bd-asilo
