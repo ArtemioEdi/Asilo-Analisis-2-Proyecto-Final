@@ -955,7 +955,9 @@ titulo "23. La pantalla no le hereda nada al siguiente usuario"
 # estacion dejaba pintado el informe del que cerro sesion y el siguiente lo
 # veia. pruebas-interfaz/cambio-de-sesion.js carga la estacion que se esta
 # sirviendo en un DOM minimo y la maneja con medico y administracion, uno
-# detras del otro.
+# detras del otro. Tambien recorre las cuentas: la clave temporal que ve el
+# administrador no le queda al siguiente, y quien entra con ella cae en la
+# pantalla de cambio de clave, tambien al recargar.
 #
 # Corre dentro de ms-gateway, que ya trae node y alcanza a estacion-web por la
 # red interna; si docker no esta a mano, con el node del equipo.

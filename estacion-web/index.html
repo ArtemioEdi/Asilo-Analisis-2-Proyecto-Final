@@ -45,6 +45,63 @@
 </section>
 
 
+<!-- Cambio de clave. Al nivel del acceso y con su misma forma: con una clave
+     temporal no se entra a la aplicacion, se entra aqui. Sirve tambien para
+     el cambio voluntario, encima de la aplicacion y con un boton de cancelar.
+     Los requisitos se dicen en palabras y se marcan con "cumple" o "falta",
+     no solo con color. -->
+<section class="acceso" id="cambio-clave" aria-labelledby="cambio-titulo" hidden>
+  <form class="acceso__tarjeta" id="formulario-cambio" autocomplete="off" novalidate>
+    <span class="marca">Cabeza de Algodón</span>
+    <h1 id="cambio-titulo">Elija su clave</h1>
+    <p class="acceso__nota" id="cambio-saludo"></p>
+
+    <p class="acceso__reanudar" id="cambio-motivo"></p>
+
+    <div class="campo campo--ancho">
+      <label for="cambio-actual" id="cambio-actual-rotulo">Clave temporal</label>
+      <input id="cambio-actual" type="password" autocomplete="current-password" required>
+    </div>
+    <div class="campo campo--ancho">
+      <label for="cambio-nueva">Clave nueva</label>
+      <input id="cambio-nueva" type="password" autocomplete="new-password" required
+             aria-describedby="cambio-requisitos-titulo cambio-requisitos">
+    </div>
+    <div class="campo campo--ancho">
+      <label for="cambio-confirmar">Repita la clave nueva</label>
+      <input id="cambio-confirmar" type="password" autocomplete="new-password" required>
+    </div>
+
+    <p class="requisitos__titulo" id="cambio-requisitos-titulo">La clave nueva necesita:</p>
+    <ul class="requisitos" id="cambio-requisitos">
+      <li class="requisito" data-requisito="largo" data-cumple="no">
+        <span class="requisito__marca">falta</span> al menos 8 caracteres
+      </li>
+      <li class="requisito" data-requisito="mezcla" data-cumple="no">
+        <span class="requisito__marca">falta</span> al menos una letra y un dígito
+      </li>
+      <li class="requisito" data-requisito="actual" data-cumple="no">
+        <span class="requisito__marca">falta</span> ser distinta de la clave de arriba
+      </li>
+      <li class="requisito" data-requisito="usuario" data-cumple="no">
+        <span class="requisito__marca">falta</span> ser distinta de su nombre de usuario
+      </li>
+      <li class="requisito" data-requisito="iguales" data-cumple="no">
+        <span class="requisito__marca">falta</span> que las dos claves nuevas coincidan
+      </li>
+    </ul>
+
+    <p class="campo__error" id="cambio-error" role="alert"></p>
+
+    <button class="accion accion--ancha" id="cambio-guardar" type="submit">Guardar mi clave</button>
+    <div class="cambio__pie">
+      <button class="accion-sec" id="cambio-cancelar" type="button" hidden>Cancelar</button>
+      <button class="accion-sec accion-sec--suave" id="cambio-salir" type="button">Salir</button>
+    </div>
+  </form>
+</section>
+
+
 <!-- Barra superior fija: interno seleccionado, quien esta en sesion y la
      salida. -->
 <header class="superior" id="superior" hidden>
@@ -64,6 +121,7 @@
       <span class="superior__nombre" id="sesion-nombre">—</span>
       <span class="marbete" id="sesion-rol">—</span>
     </div>
+    <button class="accion-sec" id="cambiar-mi-clave" type="button">Cambiar mi clave</button>
     <button class="accion-sec" id="cerrar-sesion" type="button">Salir</button>
   </div>
 </header>
@@ -111,6 +169,10 @@
       <button class="pestana" id="pestana-padron" data-vista="padron" type="button"
               role="tab" aria-selected="false" aria-controls="vista-padron" hidden>
         Padrón
+      </button>
+      <button class="pestana" id="pestana-usuarios" data-vista="usuarios" type="button"
+              role="tab" aria-selected="false" aria-controls="vista-usuarios" hidden>
+        Usuarios
       </button>
     </nav>
 
@@ -358,6 +420,33 @@
       </div>
 
       <div id="padron-lista"></div>
+
+    </section>
+
+    <!-- ---------------- Cuentas del personal (ADMINISTRADOR) ------------- -->
+    <section id="vista-usuarios" role="tabpanel" aria-labelledby="pestana-usuarios"
+             tabindex="-1" hidden>
+
+      <header class="encabezado">
+        <div>
+          <h2>Cuentas del personal</h2>
+          <p class="encabezado__meta" id="usuarios-meta"></p>
+        </div>
+        <button class="accion" id="abrir-alta-usuario" type="button">Dar de alta</button>
+      </header>
+
+      <div class="padron__filtros">
+        <div class="campo">
+          <label for="usuarios-estado">Mostrar</label>
+          <select id="usuarios-estado">
+            <option value="ACTIVAS">Activas</option>
+            <option value="DESACTIVADAS">Desactivadas</option>
+            <option value="TODAS">Todas</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="usuarios-lista"></div>
 
     </section>
     <!-- ---------------- Consultas · la cadena clinica (MEDICO) ----------- -->
@@ -836,6 +925,127 @@
 </aside>
 <div class="velo" id="velo-interno" hidden></div>
 <div class="velo" id="velo-egreso" hidden></div>
+
+
+<!-- Alta y edicion de una cuenta. Igual que el interno: el mismo cajon para
+     las dos, y el usuario solo se pide en el alta porque no se cambia. -->
+<aside class="cajon" id="cajon-usuario" hidden role="dialog" aria-modal="true"
+       aria-labelledby="usuario-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio">ms-gateway</span>
+      <h3 id="usuario-titulo">Dar de alta una cuenta</h3>
+    </div>
+    <button class="cerrar" id="cerrar-usuario" type="button" aria-label="Cerrar">×</button>
+  </header>
+
+  <p class="cajon__nota" id="usuario-nota"></p>
+
+  <form class="formulario" id="formulario-usuario" autocomplete="off">
+    <div class="campo campo--ancho" id="campo-usuario-usuario">
+      <label for="usuario-usuario">Usuario</label>
+      <input id="usuario-usuario" type="text" maxlength="32" autocapitalize="off"
+             spellcheck="false" placeholder="enf.lopez"
+             aria-describedby="usuario-usuario-ayuda">
+      <p class="formulario__nota" id="usuario-usuario-ayuda">
+        De 3 a 32 caracteres: minúsculas, dígitos, punto, guion o guion bajo,
+        empezando con una letra. No se puede cambiar después.
+      </p>
+    </div>
+    <div class="campo campo--ancho">
+      <label for="usuario-nombre">Nombre</label>
+      <input id="usuario-nombre" type="text" required minlength="3" maxlength="120"
+             placeholder="Enf. Rosa López">
+    </div>
+    <div class="campo campo--ancho">
+      <label for="usuario-rol">Rol</label>
+      <select id="usuario-rol" aria-describedby="usuario-rol-motivo">
+        <option value="MEDICO">Medicina</option>
+        <option value="ENFERMERIA">Enfermería</option>
+        <option value="ADMINISTRACION">Administración (caja)</option>
+        <option value="ADMINISTRADOR">Administrador del sistema</option>
+        <option value="FUNDACION">Fundación</option>
+        <option value="LABORATORIO">Laboratorio</option>
+        <option value="FARMACIA">Farmacia</option>
+      </select>
+      <p class="formulario__nota" id="usuario-rol-motivo"></p>
+    </div>
+
+    <button class="accion accion--ancha" id="guardar-usuario" type="submit">Dar de alta</button>
+  </form>
+</aside>
+
+<!-- Desactivacion. Como el egreso: pide el motivo aqui y confirma despues,
+     con las consecuencias ya contadas. -->
+<aside class="cajon" id="cajon-desactivar" hidden role="dialog" aria-modal="true"
+       aria-labelledby="desactivar-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio">ms-gateway</span>
+      <h3 id="desactivar-titulo">Desactivar una cuenta</h3>
+    </div>
+    <button class="cerrar" id="cerrar-desactivar" type="button" aria-label="Cerrar">×</button>
+  </header>
+
+  <dl class="datos" id="desactivar-cabecera"></dl>
+
+  <p class="cajon__nota">
+    Una cuenta <b>nunca se borra</b>. Al desactivarla deja de poder entrar y
+    sus sesiones abiertas se cierran en el acto, pero sigue en la lista y su
+    nombre sigue firmando lo que hizo. Se puede reactivar.
+  </p>
+
+  <form class="formulario" id="formulario-desactivar" autocomplete="off">
+    <div class="campo campo--ancho">
+      <label for="desactivar-motivo">Motivo</label>
+      <input id="desactivar-motivo" type="text" required minlength="3" maxlength="200"
+             placeholder="Fin del contrato, licencia, cambio de puesto…">
+    </div>
+    <button class="accion accion--ancha accion--peligro" id="confirmar-desactivar" type="submit">
+      Desactivar
+    </button>
+  </form>
+</aside>
+
+<!-- Bitacora de una cuenta: que se le hizo, quien y cuando. -->
+<aside class="cajon" id="cajon-bitacora" hidden role="dialog" aria-modal="true"
+       aria-labelledby="bitacora-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio">ms-gateway</span>
+      <h3 id="bitacora-titulo">Bitácora de la cuenta</h3>
+    </div>
+    <button class="cerrar" id="cerrar-bitacora" type="button" aria-label="Cerrar">×</button>
+  </header>
+  <dl class="datos" id="bitacora-cabecera"></dl>
+  <div id="bitacora-lista"></div>
+</aside>
+<div class="velo" id="velo-usuario" hidden></div>
+<div class="velo" id="velo-desactivar" hidden></div>
+<div class="velo" id="velo-bitacora" hidden></div>
+
+<!-- La clave temporal. Se muestra una sola vez: no se cierra tocando fuera
+     ni con Escape, porque cerrarla por descuido obliga a restablecerla. Al
+     cerrarla se borra del DOM. -->
+<div class="velo velo--clave" id="velo-clave" hidden></div>
+<div class="confirmar cuadro-clave" id="cuadro-clave" hidden role="alertdialog" aria-modal="true"
+     aria-labelledby="clave-titulo" aria-describedby="clave-aviso">
+  <h3 id="clave-titulo">Clave temporal</h3>
+  <p class="cuadro-clave__para" id="clave-para"></p>
+  <div class="cuadro-clave__valor">
+    <code id="clave-valor"></code>
+    <button class="accion-sec" id="clave-copiar" type="button">Copiar</button>
+  </div>
+  <p class="cuadro-clave__copiada" id="clave-copiada" aria-live="polite"></p>
+  <p class="confirmar__aviso" id="clave-aviso">
+    Entréguesela a la persona. No se volverá a mostrar: si se pierde,
+    restablézcala.
+  </p>
+  <p class="cuadro-clave__vence" id="clave-vence"></p>
+  <div class="confirmar__botones">
+    <button class="accion" id="clave-cerrar" type="button">Ya la entregué, cerrar</button>
+  </div>
+</div>
 
 <script src="app.js"></script>
 </body>

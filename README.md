@@ -450,7 +450,12 @@ estación en blanco antes de volver al acceso:
 - cierra los cajones y cancela una confirmación que haya quedado abierta;
 - limpia los formularios a medio llenar y quita los avisos;
 - olvida el padrón que había cargado. Si no, una bandeja de un rol que no lee
-  el padrón pondría nombres que ese rol no debería ver.
+  el padrón pondría nombres que ese rol no debería ver;
+- cierra el cuadro de la **clave temporal** y la borra del DOM. Una clave
+  recién emitida que se queda en pantalla para el siguiente es la misma fuga,
+  con algo más grave adentro. Esa clave tampoco vive en ninguna variable ni se
+  escribe nunca en `sessionStorage`: existe solo mientras el cuadro está
+  abierto.
 
 Una respuesta que llega después de cerrar sesión tampoco se pinta: `pedir()`
 la descarta si el token cambió mientras venía en camino. Al cambiar de informe
@@ -642,7 +647,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **205**, en 24 bloques | **112**, en 21 bloques |
+| **Comprobaciones** | **219**, en 24 bloques | **112**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -753,7 +758,12 @@ bash verificar.sh
 > `app.js` que sirve `estacion-web` en un DOM mínimo escrito a mano, sin
 > dependencias. Con ese DOM entra como médico, genera un informe, cierra
 > sesión, entra como administración y comprueba que no quede nada del
-> anterior. También hace el camino inverso. No reemplaza a un navegador: el
+> anterior. También hace el camino inverso. Y recorre las cuentas: el
+> administrador da de alta una, ve la clave temporal y cierra sesión con el
+> cuadro abierto; entra el médico y **no queda rastro de la clave** en ningún
+> nodo, campo ni atributo, ni en `sessionStorage`. Después la cuenta nueva
+> entra con esa clave, cae en la pantalla de cambio y no en la aplicación,
+> sigue ahí al recargar, y al guardar su clave propia entra. No reemplaza a un navegador: el
 > DOM cubre solo lo que `app.js` usa. Pero si `app.js` empieza a usar algo que
 > ese DOM no tiene, el recorrido falla en lugar de pasar en falso.
 
@@ -1058,6 +1068,7 @@ Las vistas son **enlazables** y el botón de atrás del navegador funciona:
 | `#/interno/ASL-014` | La jornada de ese interno |
 | `#/reportes` | Los siete informes, filtrados por lo que el rol puede ver |
 | `#/padron` | Padrón de internos: alta, modificación y egreso |
+| `#/usuarios` | Cuentas del personal: alta, edición, restablecimiento, desactivación y bitácora |
 
 El acceso ocupa la pantalla completa, sin nada detrás. Al entrar, la aplicación
 arranca arriba y en la vista que le toca al rol: medicina y enfermería en la
@@ -1069,7 +1080,7 @@ puede usar — **con el nombre de lo que ese rol de verdad puede hacer**:
 | `MEDICO` | Jornada · Consultas · «Cuenta del interno» · Reportes | De la caja, solo los cargos y el saldo del interno seleccionado, que es su excepción de lectura. Sin balance y sin formularios. En Reportes, los informes 2, 6 y 7 |
 | `ENFERMERIA` | Jornada · Consultas · Reportes | Sin pestaña de caja. En Reportes, **un solo informe**: el 7 |
 | `ADMINISTRACION` | «Caja y donaciones» · Reportes | Módulo de caja completo: balance de entradas y salidas, estado de cuenta, formularios de cargo, donación, gasto y la cuota mensual. En Reportes, los informes 1, 3, 4 y 5 |
-| `ADMINISTRADOR` | Padrón | Solo el padrón: alta, edición y egreso. Ni caja, ni farmacovigilancia, ni jornada |
+| `ADMINISTRADOR` | Padrón · Usuarios | El padrón —alta, edición y egreso— y las cuentas del personal. Ni caja, ni farmacovigilancia, ni jornada |
 
 El médico veía antes una pestaña llamada «Caja y donaciones» que prometía más
 de lo que su rol puede leer. **La interfaz no pide lo que el rol no puede
@@ -1081,6 +1092,37 @@ le guarda esa intención y se le lleva ahí después de entrar.
 **Al vencerse la sesión no se expulsa de golpe:** se avisa en la pantalla de
 acceso, se conserva el usuario escrito y se recuerda en qué vista estaba, para
 devolverlo exactamente ahí al reingresar.
+
+**El acceso dice por qué no se entra.** Una clave equivocada sigue siendo
+«Usuario o clave incorrectos», pero la cuenta desactivada, la clave temporal
+vencida y la base de cuentas caída muestran el mensaje del gateway, porque cada
+una se resuelve distinto: las dos primeras con el administrador, la tercera
+esperando. Antes las tres se leían como «clave incorrecta» y mandaban a la
+persona a probar otra clave.
+
+**Con una clave temporal no se entra a la aplicación.** Se entra a la pantalla
+*Elija su clave*, al nivel del acceso y sin nada detrás: saluda por nombre,
+explica por qué hay que cambiarla y pide la temporal, la nueva y su
+repetición. Los requisitos están escritos y cada uno dice **«cumple» o
+«falta»** en texto, no solo con color. Recargar la página no la saltea: la
+estación le pregunta al gateway y, si el token es de cambio, vuelve ahí. Tiene
+un botón *Salir*. El mismo formulario se abre desde **«Cambiar mi clave»**, en
+la barra superior de todos los roles, para el cambio voluntario: ahí pide la
+clave actual y se puede cancelar.
+
+**La vista de cuentas del administrador** sigue el patrón del padrón:
+encabezado con conteo, filtro (arranca en *activas*), la lista y los
+formularios en cajón, con los mismos estados de carga, vacío y error. El estado
+de cada cuenta va en palabras —*Activa*, *Desactivada*, *Clave temporal
+pendiente*— además de su color y su forma. No hay botón de eliminar. Las
+desactivadas se ven pero no se editan: solo se reactivan. Lo que el gateway va
+a rechazar —desactivarse a sí mismo, quitarse el rol, restablecer la propia
+clave, que cerraría la sesión antes de que la clave nueva se llegara a ver—
+aparece deshabilitado **con el motivo escrito al lado**; el servidor decide
+igual. La clave temporal sale en un cuadro aparte, en monoespaciada, con un
+botón *Copiar*, la fecha de vencimiento y el aviso de que no se volverá a
+mostrar. Ese cuadro no se cierra tocando fuera ni con Escape: cerrarlo por
+descuido obligaría a restablecerla.
 
 ### Carga, vacío y error
 

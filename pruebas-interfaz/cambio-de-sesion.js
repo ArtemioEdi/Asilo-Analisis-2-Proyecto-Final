@@ -12,6 +12,10 @@
 // cubre solo lo que app.js usa; si app.js empieza a usar algo que no esta, el
 // recorrido falla en vez de pasar en falso.
 //
+// Recorre tambien las cuentas del personal: la clave temporal que ve el
+// administrador no le queda al siguiente, y quien entra con ella cae en la
+// pantalla de cambio de clave, tambien si recarga la pagina.
+//
 // Lo corre pruebas.sh. Imprime una linea por comprobacion, "si" o "no", un
 // tabulador y la descripcion; y al final "FIN" si llego hasta el final.
 // ---------------------------------------------------------------------------
@@ -284,10 +288,13 @@ async function esperar() {
   }
 }
 
+// sessionStorage vive mientras viva la pestaña: sobrevive a una recarga, y
+// por eso es uno solo para todo el recorrido.
+const almacen = new Map();
+
 function crearVentana() {
   const escuchasVentana = {};
   const location = { hash: "", pathname: "/" };
-  const almacen = new Map();
   const ventana = {
     document: documento,
     location,
@@ -377,20 +384,36 @@ async function generar(clave, interno) {
   await esperar();
 }
 
+// Busca un texto en todo lo que la pagina guarda en nodos: el texto visible
+// y el oculto, los valores de los campos y los atributos.
+function rastro(texto) {
+  if (documento.raiz.textContent.includes(texto)) return true;
+  return documento.raiz.descendientes().some((n) =>
+    String(n._valor || "").includes(texto) ||
+    Object.values(n.atributos).some((v) => String(v).includes(texto)) ||
+    Object.values(n.dataset).some((v) => String(v).includes(texto)));
+}
+
+let HTML_SERVIDO, APP_SERVIDA;
+
+// Una pagina nueva sobre el mismo sessionStorage: lo que pasa al recargar.
+async function cargarPagina() {
+  documento = crearDocumento(analizarHtml(HTML_SERVIDO));
+  pagina = vm.createContext(crearVentana());
+  vm.runInContext(APP_SERVIDA, pagina, { filename: "app.js" });
+  await esperar();
+}
+
 const hojaVacia = () =>
   !visible($("reporte-hoja")) && $("reporte-cuerpo").textContent === "" &&
   $("reporte-titulo").textContent === "" && $("reporte-sello").textContent === "";
 
 async function principal() {
-  const [html, app] = await Promise.all([
+  [HTML_SERVIDO, APP_SERVIDA] = await Promise.all([
     fetch(WEB + "/index.html").then((r) => r.text()),
     fetch(WEB + "/app.js").then((r) => r.text()),
   ]);
-
-  documento = crearDocumento(analizarHtml(html));
-  pagina = vm.createContext(crearVentana());
-  vm.runInContext(app, pagina, { filename: "app.js" });
-  await esperar();
+  await cargarPagina();
 
   const INTERNO = "ASL-014";
 
@@ -455,6 +478,77 @@ async function principal() {
   await esperar();
   comprobar("un informe que llega despues de cerrar sesion no se pinta",
     hojaVacia() && $("reporte-estado").textContent === "" && $("avisos").textContent === "");
+
+  // --- 8. La clave temporal no le queda al siguiente -------------------
+  // Una cuenta de nombre unico en cada corrida: las cuentas no se borran.
+  const SUFIJO = String(Date.now()).slice(-9);
+  const CUENTA = "int.prueba." + SUFIJO;
+  const NOMBRE = "Recorrido Interfaz " + SUFIJO;
+
+  comprobar("el administrador entra", await entrar("admin", "admin2026x"));
+  await irA("usuarios");
+  comprobar("el administrador ve la pestaña Usuarios junto al padrón",
+    visible($("pestanas")) && visible($("pestana-usuarios")) && visible($("pestana-padron")));
+  comprobar("la lista de cuentas arranca en activas y no ofrece eliminar",
+    $("usuarios-estado").value === "ACTIVAS" && $("usuarios-lista").textContent.includes("admin") &&
+    !/eliminar|borrar/i.test($("usuarios-lista").textContent));
+
+  $("abrir-alta-usuario").click();
+  $("usuario-usuario").value = CUENTA;
+  $("usuario-nombre").value = NOMBRE;
+  $("usuario-rol").value = "ENFERMERIA";
+  $("formulario-usuario").disparar("submit");
+  await esperar();
+  const TEMPORAL = $("clave-valor").textContent;
+  comprobar("al dar de alta la clave temporal se ve en su cuadro, con su vencimiento",
+    visible($("cuadro-clave")) && /^[a-km-zA-HJ-NP-Z2-9]{10}$/.test(TEMPORAL) &&
+    $("clave-vence").textContent.startsWith("Vence el"));
+  comprobar("la clave temporal no se escribe en sessionStorage",
+    ![...almacen.values()].some((v) => v.includes(TEMPORAL)));
+
+  // Sale con el cuadro todavia abierto: el peor caso.
+  await salir();
+  comprobar("al cerrar sesión el cuadro de la clave queda cerrado y vacío",
+    !visible($("cuadro-clave")) && $("clave-valor").textContent === "");
+  comprobar("el médico entra después del administrador", await entrar("medico", "medico2026"));
+  comprobar("no queda rastro de la clave temporal en ningún nodo", !rastro(TEMPORAL));
+  comprobar("ni en la memoria de la página",
+    !enPagina("JSON.stringify(estadoUsuarios)").includes(TEMPORAL));
+  await salir();
+
+  // --- 9. Quien entra con la temporal cae en el cambio de clave --------
+  const entroALaApp = await entrar(CUENTA, TEMPORAL);
+  comprobar("la cuenta nueva entra con la temporal y cae en el cambio de clave, no en la aplicación",
+    !entroALaApp && visible($("cambio-clave")) && !visible($("armazon")) && !visible($("acceso")));
+  comprobar("la pantalla de cambio saluda por nombre y pide la clave temporal",
+    $("cambio-saludo").textContent.includes(NOMBRE) &&
+    $("cambio-actual-rotulo").textContent === "Clave temporal" && !visible($("cambio-cancelar")));
+
+  await cargarPagina();
+  comprobar("al recargar con el token de cambio vuelve a la pantalla de cambio",
+    visible($("cambio-clave")) && !visible($("armazon")));
+
+  const PROPIA = "Recorrido" + SUFIJO;
+  $("cambio-actual").value = TEMPORAL;
+  $("cambio-nueva").value = PROPIA;
+  $("cambio-confirmar").value = PROPIA;
+  $("formulario-cambio").disparar("submit");
+  await esperar();
+  comprobar("al guardar la clave propia entra a la aplicación",
+    !visible($("cambio-clave")) && visible($("armazon")) && visible($("vista-jornada")));
+  comprobar("ningún campo conserva las claves que escribió", !rastro(TEMPORAL) && !rastro(PROPIA));
+  await salir();
+
+  // La cuenta del recorrido no se queda activa con una clave conocida.
+  const admin = await fetch(GATEWAY + "/api/auth/login", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ usuario: "admin", clave: "admin2026x" }),
+  }).then((r) => r.json());
+  await fetch(GATEWAY + "/api/usuarios/" + CUENTA + "/desactivar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + admin.token },
+    body: JSON.stringify({ motivo: "Fin del recorrido de interfaz" }),
+  });
 
   comprobar("la estacion corrio sin errores de JavaScript", erroresDeLaPagina.length === 0);
   for (const e of erroresDeLaPagina) console.error(e);

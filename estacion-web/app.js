@@ -13,7 +13,9 @@ const CONSULTAS = "/consultas";
 // la ficha por su cuenta y del cliente solo recibe el pacienteId.
 const INTERNOS = {};
 
-const SESION = { token: null, usuario: null, nombre: null, rol: null };
+// cambio: true mientras la sesion sea la de una clave temporal. Ese token
+// solo abre la pantalla de cambio de clave; el gateway rechaza todo lo demas.
+const SESION = { token: null, usuario: null, nombre: null, rol: null, cambio: false };
 const estado = { interno: null, medicacion: [], dictamen: null, receta: null };
 let TARIFAS_CAJA = [];
 
@@ -365,7 +367,7 @@ function problema(nodo, error, accion, alReintentar) {
 // Enrutado por hash: las vistas son enlazables (#/jornada, #/caja,
 // #/interno/ASL-014) y el boton de atras funciona.
 
-const VISTAS = ["jornada", "caja", "consultas", "reportes", "padron",
+const VISTAS = ["jornada", "caja", "consultas", "reportes", "padron", "usuarios",
                 "agenda", "laboratorio", "farmacia"];
 
 // Reflejo exacto de la matriz del gateway: una vista de mas aqui solo
@@ -374,7 +376,7 @@ const VISTAS_POR_ROL = {
   MEDICO:         ["jornada", "consultas", "caja", "reportes"],
   ENFERMERIA:     ["jornada", "consultas", "reportes"],
   ADMINISTRACION: ["caja", "reportes"],
-  ADMINISTRADOR:  ["padron"],
+  ADMINISTRADOR:  ["padron", "usuarios"],
   FUNDACION:      ["agenda"],
   LABORATORIO:    ["laboratorio"],
   FARMACIA:       ["farmacia"],
@@ -430,6 +432,7 @@ function irA(destino, reemplazar) {
   if (ruta.vista === "consultas" && (cambioVista || cambioInterno)) pintarConsultas();
   if (ruta.vista === "reportes" && (cambioVista || cambioInterno)) pintarReportes();
   if (ruta.vista === "padron" && cambioVista) pintarPadron();
+  if (ruta.vista === "usuarios" && cambioVista) pintarUsuarios();
   if (ruta.vista === "agenda" && cambioVista) pintarAgenda();
   if (ruta.vista === "laboratorio" && cambioVista) pintarLaboratorio();
   if (ruta.vista === "farmacia" && cambioVista) pintarFarmacia();
@@ -462,12 +465,15 @@ function guardarSesion(datos) {
   SESION.token = datos.token;
   SESION.usuario = datos.usuario;
   SESION.nombre = datos.nombre;
-  SESION.rol = datos.rol;
+  SESION.rol = datos.debeCambiarClave ? "CAMBIO_DE_CLAVE" : datos.rol;
+  SESION.cambio = datos.debeCambiarClave === true;
+  // Solo el token y quien es. Una clave, temporal o no, nunca se guarda aqui.
   sessionStorage.setItem("sesionAsilo", JSON.stringify(SESION));
 }
 
 function limpiarSesion() {
   SESION.token = null; SESION.usuario = null; SESION.nombre = null; SESION.rol = null;
+  SESION.cambio = false;
   sessionStorage.removeItem("sesionAsilo");
 }
 
@@ -476,6 +482,7 @@ function mostrarAcceso(mensajeReanudar) {
   reanudar.hidden = !mensajeReanudar;
   reanudar.textContent = mensajeReanudar || "";
   $("acceso").hidden = false;
+  $("cambio-clave").hidden = true;
   $("superior").hidden = true;
   $("armazon").hidden = true;
   $("barra").hidden = true;
@@ -509,6 +516,13 @@ const PANELES_DE_SESION = [
   // los cajones
   "dictamen", "ficha-cuerpo", "ficha-pie", "visita-cabecera", "visita-examenes",
   "visita-indicaciones", "dictamen-indicacion", "egreso-cabecera", "confirmar-cuerpo",
+  // cuentas del personal, y el cuadro de la clave temporal: una clave que se
+  // queda en pantalla para el siguiente es exactamente la fuga a cerrar
+  "usuarios-meta", "usuarios-lista", "usuario-rol-motivo", "desactivar-cabecera",
+  "bitacora-cabecera", "bitacora-lista", "clave-para", "clave-valor", "clave-vence",
+  "clave-copiada",
+  // la pantalla de cambio de clave
+  "cambio-saludo", "cambio-error",
   // los avisos que quedaron abiertos hablan de lo que hizo el anterior
   "avisos",
 ];
@@ -518,6 +532,7 @@ const FORMULARIOS_DE_SESION = [
   "formulario", "formulario-remision", "formulario-visita", "formulario-examen",
   "formulario-indicacion", "formulario-interno", "formulario-egreso",
   "formulario-cargo", "formulario-donacion", "formulario-gasto", "formulario-reporte",
+  "formulario-usuario", "formulario-desactivar", "formulario-cambio",
 ];
 
 function vaciarInforme() {
@@ -532,6 +547,8 @@ function vaciarPantallas() {
   if (!$("confirmar").hidden) $("confirmar-no").click();
   cerrarCajon(); cerrarFicha(); cerrarVisita(); cerrarRemision();
   cerrarFormularioInterno(); cerrarEgreso();
+  cerrarFormularioUsuario(); cerrarDesactivar(); cerrarBitacora(); cerrarClaveTemporal();
+  ocultarCambioClave();
 
   for (const id of PANELES_DE_SESION) $(id).textContent = "";
   for (const id of FORMULARIOS_DE_SESION) $(id).reset();
@@ -549,6 +566,8 @@ function vaciarPantallas() {
   Object.assign(estado, { interno: null, medicacion: [], dictamen: null, receta: null });
   Object.assign(estadoConsultas, { visitaAbierta: null, solicitudes: [], visitas: [] });
   Object.assign(estadoPadron, { internos: [], editando: null, egresando: null });
+  Object.assign(estadoUsuarios, { cuentas: [], editando: null, desactivando: null });
+  $("usuarios-estado").value = "ACTIVAS";
   TARIFAS_CAJA = [];
 }
 
@@ -621,9 +640,21 @@ $("formulario-acceso").addEventListener("submit", async (evento) => {
         throw new Error("Demasiados intentos fallidos. Espere " +
           Math.ceil(espera / 60) + " minuto(s) antes de volver a intentar.");
       }
+      // El gateway distingue la clave mala, la cuenta desactivada, la clave
+      // temporal vencida y la base que no responde, y cada una se resuelve
+      // distinto: reducirlas todas a "clave incorrecta" mandaba a la persona
+      // a probar otra clave cuando lo que tenia que hacer era llamar al
+      // administrador. Sus mensajes ya estan escritos para leerse.
+      if ([401, 403, 503].includes(respuesta.status) && cuerpo && cuerpo.error) {
+        throw new Error(cuerpo.error);
+      }
       throw new Error("Usuario o clave incorrectos.");
     }
     guardarSesion(cuerpo);
+    campoClave.value = "";
+    // Con la clave temporal no se entra a la aplicacion: se entra a elegir la
+    // propia.
+    if (cuerpo.debeCambiarClave) { mostrarCambioClave("obligatorio"); return; }
     await mostrarApp();
   } catch (e) {
     // El error va junto al campo, y lo que la persona escribio se queda.
@@ -654,6 +685,7 @@ function aplicarPermisos() {
   $("pestana-consultas").hidden = !vistaPermitida("consultas");
   $("pestana-reportes").hidden = !vistaPermitida("reportes");
   $("pestana-padron").hidden = !vistaPermitida("padron");
+  $("pestana-usuarios").hidden = !vistaPermitida("usuarios");
   // Enfermeria lee la cadena clinica pero no escribe: sin boton de remitir.
   $("abrir-remision").hidden = SESION.rol !== "MEDICO";
   // Los tres roles operativos no tienen internos a cargo: fuera la lateral.
@@ -1281,6 +1313,12 @@ document.addEventListener("keydown", (e) => {
   if (!$("cajon-ficha").hidden) cerrarFicha();
   if (!$("cajon-interno").hidden) cerrarFormularioInterno();
   if (!$("cajon-egreso").hidden) cerrarEgreso();
+  if (!$("cajon-usuario").hidden) cerrarFormularioUsuario();
+  if (!$("cajon-desactivar").hidden) cerrarDesactivar();
+  if (!$("cajon-bitacora").hidden) cerrarBitacora();
+  // El cambio voluntario se cancela con Escape; el obligatorio no tiene a
+  // donde volver. El cuadro de la clave temporal tampoco se cierra asi.
+  if (!$("cambio-clave").hidden && modoCambio === "voluntario") ocultarCambioClave();
 });
 
 $("formulario").addEventListener("submit", async (evento) => {
@@ -3119,7 +3157,19 @@ async function iniciarApp() {
     const datos = JSON.parse(guardada);
     if (!datos || !datos.token) return;
     Object.assign(SESION, datos);
-    await pedir(AUTH + "/me");
+    // Quien manda es el gateway, no lo guardado: si el token es de cambio de
+    // clave, recargar la pagina vuelve a la pantalla de cambio y no a la
+    // aplicacion. El nombre y el rol tambien salen de su respuesta.
+    const yo = await pedir(AUTH + "/me");
+    SESION.nombre = yo.nombre;
+    if (yo.debeCambiarClave) {
+      SESION.rol = "CAMBIO_DE_CLAVE";
+      SESION.cambio = true;
+      mostrarCambioClave("obligatorio");
+      return;
+    }
+    SESION.rol = yo.rol;
+    SESION.cambio = false;
     await mostrarApp();
   } catch (_) {
     limpiarSesion();
@@ -4276,3 +4326,727 @@ $("formulario-cuotas").addEventListener("submit", async (evento) => {
     boton.textContent = original;
   }
 });
+
+
+/* =====================================================================
+   Cambio de clave
+
+   La misma pantalla sirve para dos cosas. En el cambio obligatorio la
+   persona entro con una clave temporal: su token solo abre esta pantalla y
+   el gateway le rechaza cualquier otra cosa, asi que no hay aplicacion
+   detras. En el voluntario se abre encima de la aplicacion, con un boton de
+   cancelar. En los dos se pide la clave que se tiene: un token robado no
+   alcanza para quedarse con la cuenta.
+   ===================================================================== */
+
+let modoCambio = null;
+let soltarFocoCambio = null;
+let abrioElCambio = null;
+
+// Las mismas reglas que aplica el gateway. Aqui solo sirven para avisar
+// antes de enviar: quien decide sigue siendo el servidor.
+function requisitosDeClave() {
+  const actual = $("cambio-actual").value;
+  const nueva = $("cambio-nueva").value;
+  const repetida = $("cambio-confirmar").value;
+  return {
+    largo: nueva.length >= 8,
+    mezcla: /\p{L}/u.test(nueva) && /\d/.test(nueva),
+    actual: nueva !== "" && nueva !== actual,
+    usuario: nueva !== "" && nueva.toLowerCase() !== String(SESION.usuario || "").toLowerCase(),
+    iguales: nueva !== "" && nueva === repetida,
+  };
+}
+
+function pintarRequisitos() {
+  const cumple = requisitosDeClave();
+  document.querySelectorAll("#cambio-requisitos .requisito").forEach((li) => {
+    const si = cumple[li.dataset.requisito] === true;
+    li.dataset.cumple = si ? "si" : "no";
+    li.querySelector(".requisito__marca").textContent = si ? "cumple" : "falta";
+  });
+  return cumple;
+}
+
+function mostrarCambioClave(modo) {
+  const obligatorio = modo === "obligatorio";
+  modoCambio = modo;
+  abrioElCambio = obligatorio ? null : document.activeElement;
+
+  $("formulario-cambio").reset();
+  $("cambio-error").textContent = "";
+  ["cambio-actual", "cambio-nueva", "cambio-confirmar"].forEach((id) =>
+    $(id).removeAttribute("aria-invalid"));
+  pintarRequisitos();
+
+  $("cambio-titulo").textContent = obligatorio ? "Elija su clave" : "Cambiar mi clave";
+  $("cambio-saludo").textContent = "Hola, " + (SESION.nombre || SESION.usuario) + ".";
+  $("cambio-motivo").textContent = obligatorio
+    ? "Entró con una clave temporal que le dio el administrador. Antes de usar el " +
+      "sistema tiene que elegir una propia: la temporal la conoce alguien más, y deja " +
+      "de servir en cuanto guarde la nueva."
+    : "Escriba su clave actual y elija una nueva. Al guardarla se cierran sus otras " +
+      "sesiones abiertas; esta sigue.";
+  $("cambio-actual-rotulo").textContent = obligatorio ? "Clave temporal" : "Clave actual";
+  $("cambio-cancelar").hidden = obligatorio;
+
+  if (obligatorio) {
+    // No hay aplicacion detras: nada de la barra, ni de la lateral.
+    $("acceso").hidden = true;
+    $("superior").hidden = true;
+    $("armazon").hidden = true;
+    $("barra").hidden = true;
+  }
+  $("cambio-clave").hidden = false;
+  if (soltarFocoCambio) soltarFocoCambio();
+  soltarFocoCambio = atraparFoco($("cambio-clave"));
+  $("cambio-actual").focus();
+}
+
+function ocultarCambioClave() {
+  if ($("cambio-clave").hidden) return;
+  $("cambio-clave").hidden = true;
+  // Las tres claves escritas se borran al salir, se haya guardado o no.
+  $("formulario-cambio").reset();
+  $("cambio-error").textContent = "";
+  pintarRequisitos();
+  modoCambio = null;
+  if (soltarFocoCambio) { soltarFocoCambio(); soltarFocoCambio = null; }
+  if (abrioElCambio && abrioElCambio.focus && document.contains(abrioElCambio)) {
+    abrioElCambio.focus();
+  }
+  abrioElCambio = null;
+}
+
+["cambio-actual", "cambio-nueva", "cambio-confirmar"].forEach((id) =>
+  $(id).addEventListener("input", pintarRequisitos));
+
+$("cambiar-mi-clave").addEventListener("click", () => mostrarCambioClave("voluntario"));
+$("cambio-cancelar").addEventListener("click", ocultarCambioClave);
+$("cambio-salir").addEventListener("click", cerrarSesion);
+
+const FALTA_REQUISITO = {
+  largo: "La clave nueva debe tener al menos 8 caracteres.",
+  mezcla: "La clave nueva debe tener al menos una letra y un dígito.",
+  actual: "La clave nueva debe ser distinta de la actual.",
+  usuario: "La clave nueva no puede ser igual a su nombre de usuario.",
+  iguales: "Las dos claves nuevas no coinciden.",
+};
+
+$("formulario-cambio").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const error = $("cambio-error");
+  ["cambio-actual", "cambio-nueva", "cambio-confirmar"].forEach((id) =>
+    $(id).removeAttribute("aria-invalid"));
+  error.textContent = "";
+
+  if (!$("cambio-actual").value) {
+    error.textContent = modoCambio === "obligatorio"
+      ? "Escriba la clave temporal con la que entró." : "Escriba su clave actual.";
+    $("cambio-actual").setAttribute("aria-invalid", "true");
+    $("cambio-actual").focus();
+    return;
+  }
+  const cumple = pintarRequisitos();
+  const falta = Object.keys(FALTA_REQUISITO).find((k) => !cumple[k]);
+  if (falta) {
+    const campoMal = falta === "iguales" ? $("cambio-confirmar") : $("cambio-nueva");
+    error.textContent = FALTA_REQUISITO[falta];
+    campoMal.setAttribute("aria-invalid", "true");
+    campoMal.focus();
+    return;
+  }
+
+  const boton = $("cambio-guardar");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Guardando…";
+  const modo = modoCambio;
+  try {
+    const sesionNueva = await pedir(AUTH + "/cambiar-clave", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        claveActual: $("cambio-actual").value,
+        claveNueva: $("cambio-nueva").value,
+      }),
+    });
+    // El token con que se hizo el cambio ya no sirve: el gateway devuelve
+    // uno normal y nuevo, y con el se sigue trabajando sin volver a entrar.
+    guardarSesion(sesionNueva);
+    ocultarCambioClave();
+    if (modo === "obligatorio") {
+      await mostrarApp();
+      aviso("Clave guardada", "Desde ahora entra con su clave nueva.", "ok");
+    } else {
+      aviso("Clave cambiada", "Sus otras sesiones abiertas se cerraron.", "ok");
+    }
+  } catch (e) {
+    if (e.sesionCambiada) return;
+    if (e.sesionExpirada) { sesionExpirada(); return; }
+    // Los rechazos del gateway aqui son para leerse: clave actual equivocada,
+    // clave debil, demasiados intentos.
+    const mensaje = (e.cuerpo && e.cuerpo.error) || "";
+    error.textContent = e.red
+      ? "No hay conexión con la estación. Revise que el sistema esté levantado."
+      : mensaje || "No se pudo cambiar la clave.";
+    const culpable = /actual no es correcta/i.test(mensaje) ? $("cambio-actual") : $("cambio-nueva");
+    culpable.setAttribute("aria-invalid", "true");
+    culpable.focus();
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+
+/* =====================================================================
+   Cuentas del personal · la segunda pantalla del ADMINISTRADOR
+
+   Mismo patron que el padron: encabezado con conteo, filtro, lista y
+   formularios en cajon. Una cuenta no se borra nunca, asi que no hay
+   boton de eliminar: se desactiva y sigue en la lista.
+
+   Los botones que el gateway va a rechazar —desactivarse a si mismo,
+   quitarse el rol— aparecen deshabilitados y con el motivo escrito. Es
+   cortesia, no seguridad: el servidor decide igual.
+   ===================================================================== */
+
+const estadoUsuarios = { cuentas: [], editando: null, desactivando: null };
+
+const ETIQUETA_ROL_CUENTA = {
+  MEDICO: "Medicina", ENFERMERIA: "Enfermería", ADMINISTRACION: "Administración (caja)",
+  ADMINISTRADOR: "Administrador del sistema", FUNDACION: "Fundación",
+  LABORATORIO: "Laboratorio", FARMACIA: "Farmacia",
+};
+
+const ETIQUETA_ACCION_CUENTA = {
+  ALTA: "Alta", EDICION: "Edición", RESTABLECIMIENTO: "Clave restablecida",
+  DESACTIVACION: "Desactivada", REACTIVACION: "Reactivada",
+  CAMBIO_DE_CLAVE: "Cambió su clave",
+};
+
+function estadoDeCuenta(c) {
+  if (!c.activo) return { clave: "DESACTIVADA", texto: "Desactivada" };
+  if (c.debeCambiarClave) return { clave: "TEMPORAL", texto: "Clave temporal pendiente" };
+  return { clave: "ACTIVA", texto: "Activa" };
+}
+
+function administradoresActivos() {
+  return estadoUsuarios.cuentas.filter((c) => c.activo && c.rol === "ADMINISTRADOR").length;
+}
+
+// Lo que el gateway le va a negar a esta cuenta, dicho antes de pulsar.
+function motivoParaNoDesactivar(c) {
+  if (c.usuario === SESION.usuario) {
+    return "No puede desactivar su propia cuenta: pídaselo a otro administrador.";
+  }
+  if (c.rol === "ADMINISTRADOR" && administradoresActivos() <= 1) {
+    return "Es el último administrador activo.";
+  }
+  return null;
+}
+
+function motivoParaNoCambiarRol(c) {
+  if (c.usuario === SESION.usuario) {
+    return "No puede cambiarse el rol a sí mismo: pídaselo a otro administrador.";
+  }
+  if (c.rol === "ADMINISTRADOR" && administradoresActivos() <= 1) {
+    return "Es el último administrador activo: no se le puede quitar el rol.";
+  }
+  return null;
+}
+
+// Un rechazo del gateway en esta pantalla viene con su motivo escrito para
+// leerse ("es el último administrador activo"); los demas errores se explican
+// como en el resto de la estacion.
+function avisarRechazoDeCuenta(error, accion) {
+  if (error && error.sesionCambiada) return;
+  if ((error.estado === 400 || error.estado === 409) && error.cuerpo && error.cuerpo.error) {
+    aviso("No se pudo " + accion, error.cuerpo.error, "aviso");
+    return;
+  }
+  avisarError(error, accion);
+}
+
+async function pintarUsuarios() {
+  const nodo = $("usuarios-lista");
+  esqueleto(nodo, 4, true);
+  let datos;
+  try {
+    datos = await pedir("/api/usuarios");
+  } catch (error) {
+    problema(nodo, error, "consultar las cuentas del personal", pintarUsuarios);
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+  estadoUsuarios.cuentas = datos.cuentas;
+  pintarListaUsuarios();
+}
+
+function botonCuenta(texto, alPulsar, peligro) {
+  const b = document.createElement("button");
+  b.className = "accion-sec" + (peligro ? " accion-sec--peligro" : "");
+  b.type = "button";
+  b.textContent = texto;
+  b.addEventListener("click", alPulsar);
+  return b;
+}
+
+function pintarListaUsuarios() {
+  const nodo = $("usuarios-lista");
+  const filtro = $("usuarios-estado").value;
+  const todas = estadoUsuarios.cuentas;
+  const visibles = todas.filter((c) =>
+    filtro === "TODAS" ? true : filtro === "ACTIVAS" ? c.activo : !c.activo);
+
+  const activas = todas.filter((c) => c.activo).length;
+  $("usuarios-meta").textContent =
+    visibles.length + (visibles.length === 1 ? " cuenta" : " cuentas") + " · " +
+    (filtro === "TODAS" ? "activas y desactivadas"
+      : filtro === "ACTIVAS" ? "solo activas" : "solo desactivadas") +
+    " · " + activas + " activa(s) de " + todas.length;
+
+  nodo.textContent = "";
+  if (!visibles.length) {
+    if (filtro === "DESACTIVADAS") {
+      vacio(nodo, "No hay cuentas desactivadas",
+        "Cuando desactive una cuenta aparecerá aquí, con su motivo y su historial.");
+    } else {
+      vacio(nodo, "No hay cuentas que mostrar",
+        "Use «Dar de alta» para crear la cuenta de una persona del personal.");
+    }
+    return;
+  }
+
+  const columnas = [
+    { rotulo: "Persona" }, { rotulo: "Rol" }, { rotulo: "Estado" },
+    { rotulo: "Último ingreso" }, { rotulo: "Creada por" }, { rotulo: "" },
+  ];
+
+  const filas = visibles.map((c) => {
+    const quien = document.createElement("div");
+    const nombre = document.createElement("p");
+    nombre.className = "padron__nombre";
+    nombre.textContent = c.nombre;
+    const codigo = document.createElement("p");
+    codigo.className = "padron__codigo";
+    codigo.textContent = c.usuario + (c.usuario === SESION.usuario ? " · su cuenta" : "");
+    quien.append(nombre, codigo);
+
+    const est = estadoDeCuenta(c);
+    const celdaEstado = document.createElement("div");
+    celdaEstado.appendChild(marbeteEstado(est.clave, est.texto));
+    const detalleEstado = document.createElement("p");
+    detalleEstado.className = "padron__codigo";
+    if (!c.activo) {
+      detalleEstado.textContent = "el " + fechaLegible(c.desactivadoEn) + " por " +
+        c.desactivadoPor + ": " + c.motivoDesactivacion;
+    } else if (c.debeCambiarClave && c.claveTemporalVence) {
+      detalleEstado.textContent = "vence el " + fechaLegible(c.claveTemporalVence);
+    }
+    if (detalleEstado.textContent) celdaEstado.appendChild(detalleEstado);
+
+    const acciones = document.createElement("div");
+    acciones.className = "ficha__acciones usuarios__acciones";
+    let porque = null;
+    if (c.activo) {
+      const restablecer = botonCuenta("Restablecer clave", () => restablecerClave(c));
+      const desactivar = botonCuenta("Desactivar", () => abrirDesactivar(c), true);
+      acciones.append(botonCuenta("Editar", () => abrirFormularioUsuario(c)), restablecer, desactivar);
+      const motivos = [];
+      // Restablecer la propia clave cerraria esta misma sesion antes de que
+      // la clave temporal llegara a verse.
+      if (c.usuario === SESION.usuario) {
+        restablecer.disabled = true;
+        motivos.push("Su propia clave se cambia con «Cambiar mi clave».");
+      }
+      const motivo = motivoParaNoDesactivar(c);
+      if (motivo) { desactivar.disabled = true; motivos.push(motivo); }
+      if (motivos.length) {
+        porque = document.createElement("p");
+        porque.className = "usuarios__motivo";
+        porque.id = "motivo-" + c.usuario;
+        porque.textContent = motivos.join(" ");
+        for (const b of [restablecer, desactivar]) {
+          if (b.disabled) b.setAttribute("aria-describedby", porque.id);
+        }
+      }
+    } else {
+      // Desactivada: se ve, pero no se edita. Solo se reactiva.
+      acciones.appendChild(botonCuenta("Reactivar", () => reactivarCuenta(c)));
+    }
+    acciones.appendChild(botonCuenta("Ver bitácora", () => abrirBitacora(c)));
+    // El porque de los botones apagados, debajo de todos, en su propia linea.
+    if (porque) acciones.appendChild(porque);
+
+    return [quien, ETIQUETA_ROL_CUENTA[c.rol] || c.rol, celdaEstado,
+            c.ultimoIngreso ? fechaLegible(c.ultimoIngreso) : "nunca",
+            c.creadoPor + " · " + fechaLegible(c.creadoEn), acciones];
+  });
+
+  nodo.appendChild(tablaInforme(columnas, filas, null));
+}
+
+$("usuarios-estado").addEventListener("change", pintarListaUsuarios);
+
+
+/* ---------------------------------------------------------------------
+   La clave temporal
+
+   Se muestra una sola vez, en un cuadro aparte. No vive en ninguna
+   variable: se escribe en el cuadro y, al cerrarlo, se borra de ahi. Nunca
+   toca sessionStorage.
+   --------------------------------------------------------------------- */
+
+let soltarFocoClave = null;
+let abrioLaClave = null;
+
+function mostrarClaveTemporal(titulo, cuenta, clave, vence) {
+  abrioLaClave = document.activeElement;
+  $("clave-titulo").textContent = titulo;
+  $("clave-para").textContent = "Para " + cuenta.nombre + " · usuario " + cuenta.usuario;
+  $("clave-valor").textContent = clave;
+  $("clave-copiada").textContent = "";
+  $("clave-vence").textContent = vence
+    ? "Vence el " + fechaLegible(vence) + ". Si no la usa antes, habrá que restablecerla."
+    : "";
+  $("cuadro-clave").hidden = false;
+  $("velo-clave").hidden = false;
+  soltarFocoClave = atraparFoco($("cuadro-clave"));
+  $("clave-copiar").focus();
+}
+
+function cerrarClaveTemporal() {
+  if ($("cuadro-clave").hidden) return;
+  $("cuadro-clave").hidden = true;
+  $("velo-clave").hidden = true;
+  for (const id of ["clave-para", "clave-valor", "clave-vence", "clave-copiada"]) {
+    $(id).textContent = "";
+  }
+  if (soltarFocoClave) { soltarFocoClave(); soltarFocoClave = null; }
+  // El boton que abrio la accion puede haberse repintado con la lista.
+  const destino = abrioLaClave && document.contains(abrioLaClave)
+    ? abrioLaClave : $("abrir-alta-usuario");
+  if (destino && destino.focus && !$("vista-usuarios").hidden) destino.focus();
+  abrioLaClave = null;
+}
+
+$("clave-cerrar").addEventListener("click", cerrarClaveTemporal);
+
+$("clave-copiar").addEventListener("click", async () => {
+  const estadoCopia = $("clave-copiada");
+  try {
+    await navigator.clipboard.writeText($("clave-valor").textContent);
+    estadoCopia.textContent = "Copiada al portapapeles.";
+  } catch (_) {
+    estadoCopia.textContent =
+      "El navegador no dejó copiarla: selecciónela y cópiela a mano.";
+  }
+});
+
+
+/* ---------------------------------------------------------------------
+   Alta y edicion
+   --------------------------------------------------------------------- */
+
+let soltarFocoUsuario = null;
+let abrioElUsuario = null;
+
+function abrirFormularioUsuario(cuenta) {
+  estadoUsuarios.editando = cuenta || null;
+  abrioElUsuario = document.activeElement;
+  const alta = !cuenta;
+
+  $("usuario-titulo").textContent = alta ? "Dar de alta una cuenta" : "Editar a " + cuenta.nombre;
+  $("guardar-usuario").textContent = alta ? "Dar de alta" : "Guardar los cambios";
+  $("usuario-nota").textContent = alta
+    ? "La cuenta nace con una clave temporal que se le muestra una sola vez y " +
+      "vence a las 72 horas. La persona la cambia por una propia al entrar."
+    : "Cambiar el rol cierra en el acto las sesiones abiertas de esta persona: " +
+      "tiene que volver a entrar con el rol nuevo.";
+
+  $("campo-usuario-usuario").hidden = !alta;
+  $("usuario-usuario").required = alta;
+  $("usuario-usuario").value = "";
+  $("usuario-nombre").value = cuenta ? cuenta.nombre : "";
+  $("usuario-rol").value = cuenta ? cuenta.rol : "ENFERMERIA";
+
+  const motivo = alta ? null : motivoParaNoCambiarRol(cuenta);
+  $("usuario-rol").disabled = Boolean(motivo);
+  $("usuario-rol-motivo").textContent = motivo || "";
+
+  $("cajon-usuario").hidden = false;
+  $("velo-usuario").hidden = false;
+  soltarFocoUsuario = atraparFoco($("cajon-usuario"));
+  (alta ? $("usuario-usuario") : $("usuario-nombre")).focus();
+}
+
+function cerrarFormularioUsuario() {
+  if ($("cajon-usuario").hidden) return;
+  $("cajon-usuario").hidden = true;
+  $("velo-usuario").hidden = true;
+  estadoUsuarios.editando = null;
+  $("usuario-rol").disabled = false;
+  if (soltarFocoUsuario) { soltarFocoUsuario(); soltarFocoUsuario = null; }
+  if (abrioElUsuario && abrioElUsuario.focus && document.contains(abrioElUsuario)) {
+    abrioElUsuario.focus();
+  }
+  abrioElUsuario = null;
+}
+
+$("abrir-alta-usuario").addEventListener("click", () => abrirFormularioUsuario(null));
+$("cerrar-usuario").addEventListener("click", cerrarFormularioUsuario);
+$("velo-usuario").addEventListener("click", cerrarFormularioUsuario);
+
+$("formulario-usuario").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const editando = estadoUsuarios.editando;
+  const nombre = $("usuario-nombre").value.trim();
+  const rol = $("usuario-rol").value;
+  const rolBloqueado = $("usuario-rol").disabled;
+
+  if (editando && !rolBloqueado && rol !== editando.rol) {
+    const seguro = await confirmar({
+      titulo: "¿Cambiar el rol de " + editando.nombre + "?",
+      textoSi: "Sí, cambiar el rol",
+      datos: [
+        ["Cuenta", editando.usuario],
+        ["Rol actual", ETIQUETA_ROL_CUENTA[editando.rol] || editando.rol],
+        ["Rol nuevo", ETIQUETA_ROL_CUENTA[rol] || rol],
+      ],
+      aviso: "Sus sesiones abiertas se cierran en el acto: tendrá que volver a " +
+             "entrar, y desde ese momento verá lo que le toca al rol nuevo.",
+    });
+    if (!seguro) return;
+  }
+
+  const boton = $("guardar-usuario");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Guardando…";
+  try {
+    if (editando) {
+      const cuerpo = { nombre };
+      if (!rolBloqueado) cuerpo.rol = rol;
+      const r = await pedir("/api/usuarios/" + encodeURIComponent(editando.usuario), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cuerpo),
+      });
+      aviso("Cuenta actualizada", r.cuenta.nombre + " · " +
+        (ETIQUETA_ROL_CUENTA[r.cuenta.rol] || r.cuenta.rol), "ok");
+      cerrarFormularioUsuario();
+    } else {
+      const r = await pedir("/api/usuarios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          usuario: $("usuario-usuario").value.trim().toLowerCase(), nombre, rol,
+        }),
+      });
+      cerrarFormularioUsuario();
+      mostrarClaveTemporal("Cuenta creada · clave temporal", r.cuenta,
+        r.claveTemporal, r.claveTemporalVence);
+    }
+    await pintarUsuarios();
+  } catch (error) {
+    avisarRechazoDeCuenta(error, editando ? "guardar los cambios" : "dar de alta la cuenta");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+
+/* ---------------------------------------------------------------------
+   Restablecer y reactivar: las dos emiten una clave temporal nueva
+   --------------------------------------------------------------------- */
+
+async function restablecerClave(c) {
+  const seguro = await confirmar({
+    titulo: "¿Restablecer la clave de " + c.nombre + "?",
+    textoSi: "Sí, restablecer",
+    datos: [["Cuenta", c.usuario], ["Rol", ETIQUETA_ROL_CUENTA[c.rol] || c.rol]],
+    aviso: "Su clave actual deja de servir y sus sesiones abiertas se cierran en " +
+           "el acto. Recibirá una clave temporal que vence a las 72 horas.",
+  });
+  if (!seguro) return;
+  try {
+    const r = await pedir("/api/usuarios/" + encodeURIComponent(c.usuario) + "/restablecer",
+      { method: "POST" });
+    await pintarUsuarios();
+    mostrarClaveTemporal("Clave restablecida · clave temporal", r.cuenta,
+      r.claveTemporal, r.claveTemporalVence);
+  } catch (error) {
+    avisarRechazoDeCuenta(error, "restablecer la clave");
+  }
+}
+
+async function reactivarCuenta(c) {
+  const seguro = await confirmar({
+    titulo: "¿Reactivar la cuenta de " + c.nombre + "?",
+    textoSi: "Sí, reactivar",
+    datos: [
+      ["Cuenta", c.usuario],
+      ["Desactivada", fechaLegible(c.desactivadoEn) + " por " + c.desactivadoPor],
+      ["Motivo", c.motivoDesactivacion || "—"],
+    ],
+    aviso: "Vuelve a poder entrar, con una clave temporal nueva: estuvo fuera y su " +
+           "clave anterior ya no se da por segura.",
+  });
+  if (!seguro) return;
+  try {
+    const r = await pedir("/api/usuarios/" + encodeURIComponent(c.usuario) + "/reactivar",
+      { method: "POST" });
+    await pintarUsuarios();
+    mostrarClaveTemporal("Cuenta reactivada · clave temporal", r.cuenta,
+      r.claveTemporal, r.claveTemporalVence);
+  } catch (error) {
+    avisarRechazoDeCuenta(error, "reactivar la cuenta");
+  }
+}
+
+
+/* ---------------------------------------------------------------------
+   Desactivar
+   --------------------------------------------------------------------- */
+
+let soltarFocoDesactivar = null;
+let abrioElDesactivar = null;
+
+function abrirDesactivar(c) {
+  estadoUsuarios.desactivando = c;
+  abrioElDesactivar = document.activeElement;
+  const cabecera = $("desactivar-cabecera");
+  cabecera.textContent = "";
+  cabecera.append(
+    campo("Persona", c.nombre),
+    campo("Usuario", c.usuario),
+    campo("Rol", ETIQUETA_ROL_CUENTA[c.rol] || c.rol),
+    campo("Último ingreso", c.ultimoIngreso ? fechaLegible(c.ultimoIngreso) : "nunca")
+  );
+  $("desactivar-motivo").value = "";
+  $("cajon-desactivar").hidden = false;
+  $("velo-desactivar").hidden = false;
+  soltarFocoDesactivar = atraparFoco($("cajon-desactivar"));
+  $("desactivar-motivo").focus();
+}
+
+function cerrarDesactivar() {
+  if ($("cajon-desactivar").hidden) return;
+  $("cajon-desactivar").hidden = true;
+  $("velo-desactivar").hidden = true;
+  estadoUsuarios.desactivando = null;
+  if (soltarFocoDesactivar) { soltarFocoDesactivar(); soltarFocoDesactivar = null; }
+  if (abrioElDesactivar && abrioElDesactivar.focus && document.contains(abrioElDesactivar)) {
+    abrioElDesactivar.focus();
+  }
+  abrioElDesactivar = null;
+}
+
+$("cerrar-desactivar").addEventListener("click", cerrarDesactivar);
+$("velo-desactivar").addEventListener("click", cerrarDesactivar);
+
+$("formulario-desactivar").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const c = estadoUsuarios.desactivando;
+  if (!c) return;
+  const motivo = $("desactivar-motivo").value.trim();
+  if (motivo.length < 3) {
+    aviso("Falta el motivo", "Escriba por qué se desactiva la cuenta.", "aviso");
+    $("desactivar-motivo").focus();
+    return;
+  }
+
+  const seguro = await confirmar({
+    titulo: "¿Desactivar la cuenta de " + c.nombre + "?",
+    textoSi: "Sí, desactivar",
+    tono: "peligro",
+    datos: [
+      ["Cuenta", c.usuario],
+      ["Rol", ETIQUETA_ROL_CUENTA[c.rol] || c.rol],
+      ["Motivo", motivo],
+    ],
+    aviso: "Deja de poder entrar y sus sesiones abiertas se cierran en el acto. " +
+           "La cuenta no se borra: sigue en la lista y se puede reactivar.",
+  });
+  if (!seguro) return;
+
+  const boton = $("confirmar-desactivar");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Desactivando…";
+  try {
+    await pedir("/api/usuarios/" + encodeURIComponent(c.usuario) + "/desactivar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ motivo }),
+    });
+    aviso("Cuenta desactivada", c.nombre + " ya no puede entrar.", "ok");
+    cerrarDesactivar();
+    await pintarUsuarios();
+  } catch (error) {
+    avisarRechazoDeCuenta(error, "desactivar la cuenta");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+
+/* ---------------------------------------------------------------------
+   Bitacora
+   --------------------------------------------------------------------- */
+
+let soltarFocoBitacora = null;
+let abrioLaBitacora = null;
+
+async function abrirBitacora(c) {
+  if ($("cajon-bitacora").hidden) abrioLaBitacora = document.activeElement;
+  $("bitacora-titulo").textContent = "Bitácora de " + c.nombre;
+  const cabecera = $("bitacora-cabecera");
+  cabecera.textContent = "";
+  cabecera.append(campo("Usuario", c.usuario), campo("Estado", estadoDeCuenta(c).texto));
+  $("cajon-bitacora").hidden = false;
+  $("velo-bitacora").hidden = false;
+  if (!soltarFocoBitacora) soltarFocoBitacora = atraparFoco($("cajon-bitacora"));
+  $("cerrar-bitacora").focus();
+
+  const nodo = $("bitacora-lista");
+  esqueleto(nodo, 4, false);
+  let datos;
+  try {
+    datos = await pedir("/api/usuarios/" + encodeURIComponent(c.usuario) + "/bitacora");
+  } catch (error) {
+    problema(nodo, error, "consultar la bitácora de la cuenta", () => abrirBitacora(c));
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+  // Si la cerraron mientras llegaba, no se pinta.
+  if ($("cajon-bitacora").hidden) return;
+  nodo.textContent = "";
+  if (!datos.registros.length) {
+    vacio(nodo, "Sin movimientos", "Esta cuenta todavía no tiene nada en su bitácora.");
+    return;
+  }
+  nodo.appendChild(tablaInforme(
+    [{ rotulo: "Cuándo" }, { rotulo: "Qué" }, { rotulo: "Quién" }, { rotulo: "Detalle" }],
+    datos.registros.map((r) => [fechaLegible(r.en),
+      ETIQUETA_ACCION_CUENTA[r.accion] || r.accion, r.hechoPor, r.detalle || "—"]),
+    null));
+}
+
+function cerrarBitacora() {
+  if ($("cajon-bitacora").hidden) return;
+  $("cajon-bitacora").hidden = true;
+  $("velo-bitacora").hidden = true;
+  if (soltarFocoBitacora) { soltarFocoBitacora(); soltarFocoBitacora = null; }
+  if (abrioLaBitacora && abrioLaBitacora.focus && document.contains(abrioLaBitacora)) {
+    abrioLaBitacora.focus();
+  }
+  abrioLaBitacora = null;
+}
+
+$("cerrar-bitacora").addEventListener("click", cerrarBitacora);
+$("velo-bitacora").addEventListener("click", cerrarBitacora);

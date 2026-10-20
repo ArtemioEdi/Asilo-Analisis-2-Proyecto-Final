@@ -1404,3 +1404,116 @@ button { font-family: inherit; }
 @media (max-width: 720px) {
   .padron__filtros .campo { min-width: 0; flex: 1 1 100%; }
 }
+
+/* ---------------------------------------------------------------------
+   Cambio de clave · la misma tarjeta del acceso
+   Cada requisito dice "cumple" o "falta" con palabra y forma: el color
+   solo acompaña.
+--------------------------------------------------------------------- */
+.requisitos__titulo {
+  font-family: var(--dato);
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--pizarra);
+  margin: 2px 0 6px;
+}
+.requisitos { list-style: none; margin: 0 0 16px; padding: 0; font-size: 13.5px; }
+.requisito { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; }
+.requisito__marca {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 68px;
+  font-family: var(--dato);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+.requisito[data-cumple="no"] .requisito__marca { color: var(--pizarra); }
+.requisito[data-cumple="no"] .requisito__marca::before { content: "○"; }
+.requisito[data-cumple="si"] .requisito__marca { color: var(--cobalto); }
+.requisito[data-cumple="si"] .requisito__marca::before { content: "✓"; }
+
+.cambio__pie { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+
+/* ---------------------------------------------------------------------
+   Cuentas del personal
+--------------------------------------------------------------------- */
+.marbete-estado[data-estado="ACTIVA"]              { color: var(--cobalto); }
+.marbete-estado[data-estado="ACTIVA"]::before      { content: "●"; }
+.marbete-estado[data-estado="TEMPORAL"]            { color: var(--ambar); }
+.marbete-estado[data-estado="TEMPORAL"]::before    { content: "◐"; }
+.marbete-estado[data-estado="DESACTIVADA"]         { color: var(--alerta); }
+.marbete-estado[data-estado="DESACTIVADA"]::before { content: "⊘"; }
+
+/* Cuatro acciones por cuenta: apiladas como en el padron hacian cada fila
+   altisima, asi que van de a dos y envuelven. */
+.usuarios__acciones {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 300px;
+}
+
+/* El porque de un boton deshabilitado, en texto y junto al boton. */
+.usuarios__motivo {
+  flex-basis: 100%;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--pizarra);
+  margin-top: 2px;
+}
+.usuarios__fila--inactiva .padron__nombre { color: var(--pizarra); }
+
+/* La clave temporal: grande, monoespaciada y facil de dictar. */
+.cuadro-clave { border-top-color: var(--ambar); z-index: 81; }
+.velo--clave { z-index: 80; }
+.cuadro-clave__para { font-size: 14px; color: var(--pizarra); margin-bottom: 14px; }
+.cuadro-clave__valor {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--ambar-tenue);
+  border: 1px solid var(--linea);
+}
+.cuadro-clave__valor code {
+  font-family: var(--dato);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.cuadro-clave__copiada { font-size: 13px; color: var(--cobalto); min-height: 1.4em; margin-top: 6px; }
+.cuadro-clave__vence { font-size: 13.5px; font-weight: 500; margin: 10px 0 18px; }
+
+@media (max-width: 720px) {
+  .cuadro-clave__valor code { font-size: 21px; letter-spacing: .08em; }
+
+  /* Con "Cambiar mi clave" la barra superior ya no cabe en el alto que el
+     armazon le reservaba (96px) y tapaba las pestañas; segun el rol y el
+     largo del nombre ocupa dos o tres renglones. En angosto deja de ser fija
+     y pasa a sticky: sigue arriba al desplazarse, pero ocupa su lugar real y
+     el contenido empieza debajo, mida lo que mida. */
+  .superior { position: sticky; }
+  .armazon { padding-top: 0; }
+  /* El interno baja a su propio renglon. La regla de arriba le pedia
+     width: 100%, pero el flex: 1 de la regla base (base 0) se lo anulaba y
+     el interno quedaba aplastado junto a la sesion. */
+  .superior__interno { flex: 1 1 100%; }
+  .superior__sesion { gap: 8px; }
+  .superior__sesion .accion-sec { padding: 6px 9px; font-size: 12.5px; }
+}
+
+/* Ni la clave temporal ni la pantalla de cambio salen en papel. */
+@media print {
+  #cambio-clave, .cuadro-clave, .velo--clave { display: none !important; }
+}
