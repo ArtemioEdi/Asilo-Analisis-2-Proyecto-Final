@@ -1131,6 +1131,27 @@ comprobar "los dos cambios de clave, firmados por la propia persona" "2" \
 comprobar "ninguna respuesta de /api/usuarios trae un hash ni el campo de la clave" "0" \
   "$(grep -cE '\$2[ab]\$|claveHash|clave_hash' "$BITACORA_CUENTAS")"
 
+# --- Un administrador desactivado ya no administra ------------------------------
+# Un segundo administrador, con su token vivo, al que admin desactiva. Ese
+# token ya no da de alta a nadie. Lo corta el control de sesion de cada
+# peticion; si la desactivacion llegara mientras su alta espera turno, la
+# corta la comprobacion del administrador vigente dentro de la transaccion.
+ADMIN_2="adm.prueba.$SUFIJO"
+TEMPORAL_A2=$(cuerpo POST "$GATEWAY/api/usuarios" "$TOKEN_ADMR" \
+  "{\"usuario\":\"$ADMIN_2\",\"nombre\":\"Administrador de prueba $SUFIJO\",\"rol\":\"ADMINISTRADOR\"}" | campo claveTemporal)
+CAMBIO_A2=$(entrar "$ADMIN_2" "$TEMPORAL_A2")
+TOKEN_A2=$(cuerpo POST "$GATEWAY/api/auth/cambiar-clave" "$CAMBIO_A2" \
+  "{\"claveActual\":\"$TEMPORAL_A2\",\"claveNueva\":\"Admin${SUFIJO}c\"}" | campo token)
+comprobar "el segundo administrador lee las cuentas mientras esta activo (200)" "200" \
+  "$(codigo GET "$GATEWAY/api/usuarios" "$TOKEN_A2")"
+codigo POST "$GATEWAY/api/usuarios/$ADMIN_2/desactivar" "$TOKEN_ADMR" '{"motivo":"Fin de la prueba"}' >/dev/null
+CUENTA_FANTASMA="fantasma.$SUFIJO"
+comprobar "desactivado, su token ya no puede dar de alta una cuenta (401)" "401" \
+  "$(codigo POST "$GATEWAY/api/usuarios" "$TOKEN_A2" \
+     "{\"usuario\":\"$CUENTA_FANTASMA\",\"nombre\":\"No deberia existir\",\"rol\":\"MEDICO\"}")"
+comprobar "y la cuenta que intento crear no existe" "0" \
+  "$(cuerpo GET "$GATEWAY/api/usuarios" "$TOKEN_ADMR" | grep -o "\"usuario\":\"$CUENTA_FANTASMA\"" | wc -l | tr -d ' ')"
+
 
 # ---------------------------------------------------------------------------
 printf "\n%s== Resultado%s\n" "$CIAN" "$FIN"

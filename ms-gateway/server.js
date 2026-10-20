@@ -620,9 +620,11 @@ async function administradoresActivos(conexion) {
   return filas.map((f) => f.usuario);
 }
 
-// Quien actua paso el control de sesion al llegar, pero en la misma carrera
-// pudieron desactivarlo mientras esperaba su turno. Con las filas de los
-// administradores ya bloqueadas, se confirma que sigue siendo uno de ellos.
+// Quien actua paso el control de sesion al llegar, pero pudieron desactivarlo
+// mientras su peticion esperaba turno. Con las filas de los administradores ya
+// bloqueadas, se confirma que sigue siendo uno de ellos. Lo hacen las cinco
+// acciones que escriben —alta, edicion, restablecer, desactivar y reactivar—,
+// siempre antes de escribir y siempre en el mismo orden de bloqueo.
 function exigirAdministradorVigente(administradores, quien) {
   if (!administradores.includes(quien)) throw new Rechazo(401, MENSAJE_SESION_INVALIDA);
 }
@@ -690,6 +692,8 @@ cuentas.post("/", administrar(async (req, res) => {
   let fila;
   try {
     fila = await enTransaccion(async (conexion) => {
+      // Mismo orden que las demas acciones: administradores, y despues escribir.
+      exigirAdministradorVigente(await administradoresActivos(conexion), admin);
       await conexion.execute(
         "INSERT INTO usuarios (usuario, nombre, rol, clave_hash, debe_cambiar_clave, " +
           "clave_temporal_vence, creado_en, creado_por) " +
@@ -780,6 +784,8 @@ cuentas.post("/:usuario/restablecer", administrar(async (req, res) => {
   const hash = await bcrypt.hash(temporal, 10);
 
   const fila = await enTransaccion(async (conexion) => {
+    // Primero los administradores, despues el objetivo: ver administradoresActivos.
+    exigirAdministradorVigente(await administradoresActivos(conexion), admin);
     const actual = await buscarCuenta(conexion, objetivo, true);
     if (!actual) throw new Rechazo(404, "No existe la cuenta '" + objetivo + "'.");
     if (actual.activo !== 1) {
@@ -843,6 +849,8 @@ cuentas.post("/:usuario/reactivar", administrar(async (req, res) => {
   const hash = await bcrypt.hash(temporal, 10);
 
   const fila = await enTransaccion(async (conexion) => {
+    // Primero los administradores, despues el objetivo: ver administradoresActivos.
+    exigirAdministradorVigente(await administradoresActivos(conexion), admin);
     const actual = await buscarCuenta(conexion, objetivo, true);
     if (!actual) throw new Rechazo(404, "No existe la cuenta '" + objetivo + "'.");
     if (actual.activo === 1) throw new Rechazo(409, "La cuenta ya está activa.");
