@@ -1531,3 +1531,50 @@ button { font-family: inherit; }
   text-underline-offset: 3px;
 }
 .enlace-dato:hover { color: #162c7d; }
+
+/* ---------------------------------------------------------------------
+   Información clínica: listas que se arman una a una
+--------------------------------------------------------------------- */
+#abrir-clinica-ficha { margin: -6px 0 16px; }
+
+.lista-editable { list-style: none; margin: 0 0 10px; padding: 0; }
+.lista-editable__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--linea-suave);
+  font-size: 14.5px;
+}
+.lista-editable__vacia { color: var(--pizarra); font-style: italic; padding: 6px 0; font-size: 14px; }
+.lista-editable__agregar { display: flex; gap: 8px; }
+.lista-editable__agregar input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--linea);
+  border-radius: 2px;
+  background: var(--blanco);
+}
+
+/* Cada medicamento permanente: el principio activo del vademécum, la dosis y
+   la frecuencia en una fila, y el botón de quitar al final. */
+.medicacion-fija {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 90px auto;
+  gap: 0 10px;
+  align-items: end;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--linea-suave);
+}
+.medicacion-fija .campo { margin-bottom: 0; }
+.medicacion-fija__texto { font-size: 14.5px; grid-column: 1 / -1; }
+#clinica-medicacion-agregar { margin: 12px 0 4px; }
+#clinica-vademecum-estado:empty { display: none; }
+
+@media (max-width: 720px) {
+  .medicacion-fija { grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .medicacion-fija .campo:first-child { grid-column: 1 / -1; }
+}

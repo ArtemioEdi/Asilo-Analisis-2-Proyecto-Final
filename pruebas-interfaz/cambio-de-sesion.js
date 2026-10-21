@@ -505,6 +505,30 @@ async function principal() {
   comprobar("un informe que llega despues de cerrar sesion no se pinta",
     hojaVacia() && $("reporte-estado").textContent === "" && $("avisos").textContent === "");
 
+  // --- 7b. La informacion clinica no le queda al siguiente -------------
+  comprobar("el medico entra para editar la informacion clinica", await entrar("medico", "medico2026"));
+  await irA("consultas", INTERNO);
+  comprobar("el medico ve el boton Editar informacion clinica", visible($("abrir-clinica")));
+  $("abrir-clinica").click();
+  await esperar();
+  const psicoMedico = $("clinica-psicopatologias").textContent;
+  comprobar("el cajon clinico abre con la ficha del interno y su ultima actualizacion",
+    visible($("cajon-clinica")) && psicoMedico.length > 0 &&
+    $("clinica-pie").textContent.startsWith("Última actualización:") &&
+    $("clinica-medicacion-agregar").disabled === false);
+  // Sale con el cajon abierto: el peor caso.
+  await salir();
+  comprobar("al cerrar sesion el cajon clinico queda cerrado y vacio",
+    !visible($("cajon-clinica")) && $("clinica-psicopatologias").textContent === "" &&
+    $("clinica-alergias").textContent === "" && $("clinica-pie").textContent === "");
+  comprobar("enfermeria entra despues del medico", await entrar("enfermeria", "enfermeria2026"));
+  await irA("consultas", INTERNO);
+  comprobar("enfermeria no ve el boton de editar la informacion clinica",
+    !visible($("abrir-clinica")) && !visible($("abrir-clinica-ficha")));
+  comprobar("ni le queda la ficha clinica que abrio el medico",
+    !visible($("cajon-clinica")) && $("clinica-psicopatologias").textContent === "");
+  await salir();
+
   // --- 8. La clave temporal no le queda al siguiente -------------------
   // Una cuenta de nombre unico en cada corrida: las cuentas no se borran.
   const SUFIJO = String(Date.now()).slice(-9);

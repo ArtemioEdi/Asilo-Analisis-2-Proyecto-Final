@@ -61,9 +61,9 @@ través del gateway, en `http://localhost:8080`, con el token de sesión.
 | Datos administrativos del interno: ubicación, ingreso, familiar responsable | `PUT /pastillero/api/v1/internos/{id}` | Padrón → **Editar** | `admin` |
 | Egreso del interno, conservando su historial | `PUT /pastillero/api/v1/internos/{id}/egreso` | Padrón → **Egresar** | `admin` |
 | Ficha médica completa del interno | `GET /consultas/api/v1/reportes/ficha?pacienteId=` | Consultas → **Ver ficha médica completa** | `medico` |
-| Psicopatologías del interno | `PUT /pastillero/api/v1/internos/{id}/clinica`, y dentro de la ficha | Ficha médica completa, bloque *Psicopatologías* | `medico` |
-| Alergias del interno | `PUT /pastillero/api/v1/internos/{id}/clinica`, y dentro de la ficha | Ficha médica completa, bloque *Alergias* | `medico` |
-| Medicinas de cajón: la medicación permanente del interno | `PUT /pastillero/api/v1/internos/{id}/clinica` | Ficha médica completa, bloque *Medicación permanente* | `medico` |
+| Psicopatologías del interno | `PUT /pastillero/api/v1/internos/{id}/clinica`, y dentro de la ficha | Consultas → **Editar información clínica**, o el mismo botón dentro de la ficha médica completa: bloque *Psicopatologías* | `medico` (lo lee también `enfermeria`) |
+| Alergias del interno | `PUT /pastillero/api/v1/internos/{id}/clinica`, y dentro de la ficha | Consultas → **Editar información clínica**, o el mismo botón dentro de la ficha médica completa: bloque *Alergias*; sin alergias se dice «Sin alergias conocidas» | `medico` (lo lee también `enfermeria`) |
+| Medicinas de cajón: la medicación permanente del interno | `PUT /pastillero/api/v1/internos/{id}/clinica` | Consultas → **Editar información clínica**, o el mismo botón dentro de la ficha médica completa: bloque *Medicación permanente*, cada medicamento elegido del vademécum de ms-vigia | `medico` |
 | Diagnóstico y observaciones de cada consulta | `GET /consultas/api/v1/visitas/{id}` | Ficha médica completa, *Historial de consultas* | `medico` |
 | Medicamento aplicado, cantidad y tiempo de aplicación | `GET /pastillero/api/v1/turnos` · `POST /pastillero/api/v1/tomas/{id}/administrar` | Jornada de medicación | `enfermeria` |
 
@@ -628,7 +628,7 @@ aceptarlo.
 | 10 | `medico` | Elegir a Bernardo Puac (ASL-022) → **Ver ficha médica completa** | Abrir la ficha | Psicopatologías, alergias, y el historial con diagnóstico, exámenes con resultado y medicamentos. Junta **dos microservicios** en un documento. |
 | 11 | `administracion` | Caja → **Costo por consulta** | Elegir a Bernardo Puac | El costo de la consulta cerrada, con su laboratorio y su farmacia sumados y el descuento de la fundación aplicado |
 | 12 | `admin` | **Padrón** → *Dar de alta* | Registrar a un interno nuevo con su documento de identificación | Aparece en el padrón activo con su edad calculada. Si se repite el documento, el alta se rechaza con `409`: la unicidad la impone el motor, no una consulta previa. |
-| 13 | `medico` | Ficha del interno nuevo → **Información clínica** | Anotarle **warfarina** como medicación permanente | Es el único sitio donde se escribe la parte clínica, y el administrador **no puede** hacerlo. |
+| 13 | `medico` | Consultas → elegir al interno nuevo → **Editar información clínica** | Agregar un medicamento permanente, elegir **warfarina** en la lista del vademécum, poner dosis y frecuencia, y guardar. Pide confirmación | El aviso dice qué cambió, y al pie del cajón queda «Última actualización: Dr. Angel Maltez» con la hora, tomados de la sesión. Es el único sitio donde se escribe la parte clínica: enfermería la lee pero no ve el botón, y el administrador **no puede** ni verla. |
 | 14 | `medico` | Recetario → elegir al interno nuevo | Recetarle **ibuprofeno** | **`ms-vigia` lo bloquea**: la warfarina que se anotó en el paso 13 pesa en el dictamen igual que un plan de tomas activo. La medicación permanente no es un dato decorativo de la ficha. |
 | 15 | `administracion` | Caja → **Cuota mensual de estadía** | Elegir el mes y generar | Se crea la cuota de una vez para todo el padrón activo. **Volver a pulsarlo no cobra dos veces**: lo impide un índice único sobre (interno, mes), y el aviso dice cuántas se crearon y cuántas ya existían. |
 | 16 | `administracion` | **Reportes** | Recorrer los cinco informes que le tocan: los cuatro del enunciado y el adicional de citas con saldo pendiente | Cada uno sale con filtros, totales al pie y el sello de **quién lo generó y cuándo**, tomado del token. Con el botón *Imprimir* sale una hoja limpia, sin menús. |
@@ -654,7 +654,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **247**, en 25 bloques | **115**, en 21 bloques |
+| **Comprobaciones** | **265**, en 26 bloques | **115**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -690,7 +690,7 @@ hallazgo (`FV-GER-04`), su severidad (`CRITICA`) y la comprobación de que la
 receta **no quedó guardada**. El bloque 17 pide los tres reportes sobre esa
 consulta recién hecha.
 
-Los bloques 18 a 22, el 24 y el 25 cubren lo que se agregó después, y todos parten de la
+Los bloques 18 a 22 y del 24 en adelante cubren lo que se agregó después, y todos parten de la
 consulta del bloque 16 o de lo que ellos mismos dan de alta, para que el
 guion se pueda correr dos veces seguidas sin limpiar la base:
 
@@ -728,6 +728,13 @@ guion se pueda correr dos veces seguidas sin limpiar la base:
   reciben `403`. Al final salda lo que creó, y comprueba que los tres cargos
   que dejó la consulta del bloque 16 llevan el nombre del interno, en la lista
   de cargos y en el informe.
+- **26** — la información clínica, sobre un interno dado de alta en cada
+  corrida: nace sin autor de la parte clínica; el médico registra warfarina
+  permanente y el cambio queda firmado con su sesión aunque el cuerpo traiga
+  otro autor; con esa ficha el ibuprofeno sale `BLOQUEADO` y el paracetamol
+  `APROBADO`; enfermería y el administrador reciben `403` al escribir;
+  enfermería lee la ficha con su autor y el administrador no ve ni una cosa ni
+  la otra.
 
 **Qué cubre `verificar.sh`** — lo que no se ve desde la interfaz: la matriz de
 acceso rol por rol y ruta por ruta; la defensa en profundidad, comprobando que

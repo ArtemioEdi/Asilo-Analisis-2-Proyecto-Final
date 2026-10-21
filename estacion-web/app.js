@@ -517,6 +517,9 @@ const PANELES_DE_SESION = [
   "visita-indicaciones", "dictamen-indicacion", "egreso-cabecera", "confirmar-cuerpo",
   // cuentas del personal, y el cuadro de la clave temporal: una clave que se
   // queda en pantalla para el siguiente es exactamente la fuga a cerrar
+  // la informacion clinica
+  "clinica-estado", "clinica-psicopatologias", "clinica-alergias", "clinica-medicacion",
+  "clinica-vademecum-estado", "clinica-pie", "clinica-titulo",
   "usuarios-meta", "usuarios-lista", "usuario-rol-motivo", "desactivar-cabecera",
   "bitacora-cabecera", "bitacora-lista", "clave-para", "clave-valor", "clave-vence",
   "clave-copiada",
@@ -531,7 +534,7 @@ const FORMULARIOS_DE_SESION = [
   "formulario", "formulario-remision", "formulario-visita", "formulario-examen",
   "formulario-indicacion", "formulario-interno", "formulario-egreso",
   "formulario-cargo", "formulario-donacion", "formulario-gasto", "formulario-reporte",
-  "formulario-usuario", "formulario-desactivar", "formulario-cambio",
+  "formulario-usuario", "formulario-desactivar", "formulario-cambio", "formulario-clinica",
 ];
 
 function vaciarInforme() {
@@ -547,6 +550,7 @@ function vaciarPantallas() {
   cerrarCajon(); cerrarFicha(); cerrarVisita(); cerrarRemision();
   cerrarFormularioInterno(); cerrarEgreso();
   cerrarFormularioUsuario(); cerrarDesactivar(); cerrarBitacora(); cerrarClaveTemporal();
+  cerrarClinica();
   ocultarCambioClave();
 
   for (const id of PANELES_DE_SESION) $(id).textContent = "";
@@ -566,6 +570,8 @@ function vaciarPantallas() {
   Object.assign(estadoConsultas, { visitaAbierta: null, solicitudes: [], visitas: [] });
   Object.assign(estadoPadron, { internos: [], editando: null, egresando: null });
   Object.assign(estadoUsuarios, { cuentas: [], editando: null, desactivando: null });
+  Object.assign(estadoClinica, { interno: null, psicopatologias: [], alergias: [],
+                                 medicacion: [], vademecum: null, original: null });
   $("usuarios-estado").value = "ACTIVAS";
   TARIFAS_CAJA = [];
   informePedido = null;
@@ -688,6 +694,9 @@ function aplicarPermisos() {
   $("pestana-usuarios").hidden = !vistaPermitida("usuarios");
   // Enfermeria lee la cadena clinica pero no escribe: sin boton de remitir.
   $("abrir-remision").hidden = SESION.rol !== "MEDICO";
+  // La parte clinica la escribe el medico y nadie mas; enfermeria la lee.
+  $("abrir-clinica").hidden = SESION.rol !== "MEDICO";
+  $("abrir-clinica-ficha").hidden = SESION.rol !== "MEDICO";
   // Los tres roles operativos no tienen internos a cargo: fuera la lateral.
   $("armazon").classList.toggle("armazon--sin-lateral", !tienePadron());
   // Con una sola vista, la barra de pestañas no aporta nada.
@@ -1307,6 +1316,9 @@ $("cerrar-cajon").addEventListener("click", cerrarCajon);
 velo.addEventListener("click", cerrarCajon);
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  // La informacion clinica se abre encima de la ficha: Escape cierra solo la
+  // de arriba.
+  if (!$("cajon-clinica").hidden) { cerrarClinica(); return; }
   if (!cajon.hidden) cerrarCajon();
   if (!$("cajon-remision").hidden) cerrarRemision();
   if (!$("cajon-visita").hidden) cerrarVisita();
@@ -5165,3 +5177,402 @@ function cerrarBitacora() {
 
 $("cerrar-bitacora").addEventListener("click", cerrarBitacora);
 $("velo-bitacora").addEventListener("click", cerrarBitacora);
+
+
+/* =====================================================================
+   Información clínica · solo el MEDICO
+
+   Psicopatologías, alergias y medicación permanente. El endpoint existía
+   desde hace bloques, pero ningún botón lo llamaba: un interno dado de alta
+   desde el padrón quedaba sin ficha clínica y ms-vigia no tenía contra qué
+   protegerlo.
+
+   La medicación permanente no se escribe a mano: cada fila elige un
+   principio activo del vademécum de ms-vigia, porque un nombre mal escrito
+   no da error, da silencio —el motor no lo reconocería—. Si ms-vigia no
+   responde, ese bloque no se puede tocar: es el mismo criterio del
+   servidor, que responde 503 en vez de guardar a ciegas.
+   ===================================================================== */
+
+const estadoClinica = {
+  interno: null, psicopatologias: [], alergias: [], medicacion: [],
+  vademecum: null, original: null,
+};
+let soltarFocoClinica = null;
+let abrioLaClinica = null;
+
+const VACIO_CLINICO = {
+  psicopatologias: "Sin psicopatologías registradas.",
+  alergias: "Sin alergias conocidas.",
+};
+
+function pintarListaClinica(clave) {
+  const lista = $("clinica-" + clave);
+  lista.textContent = "";
+  const valores = estadoClinica[clave];
+  if (!valores.length) {
+    // Una lista vacía es un dato —«no tiene»—, y se dice con palabras.
+    const li = document.createElement("li");
+    li.className = "lista-editable__vacia";
+    li.textContent = VACIO_CLINICO[clave];
+    lista.appendChild(li);
+    return;
+  }
+  valores.forEach((valor, i) => {
+    const li = document.createElement("li");
+    li.className = "lista-editable__item";
+    const texto = document.createElement("span");
+    texto.textContent = valor;
+    const quitar = document.createElement("button");
+    quitar.className = "accion-sec accion-sec--suave";
+    quitar.type = "button";
+    quitar.textContent = "Quitar";
+    quitar.setAttribute("aria-label", "Quitar " + valor);
+    quitar.addEventListener("click", () => {
+      estadoClinica[clave].splice(i, 1);
+      pintarListaClinica(clave);
+      $(clave === "alergias" ? "clinica-alergia-nueva" : "clinica-psico-nueva").focus();
+    });
+    li.append(texto, quitar);
+    lista.appendChild(li);
+  });
+}
+
+function agregarALista(clave, campoId) {
+  const campo = $(campoId);
+  const valor = campo.value.trim().replace(/\s+/g, " ");
+  if (!valor) { campo.focus(); return; }
+  const repetido = estadoClinica[clave].some((v) => v.toLowerCase() === valor.toLowerCase());
+  if (!repetido) estadoClinica[clave].push(valor);
+  campo.value = "";
+  pintarListaClinica(clave);
+  campo.focus();
+}
+
+function nombreDelFarmaco(clave) {
+  const f = (estadoClinica.vademecum || []).find((x) => x.principioActivo === clave);
+  return f ? f.nombre : clave;
+}
+
+function pintarMedicacionClinica() {
+  const caja = $("clinica-medicacion");
+  caja.textContent = "";
+  const vademecum = estadoClinica.vademecum;
+  $("clinica-medicacion-agregar").disabled = !vademecum;
+  $("clinica-vademecum-estado").textContent = vademecum ? "" :
+    "ms-vigia no responde, así que la medicación permanente no se puede modificar " +
+    "ahora: sin el vademécum no hay cómo comprobar que el motor reconozca cada " +
+    "principio activo. Las psicopatologías y las alergias sí se pueden guardar.";
+
+  if (!estadoClinica.medicacion.length) {
+    const p = document.createElement("p");
+    p.className = "parte parte--vacia";
+    p.textContent = "No toma ninguna medicación permanente.";
+    caja.appendChild(p);
+    return;
+  }
+
+  estadoClinica.medicacion.forEach((m, i) => {
+    const fila = document.createElement("div");
+    fila.className = "medicacion-fija";
+
+    if (!vademecum) {
+      // Sin vademécum se muestra, pero no se edita.
+      const texto = document.createElement("p");
+      texto.className = "medicacion-fija__texto";
+      texto.textContent = m.principioActivo +
+        (m.dosisMg ? " " + m.dosisMg + " mg" : "") + (m.cadaHoras ? " cada " + m.cadaHoras + " h" : "");
+      fila.appendChild(texto);
+      caja.appendChild(fila);
+      return;
+    }
+
+    const campoFarmaco = document.createElement("div");
+    campoFarmaco.className = "campo";
+    const rotulo = document.createElement("label");
+    rotulo.textContent = "Principio activo";
+    rotulo.setAttribute("for", "clinica-farmaco-" + i);
+    const select = document.createElement("select");
+    select.id = "clinica-farmaco-" + i;
+    const vacia = document.createElement("option");
+    vacia.value = "";
+    vacia.textContent = "Elija del vademécum…";
+    select.appendChild(vacia);
+    const conocido = vademecum.some((f) => f.principioActivo === m.principioActivo);
+    if (m.principioActivo && !conocido) {
+      // Uno guardado que el vademécum ya no trae: se ve, y el servidor lo
+      // rechazará si se intenta guardar así.
+      const raro = document.createElement("option");
+      raro.value = m.principioActivo;
+      raro.textContent = m.principioActivo + " (no está en el vademécum)";
+      select.appendChild(raro);
+    }
+    for (const f of vademecum) {
+      const opcion = document.createElement("option");
+      opcion.value = f.principioActivo;
+      opcion.textContent = f.nombre + " — " + String(f.grupo || "").toLowerCase().replace(/_/g, " ");
+      select.appendChild(opcion);
+    }
+    select.value = m.principioActivo || "";
+    select.addEventListener("change", () => { m.principioActivo = select.value; });
+    campoFarmaco.append(rotulo, select);
+
+    const numero = (rotuloTexto, clave, sufijo) => {
+      const c = document.createElement("div");
+      c.className = "campo";
+      const l = document.createElement("label");
+      l.textContent = rotuloTexto;
+      l.setAttribute("for", "clinica-" + clave + "-" + i);
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.step = "any";
+      input.id = "clinica-" + clave + "-" + i;
+      input.placeholder = sufijo;
+      input.value = m[clave] != null ? String(m[clave]) : "";
+      input.addEventListener("input", () => {
+        m[clave] = input.value === "" ? null : Number(input.value);
+      });
+      c.append(l, input);
+      return c;
+    };
+
+    const quitar = document.createElement("button");
+    quitar.className = "accion-sec accion-sec--suave";
+    quitar.type = "button";
+    quitar.textContent = "Quitar";
+    quitar.setAttribute("aria-label", "Quitar " + (m.principioActivo || "esta fila"));
+    quitar.addEventListener("click", () => {
+      estadoClinica.medicacion.splice(i, 1);
+      pintarMedicacionClinica();
+      $("clinica-medicacion-agregar").focus();
+    });
+
+    fila.append(campoFarmaco, numero("Dosis (mg)", "dosisMg", "mg"),
+                numero("Cada (horas)", "cadaHoras", "h"), quitar);
+    caja.appendChild(fila);
+  });
+}
+
+function pintarPieClinica(ficha) {
+  $("clinica-pie").textContent = ficha.clinicaActualizadaPor
+    ? "Última actualización: " + ficha.clinicaActualizadaPor + ", " +
+      fechaLegible(ficha.clinicaActualizadaEn) + "."
+    : "Última actualización: nunca. Este interno todavía no tiene ficha clínica.";
+}
+
+function cargarFormularioClinica(ficha) {
+  estadoClinica.psicopatologias = [...(ficha.psicopatologias || [])];
+  estadoClinica.alergias = [...(ficha.alergias || [])];
+  estadoClinica.medicacion = (ficha.medicacionPermanente || []).map((m) => ({
+    principioActivo: m.principioActivo, dosisMg: m.dosisMg ?? null, cadaHoras: m.cadaHoras ?? null,
+  }));
+  estadoClinica.original = {
+    psicopatologias: [...estadoClinica.psicopatologias],
+    alergias: [...estadoClinica.alergias],
+    medicacion: estadoClinica.medicacion.map((m) => ({ ...m })),
+  };
+  $("clinica-titulo").textContent = "Información clínica de " + ficha.nombre;
+  pintarListaClinica("psicopatologias");
+  pintarListaClinica("alergias");
+  pintarMedicacionClinica();
+  pintarPieClinica(ficha);
+}
+
+async function abrirClinica(evento) {
+  if (SESION.rol !== "MEDICO" || !estado.interno) return;
+  const interno = estado.interno;
+  if ($("cajon-clinica").hidden) {
+    abrioLaClinica = (evento && evento.currentTarget) || document.activeElement;
+  }
+  estadoClinica.interno = interno;
+  $("formulario-clinica").hidden = true;
+  $("clinica-pie").textContent = "";
+  esqueleto($("clinica-estado"), 4, true);
+  $("cajon-clinica").hidden = false;
+  $("velo-clinica").hidden = false;
+  if (!soltarFocoClinica) soltarFocoClinica = atraparFoco($("cajon-clinica"));
+  $("cerrar-clinica").focus();
+
+  // El vademécum se pide aparte: si ms-vigia no responde, la ficha se edita
+  // igual, menos la medicación permanente.
+  let vademecum = null;
+  try {
+    vademecum = (await pedir(VIGIA + "/api/v1/vademecum")).farmacos;
+  } catch (error) {
+    if (error.sesionCambiada) return;
+    if (error.sesionExpirada) { sesionExpirada(); return; }
+  }
+
+  let ficha;
+  try {
+    ficha = await pedir(PASTILLERO + "/api/v1/internos/" + encodeURIComponent(interno));
+  } catch (error) {
+    problema($("clinica-estado"), error, "traer la ficha clínica", () => abrirClinica());
+    if (error.sesionExpirada) sesionExpirada();
+    return;
+  }
+  // Si lo cerraron, o cambió de interno, mientras llegaba, no se pinta.
+  if ($("cajon-clinica").hidden || estadoClinica.interno !== interno) return;
+
+  estadoClinica.vademecum = vademecum;
+  $("clinica-estado").textContent = "";
+  $("formulario-clinica").hidden = false;
+  cargarFormularioClinica(ficha);
+}
+
+function cerrarClinica() {
+  if ($("cajon-clinica").hidden) return;
+  $("cajon-clinica").hidden = true;
+  $("velo-clinica").hidden = true;
+  if (soltarFocoClinica) { soltarFocoClinica(); soltarFocoClinica = null; }
+  if (abrioLaClinica && abrioLaClinica.focus && document.contains(abrioLaClinica)) {
+    abrioLaClinica.focus();
+  }
+  abrioLaClinica = null;
+}
+
+// Lo que cambió, en palabras, para el aviso de después de guardar.
+function cambiosClinicos(antes, despues) {
+  const partes = [];
+  const listas = [["psicopatologias", "psicopatología"], ["alergias", "alergia"]];
+  for (const [clave, nombre] of listas) {
+    const a = antes[clave].map((x) => x.toLowerCase());
+    const d = despues[clave].map((x) => x.toLowerCase());
+    const nuevas = despues[clave].filter((x) => !a.includes(x.toLowerCase()));
+    const quitadas = antes[clave].filter((x) => !d.includes(x.toLowerCase()));
+    if (nuevas.length) partes.push(nombre + (nuevas.length > 1 ? "s" : "") + " agregada" +
+      (nuevas.length > 1 ? "s" : "") + ": " + nuevas.join(", "));
+    if (quitadas.length) partes.push(nombre + (quitadas.length > 1 ? "s" : "") + " quitada" +
+      (quitadas.length > 1 ? "s" : "") + ": " + quitadas.join(", "));
+  }
+  const pa = antes.medicacion.map((m) => m.principioActivo);
+  const pd = despues.medicacion.map((m) => m.principioActivo);
+  const nuevos = pd.filter((p) => !pa.includes(p));
+  const quitados = pa.filter((p) => !pd.includes(p));
+  if (nuevos.length) partes.push("medicación permanente agregada: " + nuevos.map(nombreDelFarmaco).join(", "));
+  if (quitados.length) partes.push("medicación permanente quitada: " + quitados.map(nombreDelFarmaco).join(", "));
+  const ajustados = despues.medicacion.filter((m) => {
+    const previo = antes.medicacion.find((x) => x.principioActivo === m.principioActivo);
+    return previo && (previo.dosisMg !== m.dosisMg || previo.cadaHoras !== m.cadaHoras);
+  });
+  if (ajustados.length) partes.push("dosis ajustada: " + ajustados.map((m) => nombreDelFarmaco(m.principioActivo)).join(", "));
+  return partes;
+}
+
+function textoMedicacion(lista) {
+  if (!lista.length) return "ninguna";
+  return lista.map((m) => nombreDelFarmaco(m.principioActivo) +
+    (m.dosisMg ? " " + m.dosisMg + " mg" : "") + (m.cadaHoras ? " cada " + m.cadaHoras + " h" : ""))
+    .join(", ");
+}
+
+$("formulario-clinica").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const interno = estadoClinica.interno;
+  if (!interno) return;
+
+  const conMedicacion = Boolean(estadoClinica.vademecum);
+  if (conMedicacion) {
+    const sinFarmaco = estadoClinica.medicacion.some((m) => !m.principioActivo);
+    const claves = estadoClinica.medicacion.map((m) => m.principioActivo);
+    const repetido = claves.find((c, i) => claves.indexOf(c) !== i);
+    const malNumero = estadoClinica.medicacion.some((m) =>
+      [m.dosisMg, m.cadaHoras].some((n) => n != null && !(n > 0)));
+    if (sinFarmaco || repetido || malNumero) {
+      aviso("Revise la medicación permanente",
+        sinFarmaco ? "Hay una fila sin principio activo: elíjalo del vademécum o quítela."
+          : repetido ? "El principio activo " + nombreDelFarmaco(repetido) + " está dos veces."
+          : "La dosis y la frecuencia, si se indican, tienen que ser mayores que cero.",
+        "aviso");
+      return;
+    }
+  }
+
+  const nombre = INTERNOS[interno] ? INTERNOS[interno].nombre : interno;
+  const seguro = await confirmar({
+    titulo: "¿Guardar la información clínica de " + nombre + "?",
+    textoSi: "Sí, guardar",
+    datos: [
+      ["Interno", nombre + " · " + interno],
+      ["Psicopatologías", estadoClinica.psicopatologias.join(", ") || "ninguna registrada"],
+      ["Alergias", estadoClinica.alergias.join(", ") || "sin alergias conocidas"],
+      ["Medicación permanente", conMedicacion ? textoMedicacion(estadoClinica.medicacion)
+        : "sin cambios (ms-vigia no responde)"],
+    ],
+    aviso: "Estos datos deciden los dictámenes de ms-vigia: con ellos bloquea o aprueba " +
+           "cada medicamento que se le recete a este interno. El cambio queda firmado " +
+           "con su sesión.",
+  });
+  if (!seguro) return;
+
+  const cuerpo = {
+    psicopatologias: estadoClinica.psicopatologias,
+    alergias: estadoClinica.alergias,
+  };
+  if (conMedicacion) {
+    cuerpo.medicacionPermanente = estadoClinica.medicacion.map((m) => {
+      const item = { principioActivo: m.principioActivo };
+      if (m.dosisMg != null) item.dosisMg = m.dosisMg;
+      if (m.cadaHoras != null) item.cadaHoras = m.cadaHoras;
+      return item;
+    });
+  }
+
+  const boton = $("guardar-clinica");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Guardando…";
+  const antes = estadoClinica.original;
+  try {
+    const ficha = await pedir(PASTILLERO + "/api/v1/internos/" + encodeURIComponent(interno) + "/clinica", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cuerpo),
+    });
+    cargarFormularioClinica(ficha);
+    const cambios = cambiosClinicos(antes, estadoClinica.original);
+    aviso("Información clínica guardada",
+      (cambios.length ? cambios.join(" · ") : "Sin cambios en los datos") +
+      ". Desde ahora ms-vigia dictamina con esta ficha.", "ok");
+
+    // La ficha repintada donde se esté viendo: el padrón en memoria, la
+    // jornada si está abierta y la ficha médica completa si está debajo.
+    if (INTERNOS[interno]) Object.assign(INTERNOS[interno], ficha);
+    if (rutaActual.vista === "jornada" && estado.interno === interno) cargarInterno();
+    if (!$("cajon-ficha").hidden) abrirFicha();
+  } catch (error) {
+    if (error.sesionCambiada) return;
+    if ((error.estado === 503 || error.estado === 400) && error.cuerpo && error.cuerpo.error) {
+      const detalles = (error.cuerpo.detalles || []).join(" ");
+      aviso(error.estado === 503 ? "No se guardó nada" : "Revise los datos",
+        (error.estado === 503 ? error.cuerpo.error : detalles || error.cuerpo.error), "aviso");
+    } else {
+      avisarError(error, "guardar la información clínica");
+    }
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+});
+
+$("clinica-psico-agregar").addEventListener("click", () =>
+  agregarALista("psicopatologias", "clinica-psico-nueva"));
+$("clinica-alergia-agregar").addEventListener("click", () =>
+  agregarALista("alergias", "clinica-alergia-nueva"));
+// Enter en el campo agrega a la lista; no envía el formulario entero.
+for (const [campo, clave] of [["clinica-psico-nueva", "psicopatologias"], ["clinica-alergia-nueva", "alergias"]]) {
+  $(campo).addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); agregarALista(clave, campo); }
+  });
+}
+$("clinica-medicacion-agregar").addEventListener("click", () => {
+  estadoClinica.medicacion.push({ principioActivo: "", dosisMg: null, cadaHoras: null });
+  pintarMedicacionClinica();
+  const ultima = estadoClinica.medicacion.length - 1;
+  $("clinica-farmaco-" + ultima).focus();
+});
+$("abrir-clinica").addEventListener("click", abrirClinica);
+$("abrir-clinica-ficha").addEventListener("click", abrirClinica);
+$("cerrar-clinica").addEventListener("click", cerrarClinica);
+$("velo-clinica").addEventListener("click", cerrarClinica);

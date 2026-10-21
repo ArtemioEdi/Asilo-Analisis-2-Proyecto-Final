@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS internos (
     -- Lo que el interno toma de forma cronica, fuera de los planes de tomas.
     -- ms-vigia lo necesita para detectar duplicidad terapeutica.
     medicacion_permanente JSON     NOT NULL,
+    -- Quien escribio la parte clinica por ultima vez, y cuando. Lo llena
+    -- PUT /internos/{id}/clinica con el nombre de la sesion, nunca con lo que
+    -- mande el cuerpo: estos datos deciden los dictamenes de ms-vigia, y
+    -- quien los cambia responde por ellos. NULOS mientras la ficha clinica no
+    -- se haya escrito nunca, que es como nace un interno dado de alta.
+    clinica_actualizada_por VARCHAR(120) NULL,
+    clinica_actualizada_en  DATETIME     NULL,
     responsable      VARCHAR(120),
     -- Correo del familiar responsable. Es a donde ms-consultas avisa cuando
     -- se remite al interno a una especialidad. Dato de contacto, no clinico:

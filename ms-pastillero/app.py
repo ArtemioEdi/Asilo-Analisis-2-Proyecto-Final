@@ -455,6 +455,11 @@ def ficha_json(fila, incluir_clinico=True):
         ficha["psicopatologias"] = json.loads(fila["psicopatologias"])
         ficha["alergias"] = json.loads(fila["alergias"])
         ficha["medicacionPermanente"] = json.loads(fila["medicacion_permanente"])
+        # La autoria de la parte clinica va con la parte clinica: a quien no
+        # la ve tampoco se le dice quien la escribio.
+        ficha["clinicaActualizadaPor"] = fila["clinica_actualizada_por"]
+        ficha["clinicaActualizadaEn"] = (fila["clinica_actualizada_en"].isoformat(timespec="seconds")
+                                         if fila["clinica_actualizada_en"] else None)
     return ficha
 
 
@@ -1221,11 +1226,14 @@ def actualizar_clinica(paciente_id):
         }), 400
 
     asignaciones = ", ".join("%s=%%s" % c for c in valores)
+    # Firmado con la sesion y la hora del servidor. Si el cuerpo trae un
+    # autor, se ignora: no hay de donde leerlo.
     bd = conexion()
     try:
-        ejecutar("UPDATE internos SET " + asignaciones + " WHERE id=%s",
+        ejecutar("UPDATE internos SET " + asignaciones +
+                 ", clinica_actualizada_por=%s, clinica_actualizada_en=%s WHERE id=%s",
                  tuple(json.dumps(v, ensure_ascii=False) for v in valores.values())
-                 + (paciente_id,))
+                 + (firmante(), datetime.now().replace(microsecond=0), paciente_id))
         bd.commit()
     except Exception:
         bd.rollback()
@@ -1369,13 +1377,18 @@ def sembrar_internos():
                            (id, nombre, documento, fecha_nacimiento, sexo,
                             ingreso, motivo_ingreso, pabellon, cama,
                             psicopatologias, alergias, medicacion_permanente,
+                            clinica_actualizada_por, clinica_actualizada_en,
                             responsable, correo_responsable, estado)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'ACTIVO')""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'ACTIVO')""",
                     (pid, nombre, documento, nacimiento, sexo, ingreso, motivo,
                      pabellon, cama,
                      json.dumps(psico, ensure_ascii=False),
                      json.dumps(alergias, ensure_ascii=False),
                      json.dumps(permanente, ensure_ascii=False),
+                     # La ficha sembrada tambien dice de donde salio: un
+                     # interno con parte clinica y sin autor seria un estado
+                     # que el sistema en marcha no puede producir.
+                     "Siembra de demostracion", datetime.now().replace(microsecond=0),
                      responsable, correo),
                 )
         bd.commit()

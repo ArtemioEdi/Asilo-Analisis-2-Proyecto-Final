@@ -454,6 +454,7 @@
         </div>
         <div class="encabezado__acciones">
           <button class="accion-sec" id="abrir-ficha" type="button">Ver ficha médica completa</button>
+          <button class="accion-sec" id="abrir-clinica" type="button" hidden>Editar información clínica</button>
           <button class="accion" id="abrir-remision" type="button">Remitir a especialidad</button>
         </div>
       </header>
@@ -711,7 +712,78 @@
 
   <p class="cajon__nota" id="ficha-pie"></p>
 
+  <button class="accion-sec" id="abrir-clinica-ficha" type="button" hidden>
+    Editar información clínica
+  </button>
+
   <div id="ficha-cuerpo"></div>
+</aside>
+
+<!-- La parte clinica de la ficha: psicopatologias, alergias y medicacion
+     permanente. Solo el medico, y va DESPUES del cajon de la ficha a
+     proposito: abierto desde ahi, queda encima. Son los datos con los que
+     ms-vigia decide si bloquea un medicamento, asi que se confirma antes de
+     guardar y queda firmado con la sesion. -->
+<div class="velo" id="velo-clinica" hidden></div>
+<aside class="cajon" id="cajon-clinica" hidden role="dialog" aria-modal="true"
+       aria-labelledby="clinica-titulo">
+  <header class="cajon__cabecera">
+    <div>
+      <span class="cajon__servicio">ms-pastillero · ms-vigia</span>
+      <h3 id="clinica-titulo">Información clínica</h3>
+    </div>
+    <button class="cerrar" id="cerrar-clinica" type="button" aria-label="Cerrar">×</button>
+  </header>
+
+  <p class="cajon__nota">
+    Estos tres datos <b>deciden los dictámenes de ms-vigia</b>: con ellos
+    bloquea un medicamento por alergia, por interacción o por un criterio
+    geriátrico. Lo que se guarda aquí queda firmado con su sesión.
+  </p>
+
+  <div id="clinica-estado"></div>
+
+  <form class="formulario-clinica" id="formulario-clinica" autocomplete="off" hidden>
+    <section class="bloque">
+      <div class="bloque__cabecera"><h4>Psicopatologías</h4></div>
+      <ul class="lista-editable" id="clinica-psicopatologias"></ul>
+      <div class="lista-editable__agregar">
+        <label class="visualmente-oculto" for="clinica-psico-nueva">Psicopatología nueva</label>
+        <input id="clinica-psico-nueva" type="text" maxlength="120"
+               placeholder="Demencia mixta, depresión mayor…">
+        <button class="accion-sec" id="clinica-psico-agregar" type="button">Agregar</button>
+      </div>
+    </section>
+
+    <section class="bloque">
+      <div class="bloque__cabecera"><h4>Alergias</h4></div>
+      <ul class="lista-editable" id="clinica-alergias"></ul>
+      <div class="lista-editable__agregar">
+        <label class="visualmente-oculto" for="clinica-alergia-nueva">Alergia nueva</label>
+        <input id="clinica-alergia-nueva" type="text" maxlength="120"
+               placeholder="Sulfas, penicilina, látex…">
+        <button class="accion-sec" id="clinica-alergia-agregar" type="button">Agregar</button>
+      </div>
+    </section>
+
+    <section class="bloque">
+      <div class="bloque__cabecera">
+        <h4>Medicación permanente</h4>
+        <span class="bloque__nota">del vademécum de ms-vigia</span>
+      </div>
+      <p class="parte" id="clinica-vademecum-estado"></p>
+      <div id="clinica-medicacion"></div>
+      <button class="accion-sec" id="clinica-medicacion-agregar" type="button">
+        Agregar un medicamento
+      </button>
+    </section>
+
+    <button class="accion accion--ancha" id="guardar-clinica" type="submit">
+      Guardar la información clínica
+    </button>
+  </form>
+
+  <p class="cajon__nota" id="clinica-pie"></p>
 </aside>
 
 <!-- Recetario: atrapa el foco mientras esta abierto y lo devuelve al boton

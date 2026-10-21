@@ -1270,6 +1270,59 @@ comprobar "la consulta del bloque 16 dejó sus tres cargos en la caja" "3" "${CA
 comprobar "los tres traen pacienteNombre en GET /caja/api/v1/cargos" "3" "${CON_NOMBRE:-0}"
 comprobar "y el informe de citas pendientes trae el nombre del interno" "si" "${EN_INFORME:-no}"
 
+# ---------------------------------------------------------------------------
+titulo "26. Información clínica: la escribe el médico y queda firmada"
+# ---------------------------------------------------------------------------
+# Un interno propio, dado de alta en cada corrida: nace sin ficha clinica, como
+# cualquiera que entre por el padron. Al final se le egresa.
+DOC_CLINICA="CLI$(date +%s)"
+INTERNO_CLINICA=$(cuerpo POST "$GATEWAY/pastillero/api/v1/internos" "$TOKEN_ADMR" \
+  "{\"nombre\":\"Prueba Clinica $DOC_CLINICA\",\"documento\":\"$DOC_CLINICA\",\"fechaNacimiento\":\"1940-05-02\",\"sexo\":\"MASCULINO\"}" \
+  | campo pacienteId)
+comprobar "el administrador da de alta un interno de prueba" "si" "$([ -n "$INTERNO_CLINICA" ] && echo si || echo no)"
+codigo GET "$GATEWAY/pastillero/api/v1/internos/$INTERNO_CLINICA" "$TOKEN_MEDICO" >/dev/null
+comprobar "nace sin ficha clínica: sin autor de la parte clínica" "" \
+  "$(campo clinicaActualizadaPor < "$TEMPORAL/respuesta.json")"
+
+# El cuerpo trae un autor inventado, con los dos nombres que podria tener.
+CLINICA_CUERPO='{"psicopatologias":["Demencia leve"],"alergias":[],
+  "medicacionPermanente":[{"principioActivo":"warfarina","dosisMg":5,"cadaHoras":24}],
+  "clinicaActualizadaPor":"YO SOY OTRO","actualizadoPor":"YO SOY OTRO"}'
+comprobar "el medico registra la ficha clínica con warfarina permanente (200)" "200" \
+  "$(codigo PUT "$GATEWAY/pastillero/api/v1/internos/$INTERNO_CLINICA/clinica" "$TOKEN_MEDICO" "$CLINICA_CUERPO")"
+comprobar "queda firmada con el nombre de la sesión, no con el del cuerpo" "Dr. Angel Maltez" \
+  "$(campo clinicaActualizadaPor < "$TEMPORAL/respuesta.json")"
+comprobar "y con la hora del servidor" "si" \
+  "$([ -n "$(campo clinicaActualizadaEn < "$TEMPORAL/respuesta.json")" ] && echo si || echo no)"
+
+# El par del CP-34, ahora por el camino de la pantalla: la warfarina permanente
+# pesa en el dictamen.
+validar_clinica() {
+  cuerpo POST "$GATEWAY/vigia/api/v1/validaciones" "$TOKEN_MEDICO" \
+    "{\"pacienteId\":\"$INTERNO_CLINICA\",\"propuesta\":{\"principioActivo\":\"$1\",\"dosisMg\":$2,\"cadaHoras\":$3}}" \
+    | campo veredicto
+}
+comprobar "con la warfarina registrada, el ibuprofeno sale BLOQUEADO" "BLOQUEADO" "$(validar_clinica ibuprofeno 400 8)"
+comprobar "y el paracetamol sale APROBADO" "APROBADO" "$(validar_clinica paracetamol 500 8)"
+
+# --- Quien no la escribe -------------------------------------------------------
+comprobar "enfermeria NO escribe la parte clínica (403)" "403" \
+  "$(codigo PUT "$GATEWAY/pastillero/api/v1/internos/$INTERNO_CLINICA/clinica" "$TOKEN_ENFERMERIA" '{"alergias":[]}')"
+comprobar "el administrador tampoco (403)" "403" \
+  "$(codigo PUT "$GATEWAY/pastillero/api/v1/internos/$INTERNO_CLINICA/clinica" "$TOKEN_ADMR" '{"alergias":[]}')"
+
+# Enfermeria la lee, con su autor; el administrador no ve ni la parte clinica
+# ni quien la escribio.
+codigo GET "$GATEWAY/pastillero/api/v1/internos/$INTERNO_CLINICA" "$TOKEN_ENFERMERIA" >/dev/null
+comprobar "enfermeria lee la ficha clínica y quién la firmó" "Dr. Angel Maltez" \
+  "$(campo clinicaActualizadaPor < "$TEMPORAL/respuesta.json")"
+codigo GET "$GATEWAY/pastillero/api/v1/internos/$INTERNO_CLINICA" "$TOKEN_ADMR" >/dev/null
+comprobar "el administrador no ve la parte clínica ni su autor" "0" \
+  "$(grep -cE '"(alergias|psicopatologias|medicacionPermanente|clinicaActualizadaPor)"' "$TEMPORAL/respuesta.json")"
+
+codigo PUT "$GATEWAY/pastillero/api/v1/internos/$INTERNO_CLINICA/egreso" "$TOKEN_ADMR" \
+  "{\"fecha\":\"$(date +%F)\",\"motivo\":\"Fin de la prueba de la ficha clinica\"}" >/dev/null
+
 
 # ---------------------------------------------------------------------------
 printf "\n%s== Resultado%s\n" "$CIAN" "$FIN"
