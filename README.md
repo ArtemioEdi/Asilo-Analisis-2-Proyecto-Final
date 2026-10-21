@@ -473,7 +473,8 @@ un secreto publicado, y cualquiera que lo lea puede firmarse un token de
 `MEDICO`. El archivo `.env` está en `.gitignore` y no se versiona.
 
 ```bash
-cd asilo-microservicios
+git clone https://github.com/ArtemioEdi/Asilo-Analisis-2-Proyecto-Final.git
+cd Asilo-Analisis-2-Proyecto-Final
 cp .env.ejemplo .env
 for v in GATEWAY_SECRETO BD_CLAVE_ROOT BD_CLAVE_VIGIA BD_CLAVE_PASTILLERO \
          BD_CLAVE_CAJA BD_CLAVE_CONSULTAS BD_CLAVE_ACCESO; do
@@ -1411,7 +1412,7 @@ contenga el valor de ninguna clave del `.env`.
 ## 10. Estructura de archivos
 
 ```
-asilo-microservicios/
+Asilo-Analisis-2-Proyecto-Final/
 ├── docker-compose.yml          orquesta los siete contenedores
 ├── sql/                        el modelo de datos, como entrega legible
 │   ├── 01-bases-y-usuarios.sh    cinco bases, cinco usuarios y sus permisos
