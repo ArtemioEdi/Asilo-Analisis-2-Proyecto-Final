@@ -104,7 +104,7 @@ través del gateway, en `http://localhost:8080`, con el token de sesión.
 | Cuota mensual de estadía | `POST /caja/api/v1/cuotas/generar` para todo el padrón activo, o la tarifa `cuota-mensual` en `POST /caja/api/v1/cargos` para una sola | Caja → *Cuota mensual de estadía* | `administracion` |
 | Entradas por donaciones, en sus cuatro categorías: empresa internacional, empresa nacional, gobierno y particular | `POST /caja/api/v1/donaciones` · `GET /caja/api/v1/donaciones` | Caja → *Registrar una donación* | `administracion` |
 | Salidas por gastos operativos | `POST /caja/api/v1/gastos` · `GET /caja/api/v1/gastos` | Caja → *Registrar un gasto* | `administracion` |
-| Lo que el asilo le debe a la fundación y sus pagos | `GET /caja/api/v1/fundacion/resumen` · `POST /caja/api/v1/fundacion/pagos` | Caja → resumen superior | `administracion` |
+| Lo que el asilo le debe a la fundación y sus pagos | `GET /caja/api/v1/fundacion/resumen` · `POST /caja/api/v1/fundacion/pagos` | Caja → resumen superior (*Adeudado*, *Pagado* y *Saldo con la fundación*) y el formulario **Registrar un pago a la fundación**, con monto y referencia. Un pago mayor que el saldo se rechaza con `400` | `administracion` |
 | Balance general de entradas y salidas | `GET /caja/api/v1/resumen` | Caja → resumen superior | `administracion` |
 | Control de las citas que aún no están completamente canceladas | `GET /caja/api/v1/reportes/citas-pendientes?pacienteId=&desde=&hasta=` (todos los filtros opcionales) | Caja → resumen superior, dato **Citas con saldo pendiente**, que lleva a Reportes → *Adicional · Citas con saldo pendiente* | `administracion` |
 
@@ -654,7 +654,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **265**, en 26 bloques | **115**, en 21 bloques |
+| **Comprobaciones** | **273**, en 27 bloques | **115**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -735,6 +735,10 @@ guion se pueda correr dos veces seguidas sin limpiar la base:
   `APROBADO`; enfermería y el administrador reciben `403` al escribir;
   enfermería lee la ficha con su autor y el administrador no ve ni una cosa ni
   la otra.
+- **27** — los pagos a la fundación: un pago baja el saldo en lo justo, aparece
+  en el informe 4 firmado por quien lo registró, y un pago mayor que el saldo,
+  con más de dos decimales o sin referencia se rechaza con `400` sin mover el
+  saldo; `medico` recibe `403`.
 
 **Qué cubre `verificar.sh`** — lo que no se ve desde la interfaz: la matriz de
 acceso rol por rol y ruta por ruta; la defensa en profundidad, comprobando que

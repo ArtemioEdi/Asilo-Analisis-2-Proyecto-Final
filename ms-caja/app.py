@@ -3,7 +3,7 @@ import re
 import time
 import uuid
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import jwt
 import pymysql
@@ -628,20 +628,32 @@ def crear_gasto():
                      "monto": monto, "creadoEn": ahora.isoformat(timespec="seconds")}), 201
 
 
+def cuentas_con_fundacion():
+    """(adeudado, pagado, saldo) con la fundacion, en Decimal y calculado en MySQL.
+
+    Lo adeudado son las consultas, examenes y farmacia que la fundacion presto;
+    lo pagado, lo que el asilo ya le transfirio. La resta la hace el motor sobre
+    DECIMAL: en float, Q 0.10 + Q 0.20 no da Q 0.30, y un saldo con la
+    fundacion no puede tener centavos fantasma.
+    """
+    fila = consultar_uno(
+        "SELECT (SELECT COALESCE(SUM(monto_neto), 0) FROM cargos WHERE categoria IN "
+        + _EN_CLAUSULA_FUNDACION + ") AS adeudado, "
+        "(SELECT COALESCE(SUM(monto), 0) FROM pagos_fundacion) AS pagado")
+    adeudado, pagado = Decimal(fila["adeudado"]), Decimal(fila["pagado"])
+    return adeudado, pagado, adeudado - pagado
+
+
 @app.get("/api/v1/fundacion/resumen")
 def resumen_fundacion():
     """Reporte de pagos a la fundacion: lo adeudado por consultas, examenes y farmacia
     consumidos por los internos, contra lo que el asilo ya le ha pagado."""
-    adeudado = float(consultar_uno(
-        "SELECT COALESCE(SUM(monto_neto),0) t FROM cargos WHERE categoria IN "
-        + _EN_CLAUSULA_FUNDACION)["t"])
-    pagado = float(consultar_uno(
-        "SELECT COALESCE(SUM(monto),0) t FROM pagos_fundacion")["t"])
+    adeudado, pagado, saldo = cuentas_con_fundacion()
     pagos = consultar("SELECT * FROM pagos_fundacion ORDER BY creado_en DESC LIMIT 50")
     return jsonify({
-        "totalAdeudado": round(adeudado, 2),
-        "totalPagado": round(pagado, 2),
-        "saldoConFundacion": round(adeudado - pagado, 2),
+        "totalAdeudado": float(adeudado),
+        "totalPagado": float(pagado),
+        "saldoConFundacion": float(saldo),
         "pagos": [
             {"id": p["id"], "monto": float(p["monto"]), "referencia": p["referencia"],
              "registradoPor": p["registrado_por"],
@@ -651,31 +663,71 @@ def resumen_fundacion():
     })
 
 
+def _monto_en_quetzales(valor):
+    """Decimal con dos decimales, o None si no es un monto valido.
+
+    Se lee como texto y no como float: float("0.1") ya no es 0.1, y ese error
+    viajaria hasta la columna DECIMAL. Mas de dos decimales es un error de
+    tecleo, no un monto, y se rechaza en vez de redondearlo en silencio.
+    """
+    try:
+        monto = Decimal(str(valor).strip())
+    except (InvalidOperation, ValueError):
+        return None
+    if not monto.is_finite() or monto <= 0 or monto != monto.quantize(Decimal("0.01")):
+        return None
+    return monto
+
+
 @app.post("/api/v1/fundacion/pagos")
 def pagar_fundacion():
+    """Registra un pago del asilo a la fundacion. No acepta pagar de mas.
+
+    Igual que con los pagos de las familias, un pago mayor que el saldo se
+    rechaza con 400: un saldo negativo con la fundacion seria plata regalada o
+    un error de tecleo, y en los dos casos el libro de caja quedaria mintiendo.
+    """
     cuerpo = request.get_json(silent=True) or {}
-    try:
-        monto = float(cuerpo.get("monto"))
-        if monto <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        return jsonify({"error": "monto debe ser numerico y mayor que cero."}), 400
+    monto = _monto_en_quetzales(cuerpo.get("monto"))
+    if monto is None:
+        return jsonify({"error": "monto debe ser un numero mayor que cero, con dos "
+                                 "decimales como mucho."}), 400
+    referencia = (cuerpo.get("referencia") or "").strip()
+    if not 3 <= len(referencia) <= 160:
+        return jsonify({"error": "Indique la referencia del pago: el numero de recibo "
+                                 "o de la transferencia (de 3 a 160 caracteres)."}), 400
 
     pago_id = _folio("PF")
     ahora = datetime.now().replace(microsecond=0)
     bd = conexion()
+    # Un candado con nombre, para que dos pagos simultaneos no pasen los dos el
+    # control del saldo: entre leerlo y escribir el pago cabe el otro.
+    if consultar_uno("SELECT GET_LOCK('asilo_pago_fundacion', 5) AS ok")["ok"] != 1:
+        return jsonify({"error": "Otro pago a la fundacion se esta registrando. "
+                                 "Vuelva a intentarlo."}), 409
     try:
+        _, _, saldo = cuentas_con_fundacion()
+        if monto > saldo:
+            return jsonify({
+                "error": "El pago (Q %s) es mayor que el saldo con la fundacion (Q %s)."
+                         % (monto, saldo),
+                "saldoConFundacion": float(saldo),
+            }), 400
         ejecutar(
             """INSERT INTO pagos_fundacion
                    (id, monto, referencia, registrado_por, creado_en)
                VALUES (%s,%s,%s,%s,%s)""",
-            (pago_id, monto, cuerpo.get("referencia", ""), firmante(), ahora),
+            (pago_id, monto, referencia, firmante(), ahora),
         )
         bd.commit()
     except Exception:
         bd.rollback()
         raise
-    return jsonify({"id": pago_id, "monto": monto,
+    finally:
+        consultar_uno("SELECT RELEASE_LOCK('asilo_pago_fundacion') AS ok")
+    return jsonify({"id": pago_id, "monto": float(monto), "referencia": referencia,
+                     "registradoPor": firmante(),
+                     "saldoConFundacion": float(saldo - monto),
                      "creadoEn": ahora.isoformat(timespec="seconds")}), 201
 
 

@@ -504,6 +504,7 @@ const PANELES_DE_SESION = [
   "meta-interno", "datos-interno", "regla", "parte", "registro",
   // caja
   "caja-meta", "caja-resumen", "caja-saldo", "caja-cargos", "costos-conteo", "lista-costos",
+  "fundacion-nota",
   // consultas
   "consultas-meta", "consultas-conteo", "lista-solicitudes", "correos-conteo", "correos-nota",
   "lista-correos", "examenes-conteo", "lista-examenes", "historial-conteo", "historial",
@@ -534,6 +535,7 @@ const FORMULARIOS_DE_SESION = [
   "formulario", "formulario-remision", "formulario-visita", "formulario-examen",
   "formulario-indicacion", "formulario-interno", "formulario-egreso",
   "formulario-cargo", "formulario-donacion", "formulario-gasto", "formulario-reporte",
+  "formulario-fundacion",
   "formulario-usuario", "formulario-desactivar", "formulario-cambio", "formulario-clinica",
 ];
 
@@ -575,6 +577,7 @@ function vaciarPantallas() {
   $("usuarios-estado").value = "ACTIVAS";
   TARIFAS_CAJA = [];
   informePedido = null;
+  saldoFundacion = null;
 }
 
 // No se expulsa de golpe: se avisa y se guarda donde estaba, para devolverla
@@ -1515,14 +1518,24 @@ async function pintarCaja() {
   if (SESION.rol === "ADMINISTRACION") {
     esqueleto(resumenNodo, 4);
     try {
-      const resumen = await pedir(CAJA + "/api/v1/resumen");
+      // Las cuentas con la fundacion, en la misma ida: van en el mismo resumen.
+      const [resumen, fundacion] = await Promise.all([
+        pedir(CAJA + "/api/v1/resumen"),
+        pedir(CAJA + "/api/v1/fundacion/resumen"),
+      ]);
+      saldoFundacion = fundacion.saldoConFundacion;
+      $("fundacion-nota").textContent = "Saldo con la fundación: " +
+        quetzales(fundacion.saldoConFundacion) + ". No se acepta un pago mayor que el saldo.";
       resumenNodo.textContent = "";
       resumenNodo.append(
         campo("Entradas (donaciones + cobros)", "Q " + resumen.entradas.total.toFixed(2)),
         campo("Salidas (gastos + adeudo fundación)", "Q " + resumen.salidas.total.toFixed(2)),
         campo("Saldo pendiente de familiares", "Q " + resumen.saldoPendienteFamiliares.toFixed(2)),
         campo("Balance", "Q " + resumen.balance.toFixed(2)),
-        campo("Citas con saldo pendiente", enlaceCitasPendientes(resumen.citasConSaldoPendiente))
+        campo("Citas con saldo pendiente", enlaceCitasPendientes(resumen.citasConSaldoPendiente)),
+        campo("Adeudado a la fundación", quetzales(fundacion.totalAdeudado)),
+        campo("Pagado a la fundación", quetzales(fundacion.totalPagado)),
+        campo("Saldo con la fundación", quetzales(fundacion.saldoConFundacion))
       );
     } catch (error) {
       problema(resumenNodo, error, "consultar el resumen financiero", pintarCaja);
@@ -1740,6 +1753,61 @@ $("formulario-donacion").addEventListener("submit", (evento) => {
     (r) => aviso("Donación registrada",
       "Q " + r.monto.toFixed(2) + " de " + r.donante + ". Gracias.", "ok"),
     "registrar la donación");
+});
+
+// El saldo con la fundacion que se mostro por ultima vez, para la
+// confirmacion. Quien decide es el servidor, que rechaza pagar de mas.
+let saldoFundacion = null;
+
+$("formulario-fundacion").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const montoTexto = $("fundacion-monto").value.trim();
+  const referencia = $("fundacion-referencia").value.trim();
+  const monto = Number(montoTexto);
+  if (!(monto > 0) || referencia.length < 3) {
+    aviso("Faltan datos del pago", "Indique el monto y la referencia del recibo o la transferencia.", "aviso");
+    return;
+  }
+  const seguro = await confirmar({
+    titulo: "¿Registrar un pago de " + quetzales(monto) + " a la fundación?",
+    textoSi: "Sí, registrar el pago",
+    datos: [
+      ["Monto", quetzales(monto)],
+      ["Referencia", referencia],
+      ["Saldo con la fundación", saldoFundacion == null ? "—" : quetzales(saldoFundacion)],
+      ["Saldo después del pago", saldoFundacion == null ? "—" : quetzales(saldoFundacion - monto)],
+    ],
+    aviso: "Queda firmado con su sesión y aparece en el informe de pagos a la fundación.",
+  });
+  if (!seguro) return;
+
+  const boton = $("registrar-pago-fundacion");
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = "Registrando…";
+  try {
+    // El monto viaja como texto: el servidor lo lee como DECIMAL, sin pasar
+    // por coma flotante.
+    const r = await pedir(CAJA + "/api/v1/fundacion/pagos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ monto: montoTexto, referencia }),
+    });
+    $("formulario-fundacion").reset();
+    aviso("Pago a la fundación registrado",
+      quetzales(r.monto) + " · " + r.referencia + " · queda un saldo de " +
+      quetzales(r.saldoConFundacion) + ".", "ok");
+    await pintarCaja();
+  } catch (error) {
+    if (error.estado === 400 && error.cuerpo && error.cuerpo.error) {
+      aviso("No se registró el pago", error.cuerpo.error, "aviso");
+    } else {
+      avisarError(error, "registrar el pago a la fundación");
+    }
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
 });
 
 $("formulario-gasto").addEventListener("submit", (evento) => {

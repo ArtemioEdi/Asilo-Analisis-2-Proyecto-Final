@@ -316,6 +316,25 @@
             <button class="accion accion--ancha" type="submit">Registrar gasto</button>
           </form>
 
+          <!-- Lo que el asilo le paga a la fundacion por las consultas, los
+               examenes y la farmacia que presto. Alimenta el informe 4. -->
+          <form class="formulario formulario--caja" id="formulario-fundacion" autocomplete="off">
+            <p class="formulario__titulo">Registrar un pago a la fundación</p>
+            <p class="formulario__nota" id="fundacion-nota"></p>
+            <div class="campo">
+              <label for="fundacion-monto">Monto, en Q</label>
+              <input id="fundacion-monto" type="number" min="0.01" step="0.01" required>
+            </div>
+            <div class="campo">
+              <label for="fundacion-referencia">Referencia</label>
+              <input id="fundacion-referencia" type="text" minlength="3" maxlength="160"
+                     placeholder="Recibo o transferencia" required>
+            </div>
+            <button class="accion accion--ancha" id="registrar-pago-fundacion" type="submit">
+              Registrar pago
+            </button>
+          </form>
+
         </div>
       </section>
 

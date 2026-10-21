@@ -1323,6 +1323,36 @@ comprobar "el administrador no ve la parte clínica ni su autor" "0" \
 codigo PUT "$GATEWAY/pastillero/api/v1/internos/$INTERNO_CLINICA/egreso" "$TOKEN_ADMR" \
   "{\"fecha\":\"$(date +%F)\",\"motivo\":\"Fin de la prueba de la ficha clinica\"}" >/dev/null
 
+# ---------------------------------------------------------------------------
+titulo "27. Pagos a la fundación desde la caja"
+# ---------------------------------------------------------------------------
+FUNDACION="$GATEWAY/caja/api/v1/fundacion"
+saldo_fundacion() { cuerpo GET "$FUNDACION/resumen" "$TOKEN_ADMINISTRACION" | campo saldoConFundacion; }
+SALDO_ANTES=$(saldo_fundacion)
+REFERENCIA_PF="TRF-PRUEBA-$(date +%s)"
+
+comprobar "administracion registra un pago de Q1.00 a la fundación (201)" "201" \
+  "$(codigo POST "$FUNDACION/pagos" "$TOKEN_ADMINISTRACION" "{\"monto\":\"1.00\",\"referencia\":\"$REFERENCIA_PF\"}")"
+PAGO_PF=$(campo id < "$TEMPORAL/respuesta.json")
+comprobar "el pago baja el saldo con la fundación en Q1.00" \
+  "$(awk -v s="$SALDO_ANTES" 'BEGIN { printf "%.2f", s - 1 }')" "$(printf "%.2f" "$(saldo_fundacion)")"
+
+codigo GET "$GATEWAY/caja/api/v1/reportes/pagos-fundacion" "$TOKEN_ADMINISTRACION" >/dev/null
+comprobar "el pago aparece en el informe 4, firmado por quien lo registró" "1" \
+  "$(grep -o "\"id\":\"$PAGO_PF\",\"monto\":1.0,\"referencia\":\"$REFERENCIA_PF\",\"registradoPor\":\"Marta Solis\"" "$TEMPORAL/respuesta.json" | wc -l | tr -d ' ')"
+
+SALDO_AHORA=$(saldo_fundacion)
+comprobar "un pago mayor que el saldo se rechaza (400)" "400" \
+  "$(codigo POST "$FUNDACION/pagos" "$TOKEN_ADMINISTRACION" \
+     "{\"monto\":\"$(awk -v s="$SALDO_AHORA" 'BEGIN { printf "%.2f", s + 1 }')\",\"referencia\":\"$REFERENCIA_PF-B\"}")"
+comprobar "un monto con más de dos decimales se rechaza (400)" "400" \
+  "$(codigo POST "$FUNDACION/pagos" "$TOKEN_ADMINISTRACION" "{\"monto\":\"1.005\",\"referencia\":\"$REFERENCIA_PF-C\"}")"
+comprobar "sin referencia se rechaza (400)" "400" \
+  "$(codigo POST "$FUNDACION/pagos" "$TOKEN_ADMINISTRACION" '{"monto":"1.00"}')"
+comprobar "ninguno de los rechazados movió el saldo" "$(printf "%.2f" "$SALDO_AHORA")" "$(printf "%.2f" "$(saldo_fundacion)")"
+comprobar "medico NO registra pagos a la fundación (403)" "403" \
+  "$(codigo POST "$FUNDACION/pagos" "$TOKEN_MEDICO" "{\"monto\":\"1.00\",\"referencia\":\"$REFERENCIA_PF-D\"}")"
+
 
 # ---------------------------------------------------------------------------
 printf "\n%s== Resultado%s\n" "$CIAN" "$FIN"
