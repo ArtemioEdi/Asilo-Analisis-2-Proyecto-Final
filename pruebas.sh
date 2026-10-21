@@ -1328,6 +1328,12 @@ titulo "27. Pagos a la fundación desde la caja"
 # ---------------------------------------------------------------------------
 FUNDACION="$GATEWAY/caja/api/v1/fundacion"
 saldo_fundacion() { cuerpo GET "$FUNDACION/resumen" "$TOKEN_ADMINISTRACION" | campo saldoConFundacion; }
+# Una deuda propia con la fundacion antes de pagar: la prueba no depende de
+# cuanto se le deba en ese momento. Es una consulta de Q20 a un interno
+# inventado, que la familia salda al final.
+CARGO_PF=$(cuerpo POST "$GATEWAY/caja/api/v1/cargos" "$TOKEN_ADMINISTRACION" \
+  "{\"pacienteId\":\"ASL-F$(date +%s)\",\"categoria\":\"CONSULTA\",\"concepto\":\"prueba del pago a la fundacion\",\"montoBruto\":20,\"descuentoPct\":0}" \
+  | campo id)
 SALDO_ANTES=$(saldo_fundacion)
 REFERENCIA_PF="TRF-PRUEBA-$(date +%s)"
 
@@ -1352,6 +1358,7 @@ comprobar "sin referencia se rechaza (400)" "400" \
 comprobar "ninguno de los rechazados movió el saldo" "$(printf "%.2f" "$SALDO_AHORA")" "$(printf "%.2f" "$(saldo_fundacion)")"
 comprobar "medico NO registra pagos a la fundación (403)" "403" \
   "$(codigo POST "$FUNDACION/pagos" "$TOKEN_MEDICO" "{\"monto\":\"1.00\",\"referencia\":\"$REFERENCIA_PF-D\"}")"
+codigo POST "$GATEWAY/caja/api/v1/cargos/$CARGO_PF/pagar" "$TOKEN_ADMINISTRACION" '{"monto":20}' >/dev/null
 
 
 # ---------------------------------------------------------------------------

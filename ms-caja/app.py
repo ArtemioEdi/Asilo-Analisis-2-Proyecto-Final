@@ -1444,7 +1444,11 @@ def sembrar():
         """INSERT INTO pagos_fundacion
                (id, monto, referencia, registrado_por, creado_en)
            VALUES (%s,%s,%s,%s,%s)""",
-        (_folio("PF"), 1800.0, "Abono de consultas y laboratorios de julio",
+        # Menos de lo que la siembra le debe a la fundacion (Q1021.50): un abono
+        # mayor dejaba el saldo en negativo, que es justo lo que el pago desde la
+        # caja no acepta. Sembrar un estado que el sistema en marcha no puede
+        # producir seria contradecirse.
+        (_folio("PF"), Decimal("800.00"), "Abono de consultas y laboratorios de julio",
          "Marta Solis, administracion", hoy - timedelta(days=10)))
 
     try:
