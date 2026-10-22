@@ -1,4 +1,5 @@
-// Estacion de enfermeria · Asilo Cabeza de Algodon.
+// Sistema de administracion · Asilo Cabeza de Algodon.
+// Empezo como la estacion de enfermeria; hoy es la interfaz de los siete roles.
 // Todo pasa por ms-gateway: es el unico origen que conoce el navegador.
 
 const AUTH = "/api/auth";
@@ -93,7 +94,7 @@ function explicarError(error, accion) {
 
   if (error.red) {
     return {
-      titulo: "No hay conexión con la estación",
+      titulo: "No hay conexión con el sistema",
       texto: "El navegador no pudo comunicarse con el sistema" + quehacer +
              ". Revise que el stack esté levantado y vuelva a intentar.",
       reintentar: true
@@ -668,7 +669,7 @@ $("formulario-acceso").addEventListener("submit", async (evento) => {
   } catch (e) {
     // El error va junto al campo, y lo que la persona escribio se queda.
     error.textContent = e.message === "Failed to fetch"
-      ? "No hay conexión con la estación. Revise que el sistema esté levantado."
+      ? "No hay conexión con el sistema. Revise que esté levantado."
       : e.message;
     campoClave.setAttribute("aria-invalid", "true");
     campoClave.value = "";
@@ -934,7 +935,7 @@ async function suspenderPlan(medicamento) {
     await pedir(PASTILLERO + "/api/v1/planes/" + medicamento.planId + "/suspender", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ motivo: "Suspendido por " + SESION.nombre + " desde la estación" })
+      body: JSON.stringify({ motivo: "Suspendido por " + SESION.nombre + " desde el sistema" })
     });
     aviso("Tratamiento suspendido",
       medicamento.farmaco + " ya no se administrará a " + ficha.nombre +
@@ -1622,7 +1623,7 @@ async function pagarCargo(c) {
       ["Monto a recibir", "Q " + c.saldo.toFixed(2)],
       ["Método", "efectivo"]
     ],
-    aviso: "Queda asentado en el libro de caja a su nombre y no se puede anular desde la estación."
+    aviso: "Queda asentado en el libro de caja a su nombre y no se puede anular desde el sistema."
   });
   if (!seguro) return;
 
@@ -4683,7 +4684,7 @@ $("formulario-cambio").addEventListener("submit", async (evento) => {
     // clave debil, demasiados intentos.
     const mensaje = (e.cuerpo && e.cuerpo.error) || "";
     error.textContent = e.red
-      ? "No hay conexión con la estación. Revise que el sistema esté levantado."
+      ? "No hay conexión con el sistema. Revise que esté levantado."
       : mensaje || "No se pudo cambiar la clave.";
     const culpable = /actual no es correcta/i.test(mensaje) ? $("cambio-actual") : $("cambio-nueva");
     culpable.setAttribute("aria-invalid", "true");

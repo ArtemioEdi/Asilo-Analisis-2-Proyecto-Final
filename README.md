@@ -1034,9 +1034,16 @@ Todos estos casos están automatizados en `pruebas.sh`.
 
 ---
 
-## 8. La estación de enfermería
+## 8. La interfaz
 
-La interfaz no es un tablero genérico: la usa alguien **de pie, apurado, en un
+Es una sola página para los siete roles, y se presenta como el **Sistema de
+administración** del asilo, debajo de la marca «Cabeza de Algodón». Empezó como
+la estación de enfermería —la jornada de medicación— y de ahí viene el
+criterio con que está decidido todo lo visual. La carpeta y los
+identificadores conservan ese origen (`estacion-web`), pero ya no es el nombre
+de lo que ve la persona.
+
+La jornada, que fue la primera pantalla, no es un tablero genérico: la usa alguien **de pie, apurado, en un
 turno de noche**, frente a un monitor que puede ser viejo. Todo lo visual está
 decidido en ese orden de prioridades:
 
@@ -1176,7 +1183,7 @@ descuido obligaría a restablecerla.
 | `403` | «Su rol no tiene acceso a esto. La sesión de medicina no está autorizada al consultar el resumen financiero. Se necesita una sesión de administración.» |
 | `502` | «El servicio ms-caja no respondió. El contenedor puede estar reiniciándose.» + botón **Reintentar** |
 | `503` | «El servicio ms-vigia no está disponible… No se muestra información incompleta a propósito.» + **Reintentar** |
-| sin red | «No hay conexión con la estación… Revise que el stack esté levantado.» |
+| sin red | «No hay conexión con el sistema. Revise que esté levantado.» |
 
 Los avisos de error **se quedan hasta que la persona los cierre**; los demás se
 van solos a los seis segundos.
