@@ -99,6 +99,10 @@ button { font-family: inherit; }
   z-index: 100;
   display: flex;
   align-items: center;
+  /* "safe": si la tarjeta es mas alta que la ventana (el cambio de clave en
+     una pantalla de 768 px), se alinea arriba en vez de cortarse por encima,
+     donde el desplazamiento ya no la alcanza. */
+  align-items: safe center;
   justify-content: center;
   padding: 20px;
   background: var(--papel);
