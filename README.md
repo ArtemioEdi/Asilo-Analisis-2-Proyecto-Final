@@ -100,7 +100,7 @@ través del gateway, en `http://localhost:8080`, con el token de sesión.
 | Costo de la consulta con sus exámenes y medicamentos | `GET /caja/api/v1/reportes/costo-por-visita?visitaId=` | Caja → **Costo por consulta** | `administracion` |
 | Cobros a la familia con el descuento de la fundación | `POST /caja/api/v1/cargos` · `GET /caja/api/v1/cargos` | Caja → *Cargar a la cuenta del interno* | `administracion` |
 | Estado de cuenta y saldo de cada interno | `GET /caja/api/v1/pacientes/{id}/cuenta` | Caja → *Cuenta del interno* | `administracion` (y `medico`, solo lectura) |
-| Pagos y abonos de la familia | `POST /caja/api/v1/cargos/{id}/pagar` | Caja → botón **Pagar** de cada cargo | `administracion` |
+| Pagos y abonos de la familia | `POST /caja/api/v1/cargos/{id}/pagar` | Caja → botón **Pagar** de cada cargo: la confirmación trae el campo *Monto a recibir, en Q* con el saldo completo, y se baja para un **abono parcial**. El aviso dice si el cargo quedó pagado o cuánto falta | `administracion` |
 | Cuota mensual de estadía | `POST /caja/api/v1/cuotas/generar` para todo el padrón activo, o la tarifa `cuota-mensual` en `POST /caja/api/v1/cargos` para una sola | Caja → *Cuota mensual de estadía* | `administracion` |
 | Entradas por donaciones, en sus cuatro categorías: empresa internacional, empresa nacional, gobierno y particular | `POST /caja/api/v1/donaciones` · `GET /caja/api/v1/donaciones` | Caja → *Registrar una donación* | `administracion` |
 | Salidas por gastos operativos | `POST /caja/api/v1/gastos` · `GET /caja/api/v1/gastos` | Caja → *Registrar un gasto* | `administracion` |
@@ -635,6 +635,7 @@ aceptarlo.
 | 16 | `administracion` | **Reportes** | Recorrer los cinco informes que le tocan: los cuatro del enunciado y el adicional de citas con saldo pendiente | Cada uno sale con filtros, totales al pie y el sello de **quién lo generó y cuándo**, tomado del token. Con el botón *Imprimir* sale una hoja limpia, sin menús. |
 | 17 | `enfermeria` | **Reportes** | Abrir la pantalla | Ve **un solo informe**, el séptimo: medicamentos aplicados por paciente. Los otros seis no están en su lista, y pedirlos a mano devuelve `403`. |
 | 18 | `admin` | Padrón → interno nuevo → **Egresar** | Egresar al interno del paso 12 | Sale del padrón activo y **conserva su historial**: un interno nunca se borra. Sus planes quedan `FINALIZADO`, sus tomas futuras `OMITIDA`, y si debe dinero el egreso lo avisa —la deuda no impide irse, pero la cuenta sigue siendo exigible al familiar—. En las cuotas del mes siguiente ya no aparece. |
+| 19 | `administracion` | Caja → Bernardo Puac (ASL-022) → **Pagar** en el electrocardiograma de su consulta | Bajar el *Monto a recibir* a Q100.00 y confirmar | **Abono parcial registrado**, con lo que falta por pagar. En Reportes → *Adicional · Citas con saldo pendiente*, esa consulta pasa de «sin pagar» a «abono parcial»: son las citas aún no completamente canceladas que pide el enunciado. |
 
 Si además quiere mostrar el aislamiento de datos, sin salir de la terminal:
 
@@ -655,7 +656,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **273**, en 27 bloques | **115**, en 21 bloques |
+| **Comprobaciones** | **278**, en 27 bloques | **115**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 

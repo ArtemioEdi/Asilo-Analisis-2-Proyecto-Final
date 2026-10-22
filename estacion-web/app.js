@@ -268,6 +268,38 @@ function confirmar(opciones) {
       lista.appendChild(fila);
     }
     cuerpo.appendChild(lista);
+
+    // Un campo opcional, para lo que se confirma con un dato: el monto de un
+    // abono. Se valida antes de cerrar; si no pasa, el dialogo sigue abierto
+    // con el motivo escrito junto al campo.
+    let entrada = null, errorCampo = null;
+    if (opciones.campo) {
+      const caja = document.createElement("div");
+      caja.className = "campo";
+      const rotulo = document.createElement("label");
+      rotulo.setAttribute("for", "confirmar-campo");
+      rotulo.textContent = opciones.campo.etiqueta;
+      entrada = document.createElement("input");
+      entrada.id = "confirmar-campo";
+      entrada.type = "text";
+      entrada.setAttribute("inputmode", "decimal");
+      entrada.setAttribute("autocomplete", "off");
+      entrada.value = opciones.campo.valor || "";
+      errorCampo = document.createElement("p");
+      errorCampo.className = "campo__error";
+      errorCampo.id = "confirmar-campo-error";
+      errorCampo.setAttribute("role", "alert");
+      entrada.setAttribute("aria-describedby", errorCampo.id);
+      caja.append(rotulo, entrada);
+      if (opciones.campo.ayuda) {
+        const ayuda = document.createElement("p");
+        ayuda.className = "formulario__nota";
+        ayuda.textContent = opciones.campo.ayuda;
+        caja.appendChild(ayuda);
+      }
+      caja.appendChild(errorCampo);
+      cuerpo.appendChild(caja);
+    }
     if (opciones.aviso) {
       const p = document.createElement("p");
       p.className = "confirmar__aviso";
@@ -278,7 +310,7 @@ function confirmar(opciones) {
     dialogo.hidden = false;
     velo.hidden = false;
     const soltar = atraparFoco(dialogo);
-    no.focus();
+    if (entrada) { entrada.focus(); entrada.select(); } else no.focus();
 
     function terminar(respuesta) {
       soltar();
@@ -291,9 +323,23 @@ function confirmar(opciones) {
       if (devolverA && devolverA.focus) devolverA.focus();
       resolver(respuesta);
     }
-    const alSi = () => terminar(true);
+    // Con campo, el dialogo resuelve con el texto validado en vez de true.
+    const alSi = () => {
+      if (!entrada) { terminar(true); return; }
+      const problemaCampo = opciones.campo.validar ? opciones.campo.validar(entrada.value) : null;
+      if (problemaCampo) {
+        errorCampo.textContent = problemaCampo;
+        entrada.setAttribute("aria-invalid", "true");
+        entrada.focus();
+        return;
+      }
+      terminar(entrada.value.trim());
+    };
     const alNo = () => terminar(false);
-    const alTecla = (e) => { if (e.key === "Escape") terminar(false); };
+    const alTecla = (e) => {
+      if (e.key === "Escape") terminar(false);
+      if (e.key === "Enter" && entrada && document.activeElement === entrada) { e.preventDefault(); alSi(); }
+    };
 
     si.addEventListener("click", alSi);
     no.addEventListener("click", alNo);
@@ -1602,7 +1648,8 @@ function filaCargo(c) {
     const boton = document.createElement("button");
     boton.className = "accion-sec";
     boton.type = "button";
-    boton.textContent = "Pagar Q " + c.saldo.toFixed(2);
+    boton.textContent = "Pagar";
+    boton.setAttribute("aria-label", "Pagar " + c.concepto + ", saldo Q " + c.saldo.toFixed(2));
     boton.addEventListener("click", () => pagarCargo(c));
     acciones.appendChild(boton);
   }
@@ -1612,33 +1659,63 @@ function filaCargo(c) {
 }
 
 // Mueve dinero de una familia: se confirma.
+// En centavos, para comparar sin coma flotante: 0.1 + 0.2 no es 0.3.
+function aCentavos(texto) {
+  const limpio = String(texto).trim().replace(",", ".");
+  if (!/^\d+(\.\d{1,2})?$/.test(limpio)) return null;
+  const [enteros, decimales = ""] = limpio.split(".");
+  return Number(enteros) * 100 + Number((decimales + "00").slice(0, 2));
+}
+
+// La familia puede abonar por partes: el monto trae el saldo completo puesto
+// y se puede bajar. Lo que decide es el servidor, que tambien rechaza pagar
+// de mas.
 async function pagarCargo(c) {
   const interno = INTERNOS[estado.interno];
-  const seguro = await confirmar({
+  const saldoCentavos = Math.round(c.saldo * 100);
+  const monto = await confirmar({
     titulo: "¿Registrar este pago?",
     textoSi: "Sí, registrar el pago",
     datos: [
       ["Interno", interno.nombre + " · " + interno.pacienteId],
       ["Concepto", c.concepto],
-      ["Monto a recibir", "Q " + c.saldo.toFixed(2)],
+      ["Saldo del cargo", "Q " + c.saldo.toFixed(2)],
       ["Método", "efectivo"]
     ],
+    campo: {
+      etiqueta: "Monto a recibir, en Q",
+      valor: c.saldo.toFixed(2),
+      ayuda: "Para un abono parcial, baje el monto. Lo que falte queda pendiente en la cuenta.",
+      validar: (texto) => {
+        const centavos = aCentavos(texto);
+        if (centavos === null) return "Escriba un monto en quetzales, con dos decimales como mucho.";
+        if (centavos <= 0) return "El monto tiene que ser mayor que cero.";
+        if (centavos > saldoCentavos) return "No puede ser mayor que el saldo del cargo (Q " + c.saldo.toFixed(2) + ").";
+        return null;
+      }
+    },
     aviso: "Queda asentado en el libro de caja a su nombre y no se puede anular desde el sistema."
   });
-  if (!seguro) return;
+  if (!monto) return;
 
   try {
     const pago = await pedir(CAJA + "/api/v1/cargos/" + c.id + "/pagar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ monto: c.saldo, metodo: "efectivo" })
+      body: JSON.stringify({ monto: monto.replace(",", "."), metodo: "efectivo" })
     });
-    aviso("Pago registrado",
-      "Q " + pago.monto.toFixed(2) + " de " + interno.nombre + " · " + c.concepto +
-      " · el cargo queda " + pago.estadoCargo.toLowerCase() + ".", "ok");
+    const pagado = pago.estadoCargo === "PAGADO";
+    aviso(pagado ? "Pago registrado" : "Abono parcial registrado",
+      "Q " + pago.monto.toFixed(2) + " de " + interno.nombre + " · " + c.concepto + " · " +
+      (pagado ? "el cargo queda pagado."
+              : "abono parcial: quedan Q " + pago.saldoRestante.toFixed(2) + " por pagar."), "ok");
     await pintarCaja();
   } catch (error) {
-    avisarError(error, "registrar el pago");
+    if (error.estado === 400 && error.cuerpo && error.cuerpo.error) {
+      aviso("No se registró el pago", error.cuerpo.error, "aviso");
+    } else {
+      avisarError(error, "registrar el pago");
+    }
   }
 }
 

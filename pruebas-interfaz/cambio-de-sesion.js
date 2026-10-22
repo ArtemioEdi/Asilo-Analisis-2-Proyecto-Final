@@ -466,6 +466,40 @@ async function principal() {
   await irA("caja", INTERNO);
   comprobar("administracion ve el costo por consulta en la caja",
     visible($("bloque-costos")) && $("lista-costos").textContent.length > 0);
+
+  // --- 5b. Un abono parcial por el camino de la pantalla -----------------
+  // El cargo de la consulta sembrada de Bernardo Puac (visita DEMO0022): se
+  // paga una parte desde el boton Pagar, bajando el monto del dialogo.
+  await irA("caja", "ASL-022");
+  const filaDemo = $("caja-cargos").querySelectorAll(".cargo")
+    .find((n) => n.textContent.includes("VM-2026-DEMO0022") &&
+                 n.querySelectorAll("button").some((b) => b.textContent === "Pagar"));
+  comprobar("la cuenta de Bernardo Puac tiene un cargo de su consulta con boton Pagar", Boolean(filaDemo));
+  if (filaDemo) {
+    filaDemo.querySelectorAll("button").find((b) => b.textContent === "Pagar").click();
+    await esperar();
+    const saldoPuesto = $("confirmar-campo").value;
+    comprobar("el dialogo de pago trae el saldo completo en el campo del monto",
+      visible($("confirmar")) && /^\d+\.\d{2}$/.test(saldoPuesto) && Number(saldoPuesto) > 1);
+    $("confirmar-campo").value = "0";
+    $("confirmar-si").click();
+    comprobar("un monto de cero no cierra el dialogo y dice por que",
+      visible($("confirmar")) && $("confirmar-campo-error").textContent.includes("mayor que cero"));
+    $("confirmar-campo").value = "1.00";
+    $("confirmar-si").click();
+    await esperar();
+    comprobar("el abono parcial se registra y el aviso dice cuanto falta",
+      !visible($("confirmar")) && $("avisos").textContent.includes("Abono parcial registrado") &&
+      $("avisos").textContent.includes("por pagar"));
+    await irA("reportes", "ASL-022");
+    await elegirInforme("citas-pendientes");
+    $("formulario-reporte").disparar("submit");
+    await esperar();
+    const filaCita = $("reporte-cuerpo").querySelectorAll("tr")
+      .find((tr) => tr.textContent.includes("VM-2026-DEMO0022"));
+    comprobar("la consulta queda con abono parcial en el informe de citas con saldo pendiente",
+      Boolean(filaCita) && filaCita.textContent.includes("abono parcial"));
+  }
   await irA("reportes", INTERNO);
   await generar("costos-cita", INTERNO);
   comprobar("administracion ve la hoja de costos de cada cita",
