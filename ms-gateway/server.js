@@ -26,6 +26,37 @@ if (!SECRETO || SECRETO.trim().length < 16) {
   process.exit(1);
 }
 
+// Modo de arranque, del .env (MODO_DEMOSTRACION):
+//   1  demostracion: las siete cuentas sembradas, que usan pruebas.sh y
+//      verificar.sh. Es el valor por defecto en local.
+//   0  instalacion real: una sola cuenta, admin, con la clave de
+//      ADMIN_CLAVE_INICIAL. Nace temporal, sin vencimiento, y obliga a
+//      elegir la definitiva en el primer ingreso; desde ahi se dan de alta
+//      las demas. Es lo que deja desplegar.sh en el servidor publico.
+// Las cuentas se siembran aqui y no en 06-esquema-acceso.sql: MySQL ejecuta
+// ese archivo tal cual, sin poder leer el modo, y la clave inicial hay que
+// hashearla con bcrypt, que solo esta en este servicio.
+const MODO_DEMOSTRACION = (process.env.MODO_DEMOSTRACION || "1").trim();
+if (MODO_DEMOSTRACION !== "0" && MODO_DEMOSTRACION !== "1") {
+  console.error(
+    "\n[ms-gateway] ERROR DE ARRANQUE: MODO_DEMOSTRACION vale '" + MODO_DEMOSTRACION +
+      "'; tiene que ser 1 (demostracion) o 0 (instalacion real).\n"
+  );
+  process.exit(1);
+}
+const ADMIN_CLAVE_INICIAL = process.env.ADMIN_CLAVE_INICIAL || "";
+if (MODO_DEMOSTRACION === "0" &&
+    (ADMIN_CLAVE_INICIAL.length < 12 || Buffer.byteLength(ADMIN_CLAVE_INICIAL) > 72)) {
+  // El mensaje dice que falta, nunca cual es.
+  console.error(
+    "\n[ms-gateway] ERROR DE ARRANQUE: con MODO_DEMOSTRACION=0 hace falta la " +
+      "variable ADMIN_CLAVE_INICIAL en el .env, de 12 a 72 caracteres. Es la clave\n" +
+      "  con la que entra por primera vez la cuenta admin. Genere una con:\n" +
+      "      openssl rand -hex 12\n"
+  );
+  process.exit(1);
+}
+
 const VIGIA_URL = process.env.VIGIA_URL || "http://ms-vigia:8081";
 const PASTILLERO_URL = process.env.PASTILLERO_URL || "http://ms-pastillero:8082";
 const CAJA_URL = process.env.CAJA_URL || "http://ms-caja:8083";
@@ -1080,12 +1111,105 @@ app.use((req, res) => {
   });
 });
 
+/* ---------------------------------------------------------------------
+   Las cuentas con que nace la instalacion
+   ---------------------------------------------------------------------
+   Solo si la tabla de cuentas esta vacia, es decir, la primera vez que el
+   gateway arranca sobre un volumen nuevo. Despues no vuelve a tocar nada:
+   cambiar MODO_DEMOSTRACION con datos ya creados no siembra ni borra cuentas.
+   Para pasar de un modo al otro se recrea la base (down -v).
+
+   Las de demostracion son las siete de siempre, con los mismos hashes que
+   tenia 06-esquema-acceso.sql. Ninguna clave en texto: solo el hash. */
+const CUENTAS_DEMOSTRACION = [
+  ["admin", "Ing. Dolores Ramirez", "ADMINISTRADOR",
+   "$2b$10$tjuRELdJTHZhUewPhkCdi.RuYGgVrPYNZVYHL0CEfb9CZ.LfqvKrG"],
+  ["administracion", "Marta Solis", "ADMINISTRACION",
+   "$2a$10$TfAfArMu0mKMjiD/R52IHu5jp9a9PDer3s3g5kMK6OrtOr.VTmNgq"],
+  ["enfermeria", "Enf. Lucia Cabrera", "ENFERMERIA",
+   "$2a$10$4dBU8uVC5Yk62HMMMBqWi.dQfmAc0v8bSvp37CQzYMu8SohDYJcbW"],
+  ["farmacia", "Farmacia de la Fundación", "FARMACIA",
+   "$2a$10$3IGpX6ftQX5n8bgoEhzMXexVVmhowWnmQMCNG5B8NT4uWxNvmvggi"],
+  ["fundacion", "Fundación Manos Unidas", "FUNDACION",
+   "$2a$10$/BDMqaJ2vi67RtCQbThF.uJXX8i6tVW7nGEN7DyjyKPXUevmiiJS."],
+  ["laboratorio", "Lab. Clínico Central", "LABORATORIO",
+   "$2a$10$syASm78x1JMgELgNm.tkI.j8/NJNWObuawvAY1/NcAgwLrk7DSvYu"],
+  ["medico", "Dr. Angel Maltez", "MEDICO",
+   "$2a$10$3NiJ6wDavB8ZFIq5IQ6sDOh/CTWKtySBpm37iT6hgQOQqXPt8zvC2"],
+];
+
+async function sembrarCuentas() {
+  const conexion = await bd.getConnection();
+  try {
+    await conexion.beginTransaction();
+    // FOR UPDATE: si dos arranques coincidieran, el segundo espera y ve las
+    // cuentas del primero en vez de sembrarlas otra vez.
+    const [[{ n }]] = await conexion.query("SELECT COUNT(*) AS n FROM usuarios FOR UPDATE");
+    if (n > 0) {
+      await conexion.commit();
+      return null;
+    }
+    if (MODO_DEMOSTRACION === "1") {
+      // Clave definitiva (debe_cambiar_clave = 0), para que la demostracion y
+      // pruebas.sh no tropiecen con el cambio obligatorio.
+      for (const [usuario, nombre, rol, hash] of CUENTAS_DEMOSTRACION) {
+        await conexion.query(
+          "INSERT INTO usuarios (usuario, nombre, rol, clave_hash, debe_cambiar_clave, " +
+            "creado_en, creado_por) VALUES (?, ?, ?, ?, 0, NOW(), 'sistema')",
+          [usuario, nombre, rol, hash]);
+        await conexion.query(
+          "INSERT INTO bitacora_usuarios (usuario, accion, hecho_por, en, detalle) " +
+            "VALUES (?, 'ALTA', 'sistema', NOW(), ?)",
+          [usuario, "Siembra de demostracion con rol " + rol + "."]);
+      }
+      await conexion.commit();
+      return "se crearon las siete cuentas de demostracion";
+    }
+    // Instalacion real: temporal (debe_cambiar_clave = 1) y sin vencimiento.
+    // A diferencia de una alta del administrador, no hay nadie que pueda
+    // restablecerla si pasaran las 72 horas.
+    const hash = await bcrypt.hash(ADMIN_CLAVE_INICIAL, 10);
+    await conexion.query(
+      "INSERT INTO usuarios (usuario, nombre, rol, clave_hash, debe_cambiar_clave, " +
+        "clave_temporal_vence, creado_en, creado_por) " +
+        "VALUES ('admin', 'Administrador del sistema', 'ADMINISTRADOR', ?, 1, NULL, NOW(), 'sistema')",
+      [hash]);
+    await conexion.query(
+      "INSERT INTO bitacora_usuarios (usuario, accion, hecho_por, en, detalle) " +
+        "VALUES ('admin', 'ALTA', 'sistema', NOW(), ?)",
+      ["Cuenta inicial de la instalacion: clave temporal de ADMIN_CLAVE_INICIAL, " +
+       "sin vencimiento, que se cambia en el primer ingreso."]);
+    await conexion.commit();
+    return "se creo la cuenta inicial admin (su clave esta en ADMIN_CLAVE_INICIAL del .env)";
+  } catch (error) {
+    await conexion.rollback().catch(() => {});
+    throw error;
+  } finally {
+    conexion.release();
+  }
+}
+
+// Si la base todavia no responde, se reintenta un rato. El gateway escucha
+// igual mientras tanto: el login contesta 503 hasta que la base vuelva.
+async function prepararCuentas(intento = 1) {
+  try {
+    const sembrado = await sembrarCuentas();
+    if (sembrado) console.log("  modo " + (MODO_DEMOSTRACION === "1" ? "demostracion" : "instalacion real") +
+      ": " + sembrado);
+    const [filas] = await bd.query("SELECT COUNT(*) AS activas FROM usuarios WHERE activo = 1");
+    console.log("  cuentas activas del personal: " + filas[0].activas);
+  } catch (error) {
+    if (intento >= 20) {
+      console.error("  no se pudieron preparar las cuentas: " + (error.code || error.message));
+      return;
+    }
+    setTimeout(() => prepararCuentas(intento + 1), 3000);
+  }
+}
+
 app.listen(PUERTO, () => {
   console.log(APP_NOMBRE + " v" + APP_VERSION + " escuchando en el puerto " + PUERTO);
   console.log("  origen permitido para el navegador: " + ORIGEN_PERMITIDO);
-  // Solo informativo: si la base todavia no responde, el gateway arranca
-  // igual y el login contesta 503 hasta que vuelva.
-  bd.query("SELECT COUNT(*) AS activas FROM usuarios WHERE activo = 1")
-    .then(([filas]) => console.log("  cuentas activas del personal: " + filas[0].activas))
-    .catch((error) => console.error("  la base de cuentas todavia no responde: " + (error.code || error.message)));
+  console.log("  modo de arranque: " + (MODO_DEMOSTRACION === "1" ? "demostracion" : "instalacion real"));
+  prepararCuentas();
 });

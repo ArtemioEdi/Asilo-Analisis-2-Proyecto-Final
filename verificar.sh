@@ -3,7 +3,7 @@
 #  Asilo de Ancianos "Cabeza de Algodon"
 #  verificar.sh · Revision de seguridad, base de datos y estado del repositorio
 # ---------------------------------------------------------------------------
-#  QUE VERIFICA (117 comprobaciones, 21 bloques)
+#  QUE VERIFICA (118 comprobaciones, 21 bloques)
 #
 #    0-1  Que el stack este arriba y que ms-vigia, ms-pastillero y ms-caja NO
 #         publiquen puerto al equipo anfitrion: solo el 8080 y el 8090.
@@ -24,7 +24,8 @@
 #    12   Que las fichas de los internos las sirva el backend y no el
 #         navegador.
 #    13   Auditoria estatica del repositorio: sin claves de demostracion en
-#         texto plano en el codigo, sin usuarios.json, con la instancia de la
+#         el README ni
+#         en texto plano en el codigo, sin usuarios.json, con la instancia de la
 #         base completa y sin claves, sin rastros de SQLite,
 #         con .env ignorado, con el dinero en DECIMAL, sin el puerto de MySQL
 #         publicado, y con la capa de produccion abriendo a Internet solo el
@@ -280,9 +281,9 @@ titulo "13. Auditoria estatica del repositorio"
 # compose, el de produccion incluido, y la carpeta despliegue/. El --include
 # "*.yml" hace falta: sin el, grep descarta los compose aunque se nombren en
 # la linea de comandos. Los guiones de prueba (pruebas.sh, este, pruebas-interfaz/) quedan
-# fuera a proposito: entran con las claves de demostracion del README, igual
-# que lo haria una persona. La estacion se revisa entera, index.html incluido:
-# un recuadro oculto con claves se lee igual en "ver codigo fuente".
+# fuera a proposito: corren en modo demostracion y entran con sus cuentas,
+# igual que lo haria una persona. La estacion se revisa entera, index.html
+# incluido: un recuadro oculto con claves se lee igual en "ver codigo fuente".
 CLAVES_DEMO="medico2026\|enfermeria2026\|admin2026\|fundacion2026\|laboratorio2026\|farmacia2026"
 grep -rqi "$CLAVES_DEMO" --exclude-dir=node_modules \
      --include="*.js" --include="*.py" --include="*.json" --include="*.sql" --include="*.sh" \
@@ -291,6 +292,11 @@ grep -rqi "$CLAVES_DEMO" --exclude-dir=node_modules \
      docker-compose.yml docker-compose.produccion.yml 2>/dev/null \
   && rojo "hay claves de demostracion en texto plano en el codigo" \
   || verde "no hay claves de demostracion en texto plano en el codigo"
+# El README tampoco: el sistema esta publicado, y una clave escrita ahi es una
+# clave de cualquiera que lea el repositorio.
+grep -qi "$CLAVES_DEMO" README.md 2>/dev/null \
+  && rojo "README.md publica alguna clave de las cuentas de demostracion" \
+  || verde "README.md no publica ninguna clave de las cuentas de demostracion"
 # Las cuentas viven en asilo_acceso. Un usuarios.json que reapareciera seria
 # una segunda lista de personal, horneada en la imagen y sin bitacora.
 [ -e ms-gateway/usuarios.json ] \

@@ -20,9 +20,9 @@
 -- ===========================================================================
 
 -- El cliente mysql con que el entrypoint de la imagen ejecuta este archivo no
--- habla utf8mb4 por defecto: sin esta linea lee la siembra como latin1 y
--- 'Fundación' se guarda doblemente codificada. Es el unico esquema que siembra
--- texto con tildes desde SQL; los otros siembran desde Python.
+-- habla utf8mb4 por defecto. Este archivo ya no siembra texto (las cuentas las
+-- crea ms-gateway), pero la linea queda: el dia que se agregue un comentario
+-- de columna o un valor por defecto con tildes, se guardaria mal sin ella.
 SET NAMES utf8mb4;
 
 USE asilo_acceso;
@@ -103,35 +103,10 @@ CREATE TABLE IF NOT EXISTS bitacora_usuarios (
 
 
 -- ---------------------------------------------------------------------------
---  Siembra: el personal de demostracion
+--  Sin siembra aqui
 -- ---------------------------------------------------------------------------
---  Los mismos siete que vivian en usuarios.json, con exactamente los mismos
---  hashes, asi que las claves documentadas en el README siguen sirviendo.
---  Entran con clave definitiva (debe_cambiar_clave = 0) para que la
---  demostracion y pruebas.sh no tropiecen con el cambio obligatorio.
---
---  Para regenerar un hash:
---    docker compose run --rm --entrypoint node ms-gateway -e "console.log(require('bcryptjs').hashSync('LA_CLAVE',10))"
-INSERT INTO usuarios
-    (usuario, nombre, rol, clave_hash, debe_cambiar_clave, creado_en, creado_por)
-VALUES
-    ('medico',         'Dr. Angel Maltez',         'MEDICO',
-     '$2a$10$3NiJ6wDavB8ZFIq5IQ6sDOh/CTWKtySBpm37iT6hgQOQqXPt8zvC2', 0, NOW(), 'sistema'),
-    ('enfermeria',     'Enf. Lucia Cabrera',       'ENFERMERIA',
-     '$2a$10$4dBU8uVC5Yk62HMMMBqWi.dQfmAc0v8bSvp37CQzYMu8SohDYJcbW', 0, NOW(), 'sistema'),
-    ('administracion', 'Marta Solis',              'ADMINISTRACION',
-     '$2a$10$TfAfArMu0mKMjiD/R52IHu5jp9a9PDer3s3g5kMK6OrtOr.VTmNgq', 0, NOW(), 'sistema'),
-    ('fundacion',      'Fundación Manos Unidas',   'FUNDACION',
-     '$2a$10$/BDMqaJ2vi67RtCQbThF.uJXX8i6tVW7nGEN7DyjyKPXUevmiiJS.', 0, NOW(), 'sistema'),
-    ('laboratorio',    'Lab. Clínico Central',     'LABORATORIO',
-     '$2a$10$syASm78x1JMgELgNm.tkI.j8/NJNWObuawvAY1/NcAgwLrk7DSvYu', 0, NOW(), 'sistema'),
-    ('farmacia',       'Farmacia de la Fundación', 'FARMACIA',
-     '$2a$10$3IGpX6ftQX5n8bgoEhzMXexVVmhowWnmQMCNG5B8NT4uWxNvmvggi', 0, NOW(), 'sistema'),
-    ('admin',          'Ing. Dolores Ramirez',     'ADMINISTRADOR',
-     '$2b$10$tjuRELdJTHZhUewPhkCdi.RuYGgVrPYNZVYHL0CEfb9CZ.LfqvKrG', 0, NOW(), 'sistema');
-
-INSERT INTO bitacora_usuarios (usuario, accion, hecho_por, en, detalle)
-SELECT usuario, 'ALTA', 'sistema', NOW(),
-       CONCAT('Siembra inicial con rol ', rol, '.')
-FROM usuarios
-ORDER BY usuario;
+--  Las cuentas con que nace la instalacion las crea ms-gateway al arrancar,
+--  segun MODO_DEMOSTRACION del .env: las siete de demostracion (1) o una sola
+--  cuenta admin con la clave de ADMIN_CLAVE_INICIAL (0). Este archivo no
+--  puede depender de esa variable: MySQL lo ejecuta tal cual, sin expandir
+--  nada, y la clave inicial hay que hashearla con bcrypt.

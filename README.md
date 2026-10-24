@@ -8,9 +8,10 @@ de sesión** que es la única puerta de entrada, la estación web que los consum
 y una instancia de **MySQL 8.4** con una base separada por servicio. Todo el
 conjunto se levanta con **un solo comando**.
 
-**Está publicado en <https://saaca-asilo.northcentralus.cloudapp.azure.com>**,
-con las cuentas de demostración de la sección 5; cómo se publicó, en la
-sección 12.
+**Está publicado en <https://saaca-asilo.northcentralus.cloudapp.azure.com>**
+como instalación real: sin internos de ejemplo ni cuentas de demostración,
+con una sola cuenta de administrador. Cómo se publicó, en la sección 12; los
+dos modos de arranque, en la sección 5.
 
 **Si viene a calificar, la sección 2 es la tabla que busca**: cada requisito
 del enunciado con el endpoint que lo cumple, la pantalla donde se ve y el
@@ -520,30 +521,63 @@ Para detener: `Ctrl + C` y luego `docker compose down`.
 Para borrar también los datos y volver a sembrar los internos de ejemplo:
 `docker compose down -v`.
 
-### Usuarios de prueba
+### Dos modos de arranque
 
-Las cuentas del personal viven en la base `asilo_acceso`, que gestiona
-`ms-gateway`. La primera vez que MySQL arranca, `sql/06-esquema-acceso.sql`
-**siembra siete cuentas** para la demostración, con la clave guardada como hash
-**bcrypt** (nunca en texto plano), clave definitiva —no piden cambiarla— y
-sesión de 8 horas. **Son credenciales de prueba de este prototipo académico.**
-A partir de ahí, el `ADMINISTRADOR` da de alta, edita, restablece y desactiva
-cuentas desde `/api/usuarios`, sin tocar ningún archivo.
+`MODO_DEMOSTRACION`, en el `.env`, decide con qué nace la instalación. Se
+aplica una sola vez, cuando se crea la base: para pasar de un modo al otro hay
+que recrearla con `docker compose down -v`.
+
+| | `MODO_DEMOSTRACION=1` · demostración | `MODO_DEMOSTRACION=0` · instalación real |
+|---|---|---|
+| **Cuándo** | El valor por defecto en local y en `.env.ejemplo` | Lo que deja `desplegar.sh` en el servidor público |
+| **Datos** | Los tres internos con sus tratamientos, las consultas y los movimientos de caja de ejemplo | Ninguno: padrón, caja y consultas vacíos |
+| **Cuentas** | Las siete de la tabla de abajo, con clave definitiva | Una sola, `admin`, con la clave de `ADMIN_CLAVE_INICIAL` |
+| **Pruebas** | `pruebas.sh`, `verificar.sh` y `capturar.js` corren aquí | No: entran con las cuentas de demostración, que aquí no existen |
+
+**En una instalación real**, la cuenta `admin` entra la primera vez con la
+clave de `ADMIN_CLAVE_INICIAL`, que vive solo en el `.env` del servidor y nunca
+sale de él (`desplegar.sh` la genera con `openssl rand` y no la imprime):
+
+```bash
+ssh -i ~/.ssh/saaca-key.pem azureuser@saaca-asilo.northcentralus.cloudapp.azure.com
+grep ADMIN_CLAVE_INICIAL ~/saaca/.env
+```
+
+Esa clave es temporal y **no vence**: con ella solo se puede elegir la clave
+definitiva, en la pantalla «Elija su clave». Desde ahí, el administrador da
+de alta al resto del personal en *Usuarios*, y cada cuenta nueva nace con su
+propia clave temporal. Si `MODO_DEMOSTRACION=0` y falta `ADMIN_CLAVE_INICIAL`,
+`ms-gateway` no arranca y dice qué variable falta.
+
+Las cuentas no las siembra `06-esquema-acceso.sql`, que MySQL ejecuta tal
+cual sin poder leer el modo, sino `ms-gateway` al arrancar, y solo si la tabla
+de cuentas está vacía. Las claves se guardan siempre como hash **bcrypt**,
+nunca en texto plano.
+
+### Usuarios de prueba (modo demostración)
+
+En modo demostración se siembran siete cuentas, con clave definitiva —no piden
+cambiarla— y sesión de 8 horas. **Sus claves no se publican en este README**:
+las traen escritas los guiones de prueba (`pruebas.sh`, `verificar.sh`,
+`docs/manual/capturar.js`), que es donde hacen falta. En una instalación real
+esas cuentas no existen, así que conocer sus claves no abre nada. A partir de
+ahí, el `ADMINISTRADOR` da de alta, edita, restablece y desactiva cuentas
+desde `/api/usuarios`, sin tocar ningún archivo.
 
 Los cuatro primeros son **personal del asilo**. Los tres últimos son la
 **fundación que presta el servicio médico** y sus dos proveedores: no son
 empleados del asilo, y por eso no alcanzan el padrón de internos, ni la
 farmacovigilancia, ni la caja.
 
-| Usuario | Clave | Rol | Quién es y qué hace |
-|---|---|---|---|
-| `medico` | `medico2026` | `MEDICO` | Dr. Angel Maltez. Receta, remite a especialidad y atiende consultas. |
-| `enfermeria` | `enfermeria2026` | `ENFERMERIA` | Administra las tomas del día y registra omisiones. |
-| `administracion` | `admin2026` | `ADMINISTRACION` | Marta Solís. Lleva la caja: cobros, pagos, donaciones y gastos. |
-| `admin` | `admin2026x` | `ADMINISTRADOR` | Ing. Dolores Ramírez. Gestiona el padrón —alta, datos administrativos y egreso de los internos— y las cuentas del personal. |
-| `fundacion` | `fundacion2026` | `FUNDACION` | Fundación Manos Unidas. Recibe las remisiones y les asigna médico, fecha y hora. |
-| `laboratorio` | `laboratorio2026` | `LABORATORIO` | Lab. Clínico Central. Carga el resultado de los exámenes indicados. |
-| `farmacia` | `farmacia2026` | `FARMACIA` | Farmacia de la Fundación. Entrega los medicamentos recetados. |
+| Usuario | Rol | Quién es y qué hace |
+|---|---|---|
+| `medico` | `MEDICO` | Dr. Angel Maltez. Receta, remite a especialidad y atiende consultas. |
+| `enfermeria` | `ENFERMERIA` | Administra las tomas del día y registra omisiones. |
+| `administracion` | `ADMINISTRACION` | Marta Solís. Lleva la caja: cobros, pagos, donaciones y gastos. |
+| `admin` | `ADMINISTRADOR` | Ing. Dolores Ramírez. Gestiona el padrón —alta, datos administrativos y egreso de los internos— y las cuentas del personal. |
+| `fundacion` | `FUNDACION` | Fundación Manos Unidas. Recibe las remisiones y les asigna médico, fecha y hora. |
+| `laboratorio` | `LABORATORIO` | Lab. Clínico Central. Carga el resultado de los exámenes indicados. |
+| `farmacia` | `FARMACIA` | Farmacia de la Fundación. Entrega los medicamentos recetados. |
 
 `ADMINISTRADOR` y `ADMINISTRACION` se parecen en el nombre y no en lo que
 pueden hacer, y conviene tenerlo claro antes de la defensa. El primero **da de
@@ -644,7 +678,7 @@ aceptarlo.
 Si además quiere mostrar el aislamiento de datos, sin salir de la terminal:
 
 ```bash
-bash verificar.sh          # 117 comprobaciones, entre ellas las 21 puertas
+bash verificar.sh          # 118 comprobaciones, entre ellas las 21 puertas
                            # cerradas de los tres roles nuevos, la matriz
                            # completa del ADMINISTRADOR y el aislamiento de
                            # usr_consultas y de usr_acceso
@@ -660,7 +694,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **341**, en 28 bloques | **117**, en 21 bloques |
+| **Comprobaciones** | **341**, en 28 bloques | **118**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -1342,7 +1376,7 @@ primera vez que se levanta el volumen.
 | `03-esquema-pastillero.sql` | Padrón de internos, planes y tomas |
 | `04-esquema-caja.sql` | Cargos, pagos, donaciones, gastos y pagos a la fundación |
 | `05-esquema-consultas.sql` | Remisiones, citas, visitas, exámenes, indicaciones y avisos al familiar |
-| `06-esquema-acceso.sql` | Cuentas del personal y su bitácora, con la siembra de las siete cuentas de demostración. Es el único esquema que siembra desde SQL, y por eso abre con `SET NAMES utf8mb4`: sin él, el cliente del entrypoint lee el archivo como latin1 y «Fundación» se guarda con la codificación rota |
+| `06-esquema-acceso.sql` | Cuentas del personal y su bitácora. No siembra ninguna cuenta: las crea `ms-gateway` al arrancar, según el modo (sección 5) |
 
 **Estos archivos son la entrega del modelo de datos** que pide el enunciado:
 se leen de arriba abajo, con las claves, los tipos, las restricciones y los
@@ -1355,8 +1389,9 @@ montara entero, MySQL ejecutaría también `01-bases-y-usuarios.ejemplo.sql`
 de que el `.sh` alcanzara a crearlos bien.
 
 Los servicios sí conservan el **sembrado de datos de demostración**,
-condicionado a `SEMBRAR=1` y solo si la tabla está vacía. La excepción son las
-siete cuentas del personal, que las siembra `06-esquema-acceso.sql`.
+condicionado a `SEMBRAR`, que el compose toma de `MODO_DEMOSTRACION`, y solo
+si la tabla está vacía. Las cuentas del personal las siembra `ms-gateway`
+según el mismo modo.
 
 ### Decisiones de tipos
 
@@ -1427,8 +1462,8 @@ quedan recién levantado el stack, con el escenario de demostración sembrado y
 sin ningún registro de prueba. Lo hace `mysqldump` con `--databases` y las
 cinco bases nombradas, nunca con `--all-databases`, así que **no trae los
 usuarios de MySQL ni sus claves**; las únicas claves que contiene son los hashes
-bcrypt de las siete cuentas de demostración, los mismos de
-`06-esquema-acceso.sql`. La cabecera del archivo dice de qué commit salió.
+bcrypt de las siete cuentas de demostración, porque se genera en modo
+demostración. La cabecera del archivo dice de qué commit salió.
 
 No se ejecuta al arrancar: el stack sigue creando el esquema desde `sql/01` a
 `sql/06`. Para restaurarla, con cualquier MySQL 8:
@@ -1534,14 +1569,15 @@ peligroso que uno que sí.
 
 ### Seguridad
 
-- **Las siete cuentas sembradas son de demostración.** Viven en la base
-  `asilo_acceso` con la clave en hash bcrypt (nunca en texto plano), pero sus
-  credenciales están publicadas en este mismo README, y se siembran con clave
-  definitiva para que la demostración no tropiece con el cambio obligatorio.
-  Las cuentas que da de alta el administrador sí nacen con clave temporal y
-  cambio obligatorio al primer ingreso. En una instalación real, lo primero
-  sería restablecer o desactivar las siete. **No use estas credenciales fuera
-  de la demostración.**
+- **Las cuentas de demostración solo existen en modo demostración.** Sus
+  claves no están en este README, pero sí en los guiones de prueba del
+  repositorio, que las necesitan: quien lea el código las conoce. Por eso la
+  instancia pública arranca en modo instalación real, donde esas cuentas no
+  se crean y la única cuenta, `admin`, entra con una clave generada en el
+  servidor que nunca pasa por el repositorio y que obliga a elegir otra en el
+  primer ingreso. Lo que queda: una instalación local en modo demostración
+  sigue teniendo siete cuentas con claves conocidas, así que no debe
+  exponerse a una red.
 - **Una cuenta desactivada se corta en el gateway, no dentro de cada
   microservicio.** El gateway consulta la cuenta en cada petición, y desactivar
   a alguien o restablecerle la clave le cierra las sesiones al instante. Los
@@ -1558,15 +1594,11 @@ peligroso que uno que sí.
   un solo nodo; con varios, o con una red interna compartida, haría falta TLS
   también entre servicios. En local, con el `docker-compose.yml` solo, todo
   sigue en HTTP plano sobre `localhost`.
-- **En la instancia pública, cualquiera puede entrar con las cuentas de
-  demostración.** Sus claves están publicadas en este README y la dirección
-  está en Internet: cualquier persona puede entrar como `medico` o como
-  `admin`, registrar datos, cambiar claves o desactivar cuentas. Por eso esa
-  instancia **no guarda nada que importe** y se restablece al escenario
-  sembrado con `down -v` (sección 12) antes de cada demostración. Por la misma
-  razón, cualquiera puede dejar bloqueada una cuenta de demostración cinco
-  minutos con cinco claves malas: el límite de intentos cuenta por usuario, no
-  por dirección.
+- **La instancia pública no tiene cuentas de demostración, pero sigue en
+  Internet.** Nadie entra sin la clave de `admin` o la de una cuenta que él dé
+  de alta. Lo que sí puede hacer cualquiera es dejar bloqueada una cuenta
+  cinco minutos con cinco claves malas: el límite de intentos cuenta por
+  usuario, no por dirección, y el nombre `admin` es fácil de adivinar.
 - **El límite de intentos y la lista de revocación del `logout` viven en la
   memoria del proceso.** Con una sola instancia del gateway funcionan; con varias, cada una
   llevaría su propia cuenta y el límite se multiplicaría, y un token revocado en
@@ -1673,8 +1705,9 @@ peligroso que uno que sí.
 ## 12. Publicación en Internet
 
 El sistema está publicado en
-**<https://saaca-asilo.northcentralus.cloudapp.azure.com>**, con las mismas
-siete cuentas de demostración de la sección 5.
+**<https://saaca-asilo.northcentralus.cloudapp.azure.com>**, en modo
+instalación real (sección 5): sin datos de ejemplo y con una sola cuenta,
+`admin`, cuya clave inicial vive solo en el `.env` del servidor.
 
 ### Cómo se desplegó
 
@@ -1696,7 +1729,9 @@ siete cuentas de demostración de la sección 5.
   servidor y se puede repetir: instala Docker desde el repositorio oficial si
   falta, crea un swap de 2 GB para los builds, clona o actualiza el
   repositorio en `~/saaca`, genera el `.env` **en el servidor** con
-  `openssl rand -hex 24` si no existe (si existe, no lo toca), levanta el
+  `openssl rand -hex 24` si no existe (si existe, no lo toca), con
+  `MODO_DEMOSTRACION=0` y la clave inicial de `admin` en
+  `ADMIN_CLAVE_INICIAL`, que no imprime nunca; levanta el
   stack y espera a que todo esté sano y a que el sitio responda 200 por
   HTTPS. Ninguna clave de la instancia pública salió del servidor ni está en
   el repositorio.
@@ -1719,28 +1754,33 @@ bash ~/saaca/despliegue/desplegar.sh v1.0     # o una rama o etiqueta cualquiera
 Reconstruye solo lo que cambió y conserva los datos. Las imágenes se
 construyen en el propio servidor; con el swap, cabe en los 4 GiB.
 
-### Restablecer los datos de demostración
+### Restablecer la instancia y correr las pruebas en el servidor
 
-Cualquiera puede entrar con las cuentas publicadas y dejar datos, así que antes
-de una demostración conviene volver al escenario sembrado. Lo mismo después de
-correr `verificar.sh` en el servidor, que deja datos de prueba:
+Recrear la base deja la instalación como recién hecha: vacía y con la cuenta
+`admin` otra vez en su clave inicial, que hay que volver a cambiar en el
+primer ingreso. **Borra todo lo que se haya registrado:**
 
 ```bash
 cd ~/saaca
-docker compose -f docker-compose.yml -f docker-compose.produccion.yml down -v
-docker compose -f docker-compose.yml -f docker-compose.produccion.yml up -d
+C="docker compose -f docker-compose.yml -f docker-compose.produccion.yml"
+$C down -v && $C up -d
 ```
 
-En uno o dos minutos MySQL recrea las cinco bases y los servicios vuelven a
-sembrar. `down -v` borra la base pero **no el certificado**: los volúmenes de
-Caddy están declarados como externos, justamente para que restablecer la demo
-no pida un certificado nuevo cada vez (Let's Encrypt da como mucho cinco por
-semana para el mismo nombre).
+`down -v` borra la base pero **no el certificado**: los volúmenes de Caddy
+están declarados como externos, justamente para que recrear la base no pida un
+certificado nuevo cada vez (Let's Encrypt da como mucho cinco por semana para
+el mismo nombre).
 
-Para comprobar todo dentro del servidor, con el mismo guion de la sección 5:
+`verificar.sh` y `pruebas.sh` entran con las cuentas de demostración, así que
+en el servidor se corren pasando un momento a modo demostración y volviendo a
+la instalación real al terminar:
 
 ```bash
-cd ~/saaca && bash verificar.sh      # y después, restablecer
+cd ~/saaca
+C="docker compose -f docker-compose.yml -f docker-compose.produccion.yml"
+sed -i 's/^MODO_DEMOSTRACION=.*/MODO_DEMOSTRACION=1/' .env && $C down -v && $C up -d
+bash verificar.sh
+sed -i 's/^MODO_DEMOSTRACION=.*/MODO_DEMOSTRACION=0/' .env && $C down -v && $C up -d
 ```
 
 ### Respaldos y cómo restaurar uno

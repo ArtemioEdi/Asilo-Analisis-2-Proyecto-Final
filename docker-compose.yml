@@ -88,7 +88,7 @@ services:
       # Solo para comprobar la deuda al egresar a un interno.
       CAJA_URL: http://ms-caja:8083
       TOLERANCIA_MIN: "60"
-      SEMBRAR: "1"
+      SEMBRAR: ${MODO_DEMOSTRACION:-1}
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
     depends_on:
       bd-asilo:
@@ -108,7 +108,7 @@ services:
       BD_NOMBRE: asilo_caja
       BD_USUARIO: usr_caja
       BD_CLAVE: ${BD_CLAVE_CAJA:?falta BD_CLAVE_CAJA. Copie .env.ejemplo a .env}
-      SEMBRAR: "1"
+      SEMBRAR: ${MODO_DEMOSTRACION:-1}
       # Para la generacion mensual de cuotas.
       PASTILLERO_URL: http://ms-pastillero:8082
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
@@ -132,7 +132,7 @@ services:
       VIGIA_URL: http://ms-vigia:8081
       CAJA_URL: http://ms-caja:8083
       # "0" arranca con la cadena clinica vacia.
-      SEMBRAR: "1"
+      SEMBRAR: ${MODO_DEMOSTRACION:-1}
       # Todas opcionales: sin SMTP_HOST el aviso al familiar no se envia, pero
       # queda en la bitacora y en la tabla correos_enviados.
       SMTP_HOST: ${SMTP_HOST:-}
@@ -156,6 +156,10 @@ services:
       GATEWAY_SECRETO: ${GATEWAY_SECRETO:?falta GATEWAY_SECRETO. Copie .env.ejemplo a .env y genere uno con "openssl rand -hex 32"}
       GATEWAY_DURACION_SESION: ${GATEWAY_DURACION_SESION:-8h}
       ORIGEN_PERMITIDO: ${ORIGEN_PERMITIDO:-http://localhost:8090}
+      # 1: las siete cuentas de demostracion. 0: solo admin, con la clave de
+      # ADMIN_CLAVE_INICIAL, que el gateway exige en ese modo para arrancar.
+      MODO_DEMOSTRACION: ${MODO_DEMOSTRACION:-1}
+      ADMIN_CLAVE_INICIAL: ${ADMIN_CLAVE_INICIAL:-}
       # Las cuentas del personal viven en su propia base. usr_acceso no tiene
       # DELETE: las cuentas se desactivan, no se borran.
       BD_HOST: bd-asilo

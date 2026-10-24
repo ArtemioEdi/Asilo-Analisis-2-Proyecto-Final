@@ -18,7 +18,10 @@
 #    3. Clona o actualiza el repositorio en ~/saaca y se pone en la referencia
 #       pedida.
 #    4. Si no existe ~/saaca/.env, lo genera aqui mismo con openssl, igual
-#       que el ciclo del README, mas DOMINIO. Si ya existe no lo toca: las
+#       que el ciclo del README, mas DOMINIO, MODO_DEMOSTRACION=0 (sin datos
+#       ni cuentas de demostracion) y ADMIN_CLAVE_INICIAL, la clave con que
+#       entra por primera vez la cuenta admin. Esa clave no se imprime nunca:
+#       al terminar dice como leerla. Si ya existe no lo toca: las
 #       claves de MySQL se usan una sola vez, al crear el volumen, y cambiarlas
 #       dejaria a los servicios fuera de su propia base. Ninguna clave sale de
 #       este servidor.
@@ -146,6 +149,9 @@ preparar_env() {
                BD_CLAVE_CAJA BD_CLAVE_CONSULTAS BD_CLAVE_ACCESO; do
         sed -i "s|^$v=$|$v=$(openssl rand -hex 24)|" "$env"
       done
+      # La instalacion publica es real: nada sembrado y una sola cuenta.
+      sed -i "s|^MODO_DEMOSTRACION=.*|MODO_DEMOSTRACION=0|" "$env"
+      sed -i "s|^ADMIN_CLAVE_INICIAL=$|ADMIN_CLAVE_INICIAL=$(openssl rand -hex 12)|" "$env"
       printf '\n# Nombre publico. Lo usan Caddy para el certificado y el gateway\n# para el origen permitido.\nDOMINIO=%s\n' \
         "${DOMINIO:-$DOMINIO_POR_DEFECTO}" >> "$env"
     )
@@ -153,6 +159,13 @@ preparar_env() {
   fi
   grep -qE '^GATEWAY_SECRETO=.+' "$env" || falla "el .env no tiene GATEWAY_SECRETO"
   grep -qE '^DOMINIO=.+' "$env" || falla "el .env no tiene DOMINIO; agreguelo a mano"
+  # Con MODO_DEMOSTRACION=0 el gateway no arranca sin la clave inicial. Se
+  # dice antes, aqui, y sin mostrar el valor.
+  if grep -qE '^MODO_DEMOSTRACION=0' "$env" && ! grep -qE '^ADMIN_CLAVE_INICIAL=.{12,}' "$env"; then
+    falla "MODO_DEMOSTRACION=0 y falta ADMIN_CLAVE_INICIAL en el .env (genere una con openssl rand -hex 12)"
+  fi
+  MODO=$(grep -E '^MODO_DEMOSTRACION=' "$env" | cut -d= -f2 | tr -d "\r\"'")
+  listo "MODO_DEMOSTRACION=${MODO:-1}"
   DOMINIO=$(grep -E '^DOMINIO=' "$env" | cut -d= -f2- | tr -d "\r\"'")
   listo "DOMINIO=$DOMINIO"
 }
@@ -228,6 +241,10 @@ main() {
   levantar
   programar_respaldo
   printf '\n\033[1;32mDesplegado %s en https://%s\033[0m\n' "$ref" "$DOMINIO"
+  if [ "${MODO:-1}" = "0" ]; then
+    printf 'Instalacion real. La clave inicial de admin no se muestra; para leerla:\n'
+    printf '    grep ADMIN_CLAVE_INICIAL %s/.env\n' "$DESTINO"
+  fi
 }
 
 main "$@"; exit
