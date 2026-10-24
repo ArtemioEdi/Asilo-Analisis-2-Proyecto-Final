@@ -8,6 +8,10 @@ de sesión** que es la única puerta de entrada, la estación web que los consum
 y una instancia de **MySQL 8.4** con una base separada por servicio. Todo el
 conjunto se levanta con **un solo comando**.
 
+**Está publicado en <https://saaca-asilo.northcentralus.cloudapp.azure.com>**,
+con las cuentas de demostración de la sección 5; cómo se publicó, en la
+sección 12.
+
 **Si viene a calificar, la sección 2 es la tabla que busca**: cada requisito
 del enunciado con el endpoint que lo cumple, la pantalla donde se ve y el
 usuario con el que hay que entrar.
@@ -1422,6 +1426,11 @@ contenga el valor de ninguna clave del `.env`.
 ```
 Asilo-Analisis-2-Proyecto-Final/
 ├── docker-compose.yml          orquesta los siete contenedores
+├── docker-compose.produccion.yml  capa de produccion: Caddy al frente y
+│                               8080/8090 solo en 127.0.0.1 (sección 12)
+├── despliegue/
+│   ├── Caddyfile                 HTTPS con Let's Encrypt y cabeceras de seguridad
+│   └── desplegar.sh              instala, actualiza y levanta el servidor
 ├── sql/                        el modelo de datos, como entrega legible
 │   ├── 01-bases-y-usuarios.sh    cinco bases, cinco usuarios y sus permisos
 │   │                             (toma las claves del entorno · SE VERSIONA)
@@ -1509,11 +1518,23 @@ peligroso que uno que sí.
   la única entrada publicada; pero alguien que ya estuviera dentro de la red de
   Docker con un token vigente de una cuenta recién desactivada podría seguir
   usándolo contra un microservicio hasta que venza, como mucho 8 horas.
-- **No hay HTTPS.** Todo viaja en HTTP plano dentro de `localhost` y de la red
-  interna de Docker. En una red real, el token de sesión se puede leer en
-  tránsito: haría falta TLS terminado en nginx (o un proxy inverso delante) con
-  certificados, `Strict-Transport-Security` y las cookies/tokens marcados en
-  consecuencia.
+- **El HTTPS lo termina Caddy, no cada servicio.** En la instancia pública,
+  Caddy recibe en el 443 con un certificado de Let's Encrypt, redirige el 80 a
+  HTTPS y agrega `Strict-Transport-Security`; de ahí para adentro, Caddy,
+  nginx, el gateway y los microservicios hablan HTTP plano por la red interna
+  de Docker, que no sale del servidor. Es la forma habitual de terminar TLS en
+  un solo nodo; con varios, o con una red interna compartida, haría falta TLS
+  también entre servicios. En local, con el `docker-compose.yml` solo, todo
+  sigue en HTTP plano sobre `localhost`.
+- **En la instancia pública, cualquiera puede entrar con las cuentas de
+  demostración.** Sus claves están publicadas en este README y la dirección
+  está en Internet: cualquier persona puede entrar como `medico` o como
+  `admin`, registrar datos, cambiar claves o desactivar cuentas. Por eso esa
+  instancia **no guarda nada que importe** y se restablece al escenario
+  sembrado con `down -v` (sección 12) antes de cada demostración. Por la misma
+  razón, cualquiera puede dejar bloqueada una cuenta de demostración cinco
+  minutos con cinco claves malas: el límite de intentos cuenta por usuario, no
+  por dirección.
 - **El límite de intentos y la lista de revocación del `logout` viven en la
   memoria del proceso.** Con una sola instancia del gateway funcionan; con varias, cada una
   llevaría su propia cuenta y el límite se multiplicaría, y un token revocado en
@@ -1593,10 +1614,106 @@ peligroso que uno que sí.
 
 ### Operación
 
-- **Un solo entorno.** No hay separación de desarrollo, pruebas y producción,
-  ni integración continua, ni despliegue automatizado.
+- **Dos entornos, sin integración continua.** El local y la instancia
+  pública, que es el mismo compose más la capa de producción. El despliegue
+  es un guion que se corre a mano por `ssh` después de cada `push`; no hay
+  integración continua ni un entorno de pruebas aparte.
+- **La instancia pública es un solo nodo, sin copias de seguridad.** Una
+  máquina virtual de Azure con los ocho contenedores y el volumen de MySQL en
+  su propio disco. Si la máquina se cae, el sistema se cae; si se pierde el
+  disco, se pierden los datos. Para la demostración no importa, porque se
+  restablece al escenario sembrado con `down -v`; para un asilo de verdad
+  harían falta copias diarias de la base fuera del servidor y un segundo
+  nodo.
 - **Sin límites de recursos ni política de reinicio afinada** en los
   contenedores más allá de `restart: unless-stopped`.
 - **Los relojes son la hora local del contenedor** (`TZ=America/Guatemala`). Un
   cambio de zona horaria o de horario de verano afectaría el cálculo de turnos
   y de tomas vencidas.
+
+---
+
+## 12. Publicación en Internet
+
+El sistema está publicado en
+**<https://saaca-asilo.northcentralus.cloudapp.azure.com>**, con las mismas
+siete cuentas de demostración de la sección 5.
+
+### Cómo se desplegó
+
+- **Azure.** Una máquina virtual Ubuntu 24.04 de 2 vCPU y 4 GiB en North
+  Central US, con el nombre DNS que da Azure. En su grupo de seguridad solo
+  están abiertos el 22 (SSH), el 80 y el 443.
+- **Caddy delante de todo.** [`docker-compose.produccion.yml`](docker-compose.produccion.yml)
+  se suma al compose principal, que no cambia, y agrega un octavo
+  contenedor: Caddy, el único que publica puertos a Internet. Pide solo el
+  certificado de Let's Encrypt, lo renueva, redirige HTTP a HTTPS y le pasa
+  todo a `estacion-web`, que sigue reenviando la API al gateway igual que en
+  local. Con `!override`, la misma capa deja el 8080 y el 8090 publicados
+  solo en `127.0.0.1`: los guiones de prueba corren dentro del servidor y,
+  desde fuera, nada salvo Caddy contesta. Las cabeceras están en
+  [`despliegue/Caddyfile`](despliegue/Caddyfile): `Strict-Transport-Security`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` y sin
+  `Server`.
+- **[`despliegue/desplegar.sh`](despliegue/desplegar.sh).** Corre dentro del
+  servidor y se puede repetir: instala Docker desde el repositorio oficial si
+  falta, crea un swap de 2 GB para los builds, clona o actualiza el
+  repositorio en `~/saaca`, genera el `.env` **en el servidor** con
+  `openssl rand -hex 24` si no existe (si existe, no lo toca), levanta el
+  stack y espera a que todo esté sano y a que el sitio responda 200 por
+  HTTPS. Ninguna clave de la instancia pública salió del servidor ni está en
+  el repositorio.
+
+Para ponerlo en una máquina nueva alcanza con copiar el guion y correrlo:
+
+```bash
+scp -i ~/.ssh/saaca-key.pem despliegue/desplegar.sh azureuser@saaca-asilo.northcentralus.cloudapp.azure.com:~
+ssh -i ~/.ssh/saaca-key.pem azureuser@saaca-asilo.northcentralus.cloudapp.azure.com 'bash ~/desplegar.sh'
+```
+
+### Actualizar el servidor después de un push
+
+```bash
+ssh -i ~/.ssh/saaca-key.pem azureuser@saaca-asilo.northcentralus.cloudapp.azure.com
+bash ~/saaca/despliegue/desplegar.sh          # la rama main
+bash ~/saaca/despliegue/desplegar.sh v1.0     # o una rama o etiqueta cualquiera
+```
+
+Reconstruye solo lo que cambió y conserva los datos. Las imágenes se
+construyen en el propio servidor; con el swap, cabe en los 4 GiB.
+
+### Restablecer los datos de demostración
+
+Cualquiera puede entrar con las cuentas publicadas y dejar datos, así que antes
+de una demostración conviene volver al escenario sembrado. Lo mismo después de
+correr `verificar.sh` en el servidor, que deja datos de prueba:
+
+```bash
+cd ~/saaca
+docker compose -f docker-compose.yml -f docker-compose.produccion.yml down -v
+docker compose -f docker-compose.yml -f docker-compose.produccion.yml up -d
+```
+
+En uno o dos minutos MySQL recrea las cinco bases y los servicios vuelven a
+sembrar. `down -v` borra la base pero **no el certificado**: los volúmenes de
+Caddy están declarados como externos, justamente para que restablecer la demo
+no pida un certificado nuevo cada vez (Let's Encrypt da como mucho cinco por
+semana para el mismo nombre).
+
+Para comprobar todo dentro del servidor, con el mismo guion de la sección 5:
+
+```bash
+cd ~/saaca && bash verificar.sh      # y después, restablecer
+```
+
+### Ver los logs
+
+```bash
+cd ~/saaca
+C="docker compose -f docker-compose.yml -f docker-compose.produccion.yml"
+$C ps                          # estado y salud de los ocho contenedores
+$C logs -f estacion-web        # cada petición que llega, en vivo (acceso de nginx)
+$C logs --tail 50 ms-gateway   # arranque, origen permitido y errores con la base
+$C logs --tail 100 caddy       # certificado y errores del proxy
+$C logs --since 1h             # todo lo de la última hora
+```
