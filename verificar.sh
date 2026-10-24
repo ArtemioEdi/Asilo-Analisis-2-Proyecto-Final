@@ -76,6 +76,15 @@
 # ===========================================================================
 set -u
 
+# Las fechas que mandan las pruebas ("hoy", "este mes") son las del sistema,
+# que vive en hora de Guatemala (TZ en cada contenedor), y no las del equipo
+# que corre el guion. En un servidor en UTC, de las 18:00 a la medianoche el
+# "date" del equipo ya va un dia adelante: el egreso de "hoy" se rechazaria
+# por fecha futura. Va en forma POSIX y no como America/Guatemala porque Git
+# Bash no trae la base de zonas horarias y con ese nombre cae en GMT sin
+# avisar. Guatemala no tiene horario de verano: es UTC-6 en cualquier mes.
+export TZ=CST6
+
 GW=${GW:-http://localhost:8080}
 WEB=${WEB:-http://localhost:8090}
 OK=0; FALLA=0

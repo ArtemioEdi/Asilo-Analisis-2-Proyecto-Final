@@ -1444,8 +1444,8 @@ Asilo-Analisis-2-Proyecto-Final/
 │   └── cambio-de-sesion.js     recorrido de la estación en un DOM mínimo (bloque 23)
 ├── verificar.sh                revisión de seguridad, permisos y repositorio
 ├── docs/manual/
-│   ├── capturar.js             toma las 32 capturas del manual con Edge headless
-│   └── capturas/               captura-01.png a captura-32.png y su LEEME.md
+│   ├── capturar.js             toma las capturas 01 a 32 del manual con Edge headless
+│   └── capturas/               captura-01.png a captura-33.png y su LEEME.md
 ├── README.md
 ├── ms-vigia/
 │   ├── app.py                  API, motor de reglas y verificación del token

@@ -1,10 +1,11 @@
 # Capturas del manual de usuario
 
-Treinta y dos pantallas del sistema, tomadas con Edge en modo headless por
-`docs/manual/capturar.js` sobre un stack recién levantado y **sin haber corrido
-ninguna prueba antes**: muestran el escenario sembrado, más lo que el propio
-recorrido escribe en el camino (una remisión, una consulta atendida, una cuenta
-nueva).
+Treinta y tres pantallas del sistema. Las 32 primeras las tomó Edge en modo
+headless, con `docs/manual/capturar.js`, sobre un stack recién levantado y
+**sin haber corrido ninguna prueba antes**: muestran el escenario sembrado,
+más lo que el propio recorrido escribe en el camino (una remisión, una
+consulta atendida, una cuenta nueva). La 33 es la instancia pública en
+Internet.
 
 - **Formato:** PNG, ventana de 1366 × 768 con escala 2 (2732 × 1536 píxeles).
   La 29 es la excepción: 375 × 812, la pantalla de un teléfono.
@@ -52,8 +53,9 @@ nueva).
 | 30 | `medico` | «Editar información clínica» de ASL-014, con la lista del vademécum abierta en una fila de medicación permanente, sin guardar |
 | 31 | `administracion` | «Registrar un pago a la fundación» lleno, con el saldo con la fundación en la nota del formulario, sin guardar |
 | 32 | `administracion` | El diálogo de «Pagar» de un cargo de ASL-022, con el monto bajado a un abono parcial, sin confirmar |
+| 33 | — | La pantalla de acceso de la instancia pública, <https://saaca-asilo.northcentralus.cloudapp.azure.com>, con la dirección anotada arriba |
 
-**Dos licencias, dichas para que nadie se lleve una sorpresa:**
+**Tres licencias, dichas para que nadie se lleve una sorpresa:**
 
 - **19 y 30, las listas abiertas.** La lista desplegada de un `<select>` la
   dibuja el sistema operativo, fuera de la página, y no sale en una captura de
@@ -65,6 +67,13 @@ nueva).
   vista, no caben juntos. La captura muestra el formulario lleno con la nota
   que dice el saldo con la fundación; el resumen completo, con adeudado, pagado
   y saldo, se ve en la 17.
+- **33, la barra de direcciones.** Edge en modo headless no dibuja la barra
+  del navegador. La franja oscura de arriba es una anotación que el recorrido
+  agrega a la página antes de la foto: la dirección sale de `location.href` y
+  el estado («secure», emisor `YE1` de Let's Encrypt), de lo que el propio Edge
+  informa sobre la conexión. No la toma `capturar.js`, que trabaja contra
+  `localhost`: salió del recorrido de verificación de la instancia pública del
+  bloque 13.
 
 ## Cómo regenerarlas
 
