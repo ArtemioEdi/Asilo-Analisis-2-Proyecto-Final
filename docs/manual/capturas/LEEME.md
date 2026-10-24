@@ -5,7 +5,8 @@ modo headless, con `docs/manual/capturar.js`, sobre un stack recién levantado
 y **sin haber corrido ninguna prueba antes**: muestran el escenario sembrado,
 más lo que el propio recorrido escribe en el camino (una remisión, una
 consulta atendida, una cuenta nueva). La 33 es la instancia pública en
-Internet.
+Internet, que ya arranca como instalación real: sin datos ni cuentas de
+demostración.
 
 - **Formato:** PNG, ventana de 1366 × 768 con escala 2 (2732 × 1536 píxeles).
   Las tres de teléfono son la excepción: la 29 a 375 × 812, y la 34 y la 35 a
@@ -15,7 +16,9 @@ Internet.
   que va en el mismo commit que estas capturas (*Bloque 10B*): la tarjeta de
   «Elija su clave» ya no se corta por arriba en una pantalla de 768 px. La 29,
   la 34 y la 35 son de la interfaz adaptada al teléfono (*Bloque 14*): la 29
-  se volvió a tomar entonces, y las otras dos se agregaron.
+  se volvió a tomar entonces, y las otras dos se agregaron. La 01 y la 33 se
+  repitieron en el *Bloque 17*, cuando el campo de usuario dejó de sugerir los
+  nombres de las cuentas de demostración y pasó a decir «su usuario».
 - **Solo la ventana del navegador.** Antes de cada foto se retiran los avisos
   flotantes de la acción anterior, para que no tapen la pantalla, y se emula
   `prefers-reduced-motion` para que ningún desplazamiento quede a medio camino.
@@ -24,7 +27,7 @@ Internet.
 
 | # | Usuario | Qué se ve |
 |---|---|---|
-| 01 | — | La pantalla de acceso, vacía |
+| 01 | — | La pantalla de acceso, vacía: el campo de usuario dice «su usuario» |
 | 02 | `rgarcia` (cuenta nueva) | «Elija su clave» del primer ingreso, con la clave nueva a medio escribir: dos requisitos dicen «falta» y tres «cumple». La cuenta la da de alta el administrador antes de la foto |
 | 03 | `enfermeria` | «Cambiar mi clave» en modo voluntario, vacío |
 | 04 | `enfermeria` | La jornada de medicación de Rosalía Menchú (ASL-014) |
@@ -56,7 +59,7 @@ Internet.
 | 30 | `medico` | «Editar información clínica» de ASL-014, con la lista del vademécum abierta en una fila de medicación permanente, sin guardar |
 | 31 | `administracion` | «Registrar un pago a la fundación» lleno, con el saldo con la fundación en la nota del formulario, sin guardar |
 | 32 | `administracion` | El diálogo de «Pagar» de un cargo de ASL-022, con el monto bajado a un abono parcial, sin confirmar |
-| 33 | — | La pantalla de acceso de la instancia pública, <https://saaca-asilo.northcentralus.cloudapp.azure.com>, con la dirección anotada arriba |
+| 33 | — | La pantalla de acceso de la instancia pública, <https://saaca-asilo.northcentralus.cloudapp.azure.com>, con la dirección anotada arriba. Es la instalación real: ahí las cuentas de demostración no entran, y la única cuenta, `admin`, cae en «Elija su clave» |
 | 34 | `administracion` | «Caja y donaciones» a 390 × 844: la tira de internos, las pestañas y el resumen en dos columnas |
 | 35 | `administracion` | «Cobros por paciente» de ASL-022 a 390 × 844: la tabla hecha tarjetas, cada dato con su rótulo |
 
@@ -77,8 +80,8 @@ Internet.
   agrega a la página antes de la foto: la dirección sale de `location.href` y
   el estado («secure», emisor `YE1` de Let's Encrypt), de lo que el propio Edge
   informa sobre la conexión. No la toma `capturar.js`, que trabaja contra
-  `localhost`: salió del recorrido de verificación de la instancia pública del
-  bloque 13.
+  `localhost`: salió del recorrido de verificación de la instancia pública,
+  repetido en el bloque 17 con el servidor ya sin cuentas de demostración.
 
 ## Cómo regenerarlas
 
