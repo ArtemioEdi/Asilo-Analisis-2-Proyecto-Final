@@ -497,8 +497,19 @@ function pintarVista(nombre) {
     const nodo = $("vista-" + vista);
     if (nodo) nodo.hidden = vista !== nombre;
   }
-  document.querySelectorAll(".pestana").forEach((b) =>
-    b.setAttribute("aria-selected", String(b.dataset.vista === nombre)));
+  let elegida = null;
+  document.querySelectorAll(".pestana").forEach((b) => {
+    b.setAttribute("aria-selected", String(b.dataset.vista === nombre));
+    if (b.dataset.vista === nombre) elegida = b;
+  });
+  // En el telefono las pestañas se desplazan en su propia franja: la elegida
+  // se centra dentro de la franja, sin mover la pagina. En escritorio caben y
+  // esto no hace nada.
+  const franja = $("pestanas");
+  if (elegida && franja.scrollWidth > franja.clientWidth) {
+    const f = franja.getBoundingClientRect(), e = elegida.getBoundingClientRect();
+    franja.scrollLeft += e.left - f.left - (f.width - e.width) / 2;
+  }
   window.scrollTo({ top: 0, behavior: "auto" });
 }
 
@@ -3475,6 +3486,11 @@ function informeElegido() {
    --------------------------------------------------------------------- */
 
 // columnas: [{rotulo, alinear}], filas: [[celda, ...]], pie: [celda, ...]
+//
+// Cada celda lleva el rotulo de su columna en data-rotulo. En el telefono la
+// tabla se vuelve una pila de tarjetas y el CSS escribe ese rotulo delante de
+// cada dato: el mismo HTML, sin una segunda version para pantalla angosta.
+// La columna sin rotulo es la de los botones, que van al pie de la tarjeta.
 function tablaInforme(columnas, filas, pie) {
   const caja = document.createElement("div");
   caja.className = "tabla-envoltura";
@@ -3500,6 +3516,7 @@ function tablaInforme(columnas, filas, pie) {
       // Nodo si el dibujante ya armo uno (un marbete); texto si no.
       if (celda instanceof Node) td.appendChild(celda);
       else td.textContent = celda === null || celda === undefined ? "—" : String(celda);
+      td.dataset.rotulo = columnas[i] ? columnas[i].rotulo : "";
       if (columnas[i] && columnas[i].alinear === "derecha") td.className = "tabla--numero";
       tr.appendChild(td);
     });
@@ -3514,6 +3531,7 @@ function tablaInforme(columnas, filas, pie) {
     pie.forEach((celda, i) => {
       const td = document.createElement("td");
       td.textContent = celda === null || celda === undefined ? "" : String(celda);
+      td.dataset.rotulo = columnas[i] ? columnas[i].rotulo : "";
       if (columnas[i] && columnas[i].alinear === "derecha") td.className = "tabla--numero";
       tr.appendChild(td);
     });

@@ -1582,3 +1582,183 @@ button { font-family: inherit; }
   .medicacion-fija { grid-template-columns: 1fr 1fr; gap: 8px 10px; }
   .medicacion-fija .campo:first-child { grid-column: 1 / -1; }
 }
+
+/* =====================================================================
+   Telefono
+   ---------------------------------------------------------------------
+   Todo lo de aqui vale solo en pantalla y por debajo de 720 px: el
+   escritorio y la hoja impresa no cambian. El "screen" no es de adorno:
+   una hoja A4 mide menos de 720 px de ancho, y sin el estas reglas se
+   colarian al imprimir un informe.
+
+   Va en orden de importancia: primero lo que impedia usar la pantalla
+   (tablas, pestañas y controles tapados), despues lo que estorbaba al
+   tocar (el zoom de iOS y los botones chicos) y al final la letra.
+   Lo mide docs/manual/auditar-telefono.js a 360 y 390 px.
+   ===================================================================== */
+@media screen and (max-width: 720px) {
+
+  /* --- Las tablas se vuelven tarjetas apiladas -------------------------
+     Padron, cuentas, bitacora y los ocho informes salen de tablaInforme,
+     que pone en cada celda el rotulo de su columna (data-rotulo). Aqui
+     cada fila es una tarjeta y cada dato va precedido de su rotulo, con el
+     mismo HTML. El encabezado queda para los lectores de pantalla. */
+  .tabla-envoltura { overflow: visible; margin: 0; }
+  .tabla, .tabla tbody, .tabla tfoot, .tabla tr, .tabla td { display: block; }
+  .tabla thead {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .tabla tr {
+    background: var(--blanco);
+    border: 1px solid var(--linea);
+    border-left: 4px solid var(--linea);
+    padding: 2px 14px;
+    margin-bottom: 10px;
+  }
+  .tabla td {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: 12px;
+    align-items: baseline;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--linea-suave);
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .tabla td:last-child { border-bottom: none; }
+  .tabla td::before {
+    content: attr(data-rotulo);
+    font-family: var(--dato);
+    font-size: 12px;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--pizarra);
+    text-align: left;
+  }
+  /* Las cifras siguen alineadas a la derecha: se leen comparando. */
+  .tabla td.tabla--numero { text-align: right; }
+
+  /* La columna sin rotulo es la de los botones: al pie de la tarjeta y a
+     todo el ancho, de a dos por renglon. */
+  .tabla td[data-rotulo=""] { display: block; padding: 12px 0; }
+  .tabla td[data-rotulo=""]::before { content: none; }
+  .tabla .ficha__acciones {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: stretch;
+    max-width: none;
+    gap: 8px;
+  }
+  .tabla .ficha__acciones > button { flex: 1 1 calc(50% - 4px); }
+  .tabla .usuarios__motivo { text-align: left; }
+  /* El marbete de estado mide lo que su palabra, no la columna entera; y
+     «Clave temporal pendiente» puede partirse en dos renglones. */
+  .tabla .marbete-estado { white-space: normal; justify-self: start; }
+
+  /* La fila de totales tambien es una tarjeta, rotulada «Totales». Su
+     primera celda («Total», «Totales») ya la dice el rotulo, y las celdas
+     vacias de las columnas que no suman no se muestran. */
+  .tabla tfoot tr { border-left-color: var(--tinta); }
+  .tabla tfoot tr::before {
+    content: "Totales";
+    display: block;
+    font-family: var(--dato);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    padding: 10px 0 6px;
+    border-bottom: 2px solid var(--tinta);
+  }
+  .tabla tfoot td { border-top: none; border-bottom: 1px solid var(--linea-suave); padding-top: 9px; }
+  .tabla tfoot td:first-child, .tabla tfoot td:empty { display: none; }
+
+  /* --- Las pestañas se desplazan en su propia franja --------------------
+     Con cuatro (el medico) no caben en 360 px: antes se partian en tres
+     renglones y la ultima quedaba recortada. Ahora van en un renglon que
+     se desplaza solo, sin empujar la pagina; app.js centra la elegida. La
+     linea de base pasa a una sombra interior, porque el borde quedaba
+     fuera de la franja recortada. */
+  .pestanas {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    border-bottom: none;
+    box-shadow: inset 0 -1px 0 var(--linea);
+    gap: 0;
+  }
+  .pestanas::-webkit-scrollbar { display: none; }
+  .pestana { flex: none; white-space: nowrap; margin-bottom: 0; padding: 10px 12px; min-height: 44px; }
+
+  /* --- Nada queda debajo de la barra de servicios -----------------------
+     La barra es fija abajo. Al enfocar un campo o tabular, el navegador
+     traia el control hasta el borde de la ventana, justo debajo de ella. */
+  html { scroll-padding-bottom: calc(var(--barra-alto) + 16px); }
+
+  /* --- La caja ---------------------------------------------------------- */
+  #caja-resumen { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+  .caja-formularios { grid-template-columns: minmax(0, 1fr); }
+
+  /* --- Cajones y dialogos -----------------------------------------------
+     El cajon ya ocupa el ancho; su cabecera queda pegada arriba mientras el
+     contenido se desplaza por dentro, asi la × siempre esta a mano. Los
+     dialogos de confirmacion salen desde abajo, a todo el ancho, con los
+     botones siempre visibles aunque el contenido no quepa. */
+  .cajon { border-left: none; padding-top: 0; }
+  .cajon__cabecera {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--blanco);
+    margin: 0 -18px;
+    padding: 12px 18px 10px;
+    border-bottom: 1px solid var(--linea-suave);
+  }
+  .confirmar {
+    top: auto; bottom: 0; left: 0; right: 0;
+    transform: none;
+    width: 100%;
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    padding: 20px 18px 0;
+    border-left: none; border-right: none; border-bottom: none;
+  }
+  .confirmar__botones {
+    position: sticky;
+    bottom: 0;
+    background: var(--blanco);
+    margin: 0 -18px;
+    padding: 12px 18px 16px;
+    border-top: 1px solid var(--linea-suave);
+  }
+  .confirmar__botones > button { flex: 1 1 0; }
+
+  /* --- Los campos no hacen zoom en iOS ----------------------------------
+     Safari amplia la pagina al enfocar un campo con letra de menos de
+     16 px, y despues no la devuelve. :root y los :not suben la
+     especificidad por encima de ".campo input" y sus parientes. */
+  :root :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]) { font-size: 16px; }
+
+  /* --- Botones que se aciertan con el dedo ------------------------------ */
+  .accion, .accion-sec { min-height: 44px; }
+  /* Los de la barra superior se quedan en 40: pasan la medida minima, y la
+     barra pegada arriba ya ocupa bastante de lo que deja leer. */
+  .superior__sesion .accion-sec { min-height: 40px; }
+  .cerrar { min-width: 44px; min-height: 44px; margin: -4px -10px 0 0; }
+  .alfiler { min-height: 44px; }
+  .medicacion__accion { min-height: 44px; padding-top: 0; padding-bottom: 0; }
+  .enlace-dato { display: inline-flex; align-items: center; min-height: 40px; }
+
+  /* --- Ninguna letra de menos de 12 px ----------------------------------
+     Los rotulos en versalitas monoespaciadas son parte del diseño: suben
+     a 12 px y conservan la familia, el espaciado y las mayusculas. */
+  .marca, .marbete, .campo label, .superior__sub, .superior__rotulo,
+  .internos__rotulo, .interno__meta, .datos dt, .turno__titulo, .leyenda,
+  .cajon__servicio, .dictamen__folio, .hallazgo__marbete, .confirmar__dato dt,
+  .cargo__categoria, .cargo__concepto small, .estado-pago, .barra,
+  .marbete-estado, .ficha__rotulo, .visita__rotulo, .visita__especialidad,
+  .hoja__asilo, .requisitos__titulo, .requisito__marca { font-size: 12px; }
+}
