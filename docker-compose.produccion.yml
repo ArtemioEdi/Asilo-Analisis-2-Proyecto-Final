@@ -1,0 +1,63 @@
+# Capa de produccion. Se suma al compose principal, que no cambia:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.produccion.yml up -d --build
+#
+# Lo unico que queda abierto a Internet es Caddy, en el 80 y el 443. Termina
+# el HTTPS con un certificado de Let's Encrypt y le pasa todo a estacion-web,
+# que a su vez le pasa la API a ms-gateway por la red interna, igual que en
+# local. El 8090 y el 8080 se siguen publicando, pero solo en 127.0.0.1: los
+# guiones de prueba corren dentro del servidor contra localhost y desde fuera
+# no se alcanzan.
+#
+# !override reemplaza la lista de puertos del compose principal en vez de
+# sumarle una entrada. Sin el, Compose juntaria "8090:80" y
+# "127.0.0.1:8090:80" y el puerto seguiria abierto en todas las interfaces.
+# Exige Docker Compose 2.24.4 o posterior; desplegar.sh lo comprueba.
+#
+# Sin DOMINIO en el .env no levanta: Caddy no sabria para que nombre pedir el
+# certificado y el gateway no sabria que origen aceptar.
+
+services:
+
+  caddy:
+    image: caddy:2.8
+    container_name: caddy
+    environment:
+      DOMINIO: ${DOMINIO:?falta DOMINIO en el .env. Ver despliegue/desplegar.sh}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./despliegue/Caddyfile:/etc/caddy/Caddyfile:ro
+      # /data guarda el certificado y la llave de la cuenta de Let's Encrypt.
+      # Si se perdiera, se pediria un certificado nuevo, y Let's Encrypt corta
+      # a los cinco por semana para el mismo nombre.
+      - caddy-datos:/data
+      - caddy-config:/config
+    depends_on:
+      estacion-web:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [asilo]
+
+  ms-gateway:
+    environment:
+      # El navegador llega por el dominio publico, no por localhost:8090.
+      ORIGEN_PERMITIDO: https://${DOMINIO:?falta DOMINIO en el .env. Ver despliegue/desplegar.sh}
+    ports: !override
+      - "127.0.0.1:8080:8080"
+
+  estacion-web:
+    ports: !override
+      - "127.0.0.1:8090:80"
+
+# Externos a proposito: los crea desplegar.sh y "down -v" no los borra. La
+# instancia publica se restablece con down -v para volver al escenario
+# sembrado, y eso no tiene por que costar un certificado cada vez.
+volumes:
+  caddy-datos:
+    external: true
+    name: saaca-caddy-datos
+  caddy-config:
+    external: true
+    name: saaca-caddy-config

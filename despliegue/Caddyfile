@@ -1,0 +1,27 @@
+# Caddy delante de la estacion web, solo en produccion.
+#
+# Con un nombre de dominio como direccion del sitio, Caddy pide solo el
+# certificado de Let's Encrypt (reto HTTP en el puerto 80), lo renueva antes
+# de que venza y redirige todo lo que llegue por http:// a https://. No hay
+# nada de eso escrito aqui porque es su comportamiento por defecto.
+#
+# DOMINIO llega del .env del servidor por el entorno del contenedor.
+
+{$DOMINIO} {
+	encode gzip
+
+	header {
+		# Doce meses de HTTPS obligatorio para este nombre. Sin includeSubDomains
+		# ni preload: el nombre es de Azure y no es nuestro decidir por sus
+		# subdominios.
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		# Ni "Caddy" ni la version de nginx que trae la respuesta de atras.
+		# Borrar una cabecera hace que Caddy espere a que la respuesta este
+		# completa, asi que alcanza tambien a la que pone estacion-web.
+		-Server
+	}
+
+	reverse_proxy estacion-web:80
+}

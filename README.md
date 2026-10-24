@@ -640,7 +640,7 @@ aceptarlo.
 Si además quiere mostrar el aislamiento de datos, sin salir de la terminal:
 
 ```bash
-bash verificar.sh          # 115 comprobaciones, entre ellas las 21 puertas
+bash verificar.sh          # 117 comprobaciones, entre ellas las 21 puertas
                            # cerradas de los tres roles nuevos, la matriz
                            # completa del ADMINISTRADOR y el aislamiento de
                            # usr_consultas y de usr_acceso
@@ -656,7 +656,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **278**, en 27 bloques | **115**, en 21 bloques |
+| **Comprobaciones** | **278**, en 27 bloques | **117**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 

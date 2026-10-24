@@ -3,7 +3,7 @@
 #  Asilo de Ancianos "Cabeza de Algodon"
 #  verificar.sh · Revision de seguridad, base de datos y estado del repositorio
 # ---------------------------------------------------------------------------
-#  QUE VERIFICA (115 comprobaciones, 21 bloques)
+#  QUE VERIFICA (117 comprobaciones, 21 bloques)
 #
 #    0-1  Que el stack este arriba y que ms-vigia, ms-pastillero y ms-caja NO
 #         publiquen puerto al equipo anfitrion: solo el 8080 y el 8090.
@@ -26,8 +26,9 @@
 #    13   Auditoria estatica del repositorio: sin claves de demostracion en
 #         texto plano en el codigo, sin usuarios.json, con la instancia de la
 #         base completa y sin claves, sin rastros de SQLite,
-#         con .env ignorado, con el dinero en DECIMAL y sin el puerto de MySQL
-#         publicado.
+#         con .env ignorado, con el dinero en DECIMAL, sin el puerto de MySQL
+#         publicado, y con la capa de produccion abriendo a Internet solo el
+#         80 y el 443 de Caddy.
 #    14   Corre pruebas.sh entera y exige que pase.
 #    16   Aislamiento entre bases: que usr_caja NO pueda leer asilo_vigia.
 #    17   Que los nombres con tildes sobrevivan el viaje a MySQL y de vuelta.
@@ -267,15 +268,18 @@ fi
 
 titulo "13. Auditoria estatica del repositorio"
 # Se revisa el codigo del sistema: los servicios, la estacion, el esquema y el
-# compose. Los guiones de prueba (pruebas.sh, este, pruebas-interfaz/) quedan
+# compose, el de produccion incluido, y la carpeta despliegue/. El --include
+# "*.yml" hace falta: sin el, grep descarta los compose aunque se nombren en
+# la linea de comandos. Los guiones de prueba (pruebas.sh, este, pruebas-interfaz/) quedan
 # fuera a proposito: entran con las claves de demostracion del README, igual
 # que lo haria una persona. La estacion se revisa entera, index.html incluido:
 # un recuadro oculto con claves se lee igual en "ver codigo fuente".
 CLAVES_DEMO="medico2026\|enfermeria2026\|admin2026\|fundacion2026\|laboratorio2026\|farmacia2026"
 grep -rqi "$CLAVES_DEMO" --exclude-dir=node_modules \
      --include="*.js" --include="*.py" --include="*.json" --include="*.sql" --include="*.sh" \
-     --include="*.html" --include="*.css" --include="*.conf" \
-     ms-gateway ms-vigia ms-pastillero ms-caja ms-consultas estacion-web sql docker-compose.yml 2>/dev/null \
+     --include="*.html" --include="*.css" --include="*.conf" --include="*.yml" --include="Caddyfile" \
+     ms-gateway ms-vigia ms-pastillero ms-caja ms-consultas estacion-web sql despliegue \
+     docker-compose.yml docker-compose.produccion.yml 2>/dev/null \
   && rojo "hay claves de demostracion en texto plano en el codigo" \
   || verde "no hay claves de demostracion en texto plano en el codigo"
 # Las cuentas viven en asilo_acceso. Un usuarios.json que reapareciera seria
@@ -333,6 +337,29 @@ grep -q "DECIMAL(10,2)" sql/04-esquema-caja.sql 2>/dev/null \
 grep -qE '^[[:space:]]*-[[:space:]]*"?3306:' docker-compose.yml 2>/dev/null \
   && rojo "el puerto 3306 de MySQL esta publicado al host" \
   || verde "MySQL no publica el puerto 3306 al host"
+# La capa de produccion: en el servidor solo Caddy da a Internet. El 8080 y
+# el 8090 se publican en 127.0.0.1 para que estos guiones corran dentro del
+# servidor; en todas las interfaces se saltarian el HTTPS. Se lee lo que
+# Compose resuelve y no el texto: un "!override" que faltara sumaria los
+# puertos del compose principal en vez de reemplazarlos.
+if [ -f docker-compose.produccion.yml ]; then
+  PUERTOS_PROD=$(DOMINIO=verificar.invalid docker compose -f docker-compose.yml \
+                   -f docker-compose.produccion.yml config --format json 2>/dev/null \
+                 | tr -d ' \n' | grep -o '{[^{}]*"published":"[0-9]*"[^{}]*}')
+  ABIERTOS=$(printf '%s\n' "$PUERTOS_PROD" | grep -v '"host_ip":"127.0.0.1"' \
+             | grep -o '"published":"[0-9]*"' | grep -o '[0-9][0-9]*' | sort -n | paste -sd' ')
+  EN_LOCAL=$(printf '%s\n' "$PUERTOS_PROD" | grep '"host_ip":"127.0.0.1"' \
+             | grep -o '"published":"[0-9]*"' | grep -o '[0-9][0-9]*' | sort -n | paste -sd' ')
+  [ "$ABIERTOS" = "80 443" ] && [ "$EN_LOCAL" = "8080 8090" ] \
+    && verde "en produccion solo 80 y 443 dan a Internet; 8080 y 8090 quedan en 127.0.0.1" \
+    || rojo "en produccion dan a Internet [$ABIERTOS] y van a 127.0.0.1 [$EN_LOCAL]"
+  grep -qE '^[[:space:]]*-[[:space:]]*"?[0-9.:]*3306:' docker-compose.produccion.yml \
+    && rojo "docker-compose.produccion.yml publica el puerto 3306" \
+    || verde "docker-compose.produccion.yml no publica el puerto 3306"
+else
+  rojo "falta docker-compose.produccion.yml"
+  rojo "no se pueden revisar los puertos de produccion"
+fi
 grep -q "PyJWT" ms-caja/requirements.txt 2>/dev/null \
   && verde "PyJWT en los requirements" || rojo "falta PyJWT en los requirements"
 
