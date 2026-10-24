@@ -696,6 +696,17 @@ INDICACION_ID=$(printf '%s' "$INDICACION" | campo id)
 comprobar "7. el medico receta una alternativa y ms-vigia la aprueba" "si" \
   "$([ -n "$INDICACION_ID" ] && echo si || echo no)"
 detalle "$INDICACION_ID · ms-vigia dictamino $(printf '%s' "$INDICACION" | campo veredictoVigia) con folio $(printf '%s' "$INDICACION" | campo folioValidacion)"
+# La receta guarda el folio de su dictamen: se lee de vuelta de la base, en
+# la visita y en la ficha medica completa, y es el de un dictamen que existe.
+FOLIO_RECETA=$(printf '%s' "$INDICACION" | campo folioValidacion)
+comprobar "7. la receta trae el folio de su dictamen" "si" \
+  "$(printf '%s' "$FOLIO_RECETA" | grep -qE '^FV-[0-9]{4}-' && echo si || echo no)"
+comprobar "7. la visita lo devuelve guardado" "1" \
+  "$(cuerpo GET "$GATEWAY/consultas/api/v1/visitas/$VISITA_ID" "$TOKEN_MEDICO" | grep -o "\"folioValidacion\": *\"$FOLIO_RECETA\"" | wc -l | tr -d ' ')"
+comprobar "7. la ficha medica completa tambien" "1" \
+  "$(cuerpo GET "$GATEWAY/consultas/api/v1/reportes/ficha?pacienteId=ASL-014" "$TOKEN_MEDICO" | grep -o "\"folioValidacion\": *\"$FOLIO_RECETA\"" | wc -l | tr -d ' ')"
+comprobar "7. el folio es de un dictamen de ms-vigia" "200" \
+  "$(codigo GET "$GATEWAY/vigia/api/v1/validaciones/$FOLIO_RECETA" "$TOKEN_MEDICO")"
 
 # --- 8. Farmacia entrega --------------------------------------------------
 ENTREGA=$(cuerpo PUT "$GATEWAY/consultas/api/v1/indicaciones/$INDICACION_ID/entregar" "$TOKEN_FARMACIA" '{

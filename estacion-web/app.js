@@ -2581,7 +2581,7 @@ function bloqueIndicaciones(indicaciones) {
     const pauta = document.createElement("p");
     pauta.className = "visita__pauta";
     pauta.textContent = i.dosisMg + " mg cada " + i.cadaHoras + " h · " +
-      i.duracionDias + " días";
+      i.duracionDias + " días" + (i.folioValidacion ? " · folio " + i.folioValidacion : "");
     izq.append(nombre, pauta);
     li.append(izq, marbeteEstado(
       i.entregado ? "RESULTADO_LISTO" : "SOLICITADO",

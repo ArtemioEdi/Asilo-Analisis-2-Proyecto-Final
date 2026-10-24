@@ -140,6 +140,10 @@ CREATE TABLE IF NOT EXISTS indicaciones (
     entregado_en     DATETIME      NULL,
     entregado_por    VARCHAR(120),
     cargo_id         VARCHAR(16)   NULL,
+    -- Folio del dictamen de ms-vigia que autorizo esta receta, como en
+    -- planes. No es clave foranea: vive en la base de otro servicio. NULL
+    -- solo en la receta sembrada, que no paso por ms-vigia.
+    folio_validacion VARCHAR(24)   NULL,
 
     CONSTRAINT pk_indicaciones PRIMARY KEY (id),
     CONSTRAINT fk_indicaciones_visita FOREIGN KEY (visita_id)

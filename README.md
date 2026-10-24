@@ -694,7 +694,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **341**, en 28 bloques | **118**, en 21 bloques |
+| **Comprobaciones** | **345**, en 28 bloques | **118**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -973,7 +973,7 @@ transacción entre cuatro bases sin ganar nada.
 | POST | `/api/v1/visitas/{id}/examenes` | **Indica un examen** y lo cobra en `ms-caja` | `MEDICO` |
 | GET | `/api/v1/examenes` | Exámenes, filtrables por `pacienteId` y `estado` | `MEDICO`, `ENFERMERIA`, `LABORATORIO` |
 | PUT | `/api/v1/examenes/{id}/resultado` | **Carga el resultado** | `LABORATORIO` |
-| POST | `/api/v1/visitas/{id}/indicaciones` | **Receta**, previo dictamen de `ms-vigia` | `MEDICO` |
+| POST | `/api/v1/visitas/{id}/indicaciones` | **Receta**, previo dictamen de `ms-vigia`, y guarda el folio de ese dictamen (`folioValidacion`, también en la ficha médica completa) | `MEDICO` |
 | PUT | `/api/v1/indicaciones/{id}/entregar` | **Entrega** y lo cobra en `ms-caja` | `FARMACIA` |
 | GET | `/api/v1/reportes/examenes` | Exámenes de un interno, con cuántos siguen pendientes | `MEDICO`, `ENFERMERIA`, `LABORATORIO` |
 | GET | `/api/v1/reportes/ficha` | **Ficha médica completa**: psicopatologías, alergias e historial | `MEDICO`, `ENFERMERIA` |

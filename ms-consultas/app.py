@@ -615,6 +615,9 @@ def indicacion_json(fila):
         "entregadoEn": iso(fila["entregado_en"]),
         "entregadoPor": fila["entregado_por"],
         "cargoId": fila["cargo_id"],
+        # Con que dictamen de ms-vigia se receto: lo que permite auditar
+        # despues por que se aprobo.
+        "folioValidacion": fila["folio_validacion"],
     }
 
 
@@ -1164,11 +1167,11 @@ def recetar(visita_id):
         ejecutar(
             """INSERT INTO indicaciones
                    (id, visita_id, principio_activo, nombre, dosis_mg, cada_horas,
-                    duracion_dias, como_tomarlo, entregado)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,FALSE)""",
+                    duracion_dias, como_tomarlo, entregado, folio_validacion)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,FALSE,%s)""",
             (indicacion_id, visita_id, principio,
              cuerpo.get("nombre") or dictamen["propuesta"].get("nombre") or principio.capitalize(),
-             dosis, cada, dias, cuerpo.get("comoTomarlo")),
+             dosis, cada, dias, cuerpo.get("comoTomarlo"), dictamen["folio"]),
         )
         bd.commit()
     except Exception:
@@ -1177,7 +1180,6 @@ def recetar(visita_id):
 
     salida = indicacion_json(
         consultar_uno("SELECT * FROM indicaciones WHERE id = %s", (indicacion_id,)))
-    salida["folioValidacion"] = dictamen["folio"]
     salida["veredictoVigia"] = dictamen["veredicto"]
     salida["hallazgos"] = dictamen["hallazgos"]
     return jsonify(salida), 201
