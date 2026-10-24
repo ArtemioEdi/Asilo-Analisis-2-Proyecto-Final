@@ -218,6 +218,23 @@ def toma_json(fila, plan=None):
                          if fila["registrado_en"] else None),
     }
 
+def diferencias_con_dictamen(propuesta, principio, dosis, cada):
+    """Lo que el plan pide distinto de lo que ms-vigia dictamino.
+
+    El principio activo se compara siempre. La dosis y la frecuencia, si el
+    dictamen las guarda, redondeadas a dos decimales como se guardan en la
+    base.
+    """
+    distinto = []
+    if str(propuesta.get("principioActivo") or "").strip().lower() != str(principio).strip().lower():
+        distinto.append("otro medicamento")
+    if propuesta.get("dosisMg") is not None and round(float(propuesta["dosisMg"]), 2) != round(dosis, 2):
+        distinto.append("otra dosis")
+    if propuesta.get("cadaHoras") is not None and round(float(propuesta["cadaHoras"]), 2) != round(cada, 2):
+        distinto.append("otra frecuencia")
+    return distinto
+
+
 def consultar_dictamen(folio):
     """Devuelve (dictamen, error). Nunca lanza excepcion hacia el endpoint.
 
@@ -636,23 +653,45 @@ def crear_plan():
             errores.append("dias debe estar entre 1 y 90.")
     except (TypeError, ValueError):
         errores.append("dias debe ser numerico.")
+    # Sin folio no hay plan. Antes era opcional: un POST sin folioValidacion
+    # programaba el tratamiento sin que ms-vigia lo viera nunca, y la
+    # farmacovigilancia quedaba como un paso de la pantalla que se podia
+    # saltar llamando a la API (P05 del SQA).
+    folio = cuerpo.get("folioValidacion")
+    if not folio:
+        errores.append("Falta folioValidacion: el plan necesita el dictamen de MS-VIGIA.")
     if errores:
         return jsonify({"error": "Peticion invalida", "detalles": errores}), 400
 
-    folio = cuerpo.get("folioValidacion")
-    dictamen = None
-    if folio:
-        dictamen, problema = consultar_dictamen(folio)
-        if problema:
-            return jsonify({"error": problema}), 422
-        if dictamen["pacienteId"] != cuerpo["pacienteId"]:
-            return jsonify({"error": "El folio %s pertenece a otro paciente." % folio}), 409
-        if dictamen["veredicto"] == "BLOQUEADO":
-            return jsonify({
-                "error": "MS-VIGIA bloqueo esta prescripcion. No se programa el pastillero.",
-                "folio": folio,
-                "hallazgos": dictamen["hallazgos"],
-            }), 409
+    dictamen, problema = consultar_dictamen(folio)
+    if problema:
+        return jsonify({"error": problema}), 422
+    if dictamen["pacienteId"] != cuerpo["pacienteId"]:
+        return jsonify({"error": "El folio %s pertenece a otro paciente." % folio}), 409
+    if dictamen["veredicto"] == "BLOQUEADO":
+        return jsonify({
+            "error": "MS-VIGIA bloqueo esta prescripcion. No se programa el pastillero.",
+            "folio": folio,
+            "hallazgos": dictamen["hallazgos"],
+        }), 409
+    # El folio autoriza un tratamiento, no un interno: lo que se programa
+    # tiene que ser lo que ms-vigia dictamino. Si no, un folio APROBADO de
+    # paracetamol serviria para programar warfarina al mismo interno. El
+    # dictamen guarda la propuesta completa; ADVERTENCIA se sigue
+    # permitiendo, como siempre.
+    distinto = diferencias_con_dictamen(dictamen.get("propuesta") or {},
+                                        cuerpo["principioActivo"], dosis, cada)
+    if distinto:
+        return jsonify({
+            "error": "El folio %s no corresponde a este tratamiento: MS-VIGIA dictamino %s."
+                     % (folio, " y ".join(distinto)),
+            "folio": folio,
+        }), 409
+    # Un folio, un plan. El indice unico de planes.folio_validacion lo
+    # sostiene tambien cuando dos peticiones llegan a la vez.
+    if consultar_uno("SELECT id FROM planes WHERE folio_validacion = %s", (folio,)):
+        return jsonify({"error": "El folio %s ya se uso para otro plan. Valide de nuevo." % folio,
+                        "folio": folio}), 409
 
     inicio_txt = cuerpo.get("inicio")
     try:
@@ -679,6 +718,13 @@ def crear_plan():
         )
         tomas = generar_tomas(plan_id, cuerpo["pacienteId"], inicio, cada, dias)
         bd.commit()
+    except pymysql.err.IntegrityError as error:
+        bd.rollback()
+        # 1062: otra peticion uso el mismo folio entre la consulta y el INSERT.
+        if error.args and error.args[0] == 1062:
+            return jsonify({"error": "El folio %s ya se uso para otro plan. Valide de nuevo." % folio,
+                            "folio": folio}), 409
+        raise
     except Exception:
         bd.rollback()
         raise
@@ -691,7 +737,7 @@ def crear_plan():
         "cadaHoras": cada,
         "dias": dias,
         "folioValidacion": folio,
-        "veredictoVigia": dictamen["veredicto"] if dictamen else "SIN_VALIDACION",
+        "veredictoVigia": dictamen["veredicto"],
         "tomasProgramadas": len(tomas),
         "primeraToma": tomas[0]["programadoPara"],
         "ultimaToma": tomas[-1]["programadoPara"],

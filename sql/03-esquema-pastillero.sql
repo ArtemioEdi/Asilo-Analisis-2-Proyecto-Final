@@ -108,6 +108,9 @@ CREATE TABLE IF NOT EXISTS planes (
     CONSTRAINT ck_planes_dosis CHECK (dosis_mg > 0),
     CONSTRAINT ck_planes_cada_horas CHECK (cada_horas BETWEEN 1 AND 72),
     CONSTRAINT ck_planes_dias CHECK (dias BETWEEN 1 AND 90),
+    -- Un folio autoriza un solo plan. Los planes sembrados no tienen folio
+    -- (NULL), y en MySQL los NULL no chocan entre si.
+    CONSTRAINT uq_planes_folio UNIQUE (folio_validacion),
 
     INDEX idx_planes_paciente (paciente_id, estado)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

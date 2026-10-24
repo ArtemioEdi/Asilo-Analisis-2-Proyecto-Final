@@ -879,7 +879,7 @@ devuelve `404`.
 | PUT | `/api/v1/internos/{id}/egreso` | **Egresa al interno**: sale del padrón activo, sus planes quedan `FINALIZADO` y sus tomas futuras `OMITIDA`, en una sola transacción (rol `ADMINISTRADOR`) |
 | GET | `/api/v1/pacientes` | Internos con tratamiento activo |
 | GET | `/api/v1/pacientes/{id}/medicacion-activa` | Lo que ya recibe el interno |
-| POST | `/api/v1/planes` | **Programa un tratamiento** y genera las tomas (rol `MEDICO`/`ENFERMERIA`) |
+| POST | `/api/v1/planes` | **Programa un tratamiento** y genera las tomas (rol `MEDICO`/`ENFERMERIA`). Exige `folioValidacion`: un dictamen de ms-vigia del mismo interno, que no sea BLOQUEADO, del mismo medicamento, dosis y frecuencia, y que no se haya usado en otro plan (400 sin folio, 409 si no corresponde o ya se usó) |
 | GET | `/api/v1/planes/{id}` | Plan con todas sus tomas |
 | POST | `/api/v1/planes/{id}/suspender` | Suspende el plan y anula las tomas futuras |
 | GET | `/api/v1/pacientes/{id}/tomas?fecha=&turno=` | Hoja de trabajo del turno |

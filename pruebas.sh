@@ -443,15 +443,49 @@ comprobar "ms-vigia no bloquea el paracetamol" "no" \
   "$([ "$(printf '%s' "$APROBADO" | campo veredicto)" = "BLOQUEADO" ] && echo si || echo no)"
 detalle "folio $FOLIO_APROBADO · veredicto $(printf '%s' "$APROBADO" | campo veredicto)"
 
-PLAN=$(cuerpo POST "$GATEWAY/pastillero/api/v1/planes" "$TOKEN_MEDICO" "{
-  \"pacienteId\":\"ASL-022\",\"pacienteNombre\":\"Bernardo Puac Ixcoy\",
+# El folio es obligatorio, tiene que ser del mismo tratamiento y sirve una
+# sola vez (P05 del SQA). Cada rechazo se comprueba tambien en la base: que
+# el interno no haya ganado un plan.
+planes_activos_de() {
+  local json i id
+  json=$(cuerpo GET "$GATEWAY/pastillero/api/v1/pacientes" "$TOKEN_MEDICO")
+  for i in 0 1 2 3 4 5 6 7 8 9; do
+    id=$(printf '%s' "$json" | campo "pacientes.$i.pacienteId")
+    [ -z "$id" ] && break
+    if [ "$id" = "$1" ]; then printf '%s' "$json" | campo "pacientes.$i.planesActivos"; return; fi
+  done
+  echo 0
+}
+PLAN_PARACETAMOL="\"pacienteId\":\"ASL-022\",\"pacienteNombre\":\"Bernardo Puac Ixcoy\",
   \"principioActivo\":\"paracetamol\",\"farmaco\":\"Paracetamol\",
-  \"dosisMg\":500,\"cadaHoras\":8,\"dias\":3,\"via\":\"oral\",
-  \"indicacion\":\"Dolor lumbar\",\"folioValidacion\":\"$FOLIO_APROBADO\"}")
+  \"dosisMg\":500,\"cadaHoras\":8,\"dias\":3,\"via\":\"oral\",\"indicacion\":\"Dolor lumbar\""
+PLANES_ANTES=$(planes_activos_de ASL-022)
 
+comprobar "sin folio de validacion no se programa (400)" "400" \
+  "$(codigo POST "$GATEWAY/pastillero/api/v1/planes" "$TOKEN_MEDICO" "{$PLAN_PARACETAMOL}")"
+comprobar "  y el interno no gano ningun plan" "$PLANES_ANTES" "$(planes_activos_de ASL-022)"
+
+comprobar "el folio del paracetamol no sirve para programar omeprazol (409)" "409" \
+  "$(codigo POST "$GATEWAY/pastillero/api/v1/planes" "$TOKEN_MEDICO" \
+     "{\"pacienteId\":\"ASL-022\",\"principioActivo\":\"omeprazol\",\"farmaco\":\"Omeprazol\",
+       \"dosisMg\":500,\"cadaHoras\":8,\"dias\":3,\"folioValidacion\":\"$FOLIO_APROBADO\"}")"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo error)"
+comprobar "  y el interno no gano ningun plan" "$PLANES_ANTES" "$(planes_activos_de ASL-022)"
+
+comprobar "con el folio de este tratamiento, ms-pastillero programa el plan (201)" "201" \
+  "$(codigo POST "$GATEWAY/pastillero/api/v1/planes" "$TOKEN_MEDICO" \
+     "{$PLAN_PARACETAMOL,\"folioValidacion\":\"$FOLIO_APROBADO\"}")"
+PLAN=$(cat "$TEMPORAL/respuesta.json")
 PLAN_ID=$(printf '%s' "$PLAN" | campo planId)
 comprobar "ms-pastillero programa el plan" "si" \
   "$([ -n "$PLAN_ID" ] && echo si || echo no)"
+PLANES_CON_UNO=$(planes_activos_de ASL-022)
+
+comprobar "el mismo folio no sirve para un segundo plan (409)" "409" \
+  "$(codigo POST "$GATEWAY/pastillero/api/v1/planes" "$TOKEN_MEDICO" \
+     "{$PLAN_PARACETAMOL,\"folioValidacion\":\"$FOLIO_APROBADO\"}")"
+detalle "$(cat "$TEMPORAL/respuesta.json" | campo error)"
+comprobar "  y el interno no gano un plan repetido" "$PLANES_CON_UNO" "$(planes_activos_de ASL-022)"
 detalle "plan $PLAN_ID · $(printf '%s' "$PLAN" | campo tomasProgramadas) tomas · primera $(printf '%s' "$PLAN" | campo primeraToma)"
 
 # ---------------------------------------------------------------------------
