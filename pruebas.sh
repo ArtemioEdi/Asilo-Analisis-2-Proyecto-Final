@@ -1403,6 +1403,116 @@ comprobar "medico NO registra pagos a la fundación (403)" "403" \
   "$(codigo POST "$FUNDACION/pagos" "$TOKEN_MEDICO" "{\"monto\":\"1.00\",\"referencia\":\"$REFERENCIA_PF-D\"}")"
 codigo POST "$GATEWAY/caja/api/v1/cargos/$CARGO_PF/pagar" "$TOKEN_ADMINISTRACION" '{"monto":20}' >/dev/null
 
+# ---------------------------------------------------------------------------
+titulo "28. Entradas con el tipo o el largo equivocado: 400, nunca 500"
+# ---------------------------------------------------------------------------
+# P02, P03, P06 y P07 del SQA. Cada endpoint que escribe recibe un numero
+# donde va texto, un texto de un caracter mas que su columna en sql/ y NaN
+# donde va un numero. Las columnas TEXT miden 65535 bytes: se manda uno mas.
+# El cuerpo viaja en un archivo porque 64 KB no caben en la linea de
+# comandos de Git Bash.
+largo() { printf '%*s' "$1" '' | tr ' ' x; }
+mal_formado() { # mal_formado <descripcion> <metodo> <ruta> <token> <cuerpo>
+  printf '%s' "$5" > "$TEMPORAL/entrada.json"
+  comprobar "$1 (400)" "400" "$(curl -s -o "$TEMPORAL/respuesta.json" -w "%{http_code}" -X "$2" \
+    "$GATEWAY$3" -H "Authorization: Bearer $4" -H "Content-Type: application/json" \
+    --data-binary @"$TEMPORAL/entrada.json")"
+}
+TEXTO_LARGO=$(largo 65536)
+PROPUESTA='"propuesta":{"principioActivo":"paracetamol","dosisMg":500,"cadaHoras":8}'
+
+# ms-vigia
+mal_formado "vigia: pacienteId numerico" POST /vigia/api/v1/validaciones "$TOKEN_MEDICO" "{\"pacienteId\":14,$PROPUESTA}"
+mal_formado "vigia: pacienteId de 17" POST /vigia/api/v1/validaciones "$TOKEN_MEDICO" "{\"pacienteId\":\"$(largo 17)\",$PROPUESTA}"
+mal_formado "vigia: dosisMg NaN" POST /vigia/api/v1/validaciones "$TOKEN_MEDICO" \
+  '{"pacienteId":"ASL-014","propuesta":{"principioActivo":"paracetamol","dosisMg":NaN,"cadaHoras":8}}'
+
+# ms-pastillero
+mal_formado "planes: indicacion numerica" POST /pastillero/api/v1/planes "$TOKEN_MEDICO" "{$PLAN_PARACETAMOL,\"indicacion\":5}"
+mal_formado "planes: indicacion de 256" POST /pastillero/api/v1/planes "$TOKEN_MEDICO" \
+  "{\"pacienteId\":\"ASL-022\",\"principioActivo\":\"paracetamol\",\"dosisMg\":500,\"cadaHoras\":8,\"indicacion\":\"$(largo 256)\"}"
+mal_formado "planes: dosisMg NaN" POST /pastillero/api/v1/planes "$TOKEN_MEDICO" \
+  '{"pacienteId":"ASL-022","principioActivo":"paracetamol","dosisMg":NaN,"cadaHoras":8,"folioValidacion":"FV-X"}'
+mal_formado "planes: cadaHoras Infinity" POST /pastillero/api/v1/planes "$TOKEN_MEDICO" \
+  '{"pacienteId":"ASL-022","principioActivo":"paracetamol","dosisMg":500,"cadaHoras":Infinity,"folioValidacion":"FV-X"}'
+mal_formado "suspender: motivo numerico" POST /pastillero/api/v1/planes/PL-NOEXISTE/suspender "$TOKEN_MEDICO" '{"motivo":5}'
+mal_formado "suspender: motivo de 239" POST /pastillero/api/v1/planes/PL-NOEXISTE/suspender "$TOKEN_MEDICO" "{\"motivo\":\"$(largo 239)\"}"
+mal_formado "administrar: observacion numerica" POST /pastillero/api/v1/tomas/TM-NOEXISTE/administrar "$TOKEN_ENFERMERIA" '{"observacion":5}'
+mal_formado "administrar: observacion de 256" POST /pastillero/api/v1/tomas/TM-NOEXISTE/administrar "$TOKEN_ENFERMERIA" "{\"observacion\":\"$(largo 256)\"}"
+mal_formado "omitir: motivo como lista" POST /pastillero/api/v1/tomas/TM-NOEXISTE/omitir "$TOKEN_ENFERMERIA" '{"motivo":["a"]}'
+mal_formado "omitir: motivo de 256" POST /pastillero/api/v1/tomas/TM-NOEXISTE/omitir "$TOKEN_ENFERMERIA" "{\"motivo\":\"$(largo 256)\"}"
+mal_formado "alta de interno: nombre numerico" POST /pastillero/api/v1/internos "$TOKEN_ADMINISTRADOR" \
+  '{"nombre":5,"documento":"9999","fechaNacimiento":"1940-01-01","sexo":"OTRO"}'
+mal_formado "alta de interno: nombre de 121" POST /pastillero/api/v1/internos "$TOKEN_ADMINISTRADOR" \
+  "{\"nombre\":\"$(largo 121)\",\"documento\":\"9999\",\"fechaNacimiento\":\"1940-01-01\",\"sexo\":\"OTRO\"}"
+mal_formado "datos del interno: pabellon como objeto" PUT /pastillero/api/v1/internos/ASL-014 "$TOKEN_ADMINISTRADOR" \
+  '{"nombre":"Rosalia Menchu Coy","pabellon":{"a":1}}'
+mal_formado "datos del interno: pabellon de 61" PUT /pastillero/api/v1/internos/ASL-014 "$TOKEN_ADMINISTRADOR" \
+  "{\"nombre\":\"Rosalia Menchu Coy\",\"pabellon\":\"$(largo 61)\"}"
+mal_formado "clinica: alergia numerica" PUT /pastillero/api/v1/internos/ASL-014/clinica "$TOKEN_MEDICO" '{"alergias":[5]}'
+mal_formado "clinica: dosis permanente NaN" PUT /pastillero/api/v1/internos/ASL-014/clinica "$TOKEN_MEDICO" \
+  '{"medicacionPermanente":[{"principioActivo":"paracetamol","dosisMg":NaN}]}'
+mal_formado "egreso: motivo numerico" PUT /pastillero/api/v1/internos/ASL-014/egreso "$TOKEN_ADMINISTRADOR" '{"fecha":"2026-01-01","motivo":5}'
+mal_formado "egreso: motivo de 65536 bytes" PUT /pastillero/api/v1/internos/ASL-014/egreso "$TOKEN_ADMINISTRADOR" \
+  "{\"fecha\":\"2026-01-01\",\"motivo\":\"$TEXTO_LARGO\"}"
+mal_formado "cuerpo que no es un objeto" POST /pastillero/api/v1/planes "$TOKEN_MEDICO" '[1,2,3]'
+
+# ms-caja. El cargo de prueba existe para que el pago llegue a leer el monto.
+CARGO_MAL=$(cuerpo POST "$GATEWAY/caja/api/v1/cargos" "$TOKEN_ADMINISTRACION" \
+  '{"pacienteId":"ASL-022","categoria":"OTRO","concepto":"prueba de entradas","montoBruto":10,"descuentoPct":0}' | campo id)
+mal_formado "cargo: concepto numerico" POST /caja/api/v1/cargos "$TOKEN_ADMINISTRACION" \
+  '{"pacienteId":"ASL-022","categoria":"OTRO","concepto":5,"montoBruto":10}'
+mal_formado "cargo: concepto de 161" POST /caja/api/v1/cargos "$TOKEN_ADMINISTRACION" \
+  "{\"pacienteId\":\"ASL-022\",\"categoria\":\"OTRO\",\"concepto\":\"$(largo 161)\",\"montoBruto\":10}"
+mal_formado "cargo: montoBruto NaN" POST /caja/api/v1/cargos "$TOKEN_ADMINISTRACION" \
+  '{"pacienteId":"ASL-022","categoria":"OTRO","concepto":"x","montoBruto":NaN}'
+mal_formado "cargo: montoBruto que no cabe en DECIMAL(10,2)" POST /caja/api/v1/cargos "$TOKEN_ADMINISTRACION" \
+  '{"pacienteId":"ASL-022","categoria":"OTRO","concepto":"x","montoBruto":1e12}'
+mal_formado "pago: metodo numerico" POST "/caja/api/v1/cargos/$CARGO_MAL/pagar" "$TOKEN_ADMINISTRACION" '{"monto":1,"metodo":5}'
+mal_formado "pago: metodo de 25" POST "/caja/api/v1/cargos/$CARGO_MAL/pagar" "$TOKEN_ADMINISTRACION" "{\"monto\":1,\"metodo\":\"$(largo 25)\"}"
+mal_formado "pago: monto NaN" POST "/caja/api/v1/cargos/$CARGO_MAL/pagar" "$TOKEN_ADMINISTRACION" '{"monto":NaN}'
+mal_formado "donacion: donante numerico" POST /caja/api/v1/donaciones "$TOKEN_ADMINISTRACION" '{"donante":5,"tipo":"PARTICULAR","monto":10}'
+mal_formado "donacion: donante de 161" POST /caja/api/v1/donaciones "$TOKEN_ADMINISTRACION" \
+  "{\"donante\":\"$(largo 161)\",\"tipo\":\"PARTICULAR\",\"monto\":10}"
+mal_formado "donacion: monto NaN" POST /caja/api/v1/donaciones "$TOKEN_ADMINISTRACION" '{"donante":"x","tipo":"PARTICULAR","monto":NaN}'
+mal_formado "donacion: monto que no cabe en DECIMAL(10,2)" POST /caja/api/v1/donaciones "$TOKEN_ADMINISTRACION" \
+  '{"donante":"x","tipo":"PARTICULAR","monto":1e12}'
+mal_formado "gasto: concepto numerico" POST /caja/api/v1/gastos "$TOKEN_ADMINISTRACION" '{"concepto":5,"monto":10}'
+mal_formado "gasto: concepto de 161" POST /caja/api/v1/gastos "$TOKEN_ADMINISTRACION" "{\"concepto\":\"$(largo 161)\",\"monto\":10}"
+mal_formado "gasto: monto Infinity" POST /caja/api/v1/gastos "$TOKEN_ADMINISTRACION" '{"concepto":"x","monto":Infinity}'
+mal_formado "pago a la fundacion: referencia numerica" POST /caja/api/v1/fundacion/pagos "$TOKEN_ADMINISTRACION" '{"monto":"1.00","referencia":12345}'
+mal_formado "pago a la fundacion: referencia de 161" POST /caja/api/v1/fundacion/pagos "$TOKEN_ADMINISTRACION" \
+  "{\"monto\":\"1.00\",\"referencia\":\"$(largo 161)\"}"
+mal_formado "pago a la fundacion: monto NaN" POST /caja/api/v1/fundacion/pagos "$TOKEN_ADMINISTRACION" '{"monto":NaN,"referencia":"abc"}'
+mal_formado "cuotas: mes numerico" POST /caja/api/v1/cuotas/generar "$TOKEN_ADMINISTRACION" '{"mes":202610}'
+codigo POST "$GATEWAY/caja/api/v1/cargos/$CARGO_MAL/pagar" "$TOKEN_ADMINISTRACION" '{"monto":10}' >/dev/null
+
+# ms-consultas
+mal_formado "solicitud: motivo numerico" POST /consultas/api/v1/solicitudes "$TOKEN_MEDICO" '{"pacienteId":"ASL-014","motivo":5}'
+mal_formado "solicitud: especialidad de 81" POST /consultas/api/v1/solicitudes "$TOKEN_MEDICO" \
+  "{\"pacienteId\":\"ASL-014\",\"motivo\":\"x\",\"especialidadSolicitada\":\"$(largo 81)\"}"
+mal_formado "agendar: medico numerico" PUT "/consultas/api/v1/solicitudes/$SOLICITUD_ID/agendar" "$TOKEN_FUNDACION" \
+  '{"medicoAsignado":5,"especialidadAsignada":"x","agendadaPara":"2026-12-01T10:00"}'
+mal_formado "agendar: medico de 121" PUT "/consultas/api/v1/solicitudes/$SOLICITUD_ID/agendar" "$TOKEN_FUNDACION" \
+  "{\"medicoAsignado\":\"$(largo 121)\",\"especialidadAsignada\":\"x\",\"agendadaPara\":\"2026-12-01T10:00\"}"
+mal_formado "visita: solicitudId numerico" POST /consultas/api/v1/visitas "$TOKEN_MEDICO" '{"solicitudId":5}'
+mal_formado "visita: solicitudId de 25" POST /consultas/api/v1/visitas "$TOKEN_MEDICO" "{\"solicitudId\":\"$(largo 25)\"}"
+mal_formado "ficha de la visita: diagnostico numerico" PUT "/consultas/api/v1/visitas/$VISITA_ID" "$TOKEN_MEDICO" '{"diagnostico":5}'
+mal_formado "ficha de la visita: diagnostico de 65536 bytes" PUT "/consultas/api/v1/visitas/$VISITA_ID" "$TOKEN_MEDICO" \
+  "{\"diagnostico\":\"$TEXTO_LARGO\"}"
+mal_formado "examen: nombre numerico" POST "/consultas/api/v1/visitas/$VISITA_ID/examenes" "$TOKEN_MEDICO" '{"nombre":5}'
+mal_formado "examen: nombre de 161" POST "/consultas/api/v1/visitas/$VISITA_ID/examenes" "$TOKEN_MEDICO" "{\"nombre\":\"$(largo 161)\"}"
+mal_formado "resultado: texto numerico" PUT "/consultas/api/v1/examenes/$EXAMEN_ID/resultado" "$TOKEN_LABORATORIO" '{"resultado":5}'
+mal_formado "resultado: texto de 65536 bytes" PUT "/consultas/api/v1/examenes/$EXAMEN_ID/resultado" "$TOKEN_LABORATORIO" \
+  "{\"resultado\":\"$TEXTO_LARGO\"}"
+mal_formado "receta: principioActivo numerico" POST "/consultas/api/v1/visitas/$VISITA_ID/indicaciones" "$TOKEN_MEDICO" \
+  '{"principioActivo":5,"dosisMg":500,"cadaHoras":8}'
+mal_formado "receta: nombre de 121" POST "/consultas/api/v1/visitas/$VISITA_ID/indicaciones" "$TOKEN_MEDICO" \
+  "{\"principioActivo\":\"paracetamol\",\"nombre\":\"$(largo 121)\",\"dosisMg\":500,\"cadaHoras\":8}"
+mal_formado "receta: dosisMg NaN" POST "/consultas/api/v1/visitas/$VISITA_ID/indicaciones" "$TOKEN_MEDICO" \
+  '{"principioActivo":"paracetamol","dosisMg":NaN,"cadaHoras":8}'
+mal_formado "entrega: tarifa numerica" PUT "/consultas/api/v1/indicaciones/$INDICACION_ID/entregar" "$TOKEN_FARMACIA" '{"tarifa":5}'
+
 
 # ---------------------------------------------------------------------------
 printf "\n%s== Resultado%s\n" "$CIAN" "$FIN"

@@ -9,6 +9,8 @@ from decimal import Decimal
 import jwt
 import pymysql
 import requests
+
+from entradas import TEXTO, cuerpo_json, entero, finito, instalar, texto, textos
 from flask import Flask, g, jsonify, request
 from flask.json.provider import DefaultJSONProvider
 from pymysql.cursors import DictCursor
@@ -103,6 +105,7 @@ class ProveedorJSON(DefaultJSONProvider):
 
 
 app = Flask(__name__)
+instalar(app, "ms-pastillero")
 app.json = ProveedorJSON(app)
 app.json.ensure_ascii = False
 
@@ -630,25 +633,30 @@ def medicacion_activa(paciente_id):
 
 @app.post("/api/v1/planes")
 def crear_plan():
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    # Los largos son los de la tabla planes (sql/03). inicio no es una
+    # columna de texto: se convierte a fecha, asi que solo se revisa el tipo.
+    textos(cuerpo, {"pacienteId": 16, "pacienteNombre": 120, "principioActivo": 64,
+                    "farmaco": 120, "via": 24, "indicacion": 255,
+                    "folioValidacion": 24, "inicio": None})
     errores = []
     for campo in ("pacienteId", "principioActivo"):
         if not cuerpo.get(campo):
             errores.append("Falta %s." % campo)
     try:
-        dosis = float(cuerpo.get("dosisMg"))
+        dosis = finito(cuerpo.get("dosisMg"))
         if dosis <= 0:
             errores.append("dosisMg debe ser mayor que cero.")
     except (TypeError, ValueError):
         errores.append("dosisMg debe ser numerico.")
     try:
-        cada = float(cuerpo.get("cadaHoras"))
+        cada = finito(cuerpo.get("cadaHoras"))
         if not 1 <= cada <= 72:
             errores.append("cadaHoras debe estar entre 1 y 72.")
     except (TypeError, ValueError):
         errores.append("cadaHoras debe ser numerico.")
     try:
-        dias = int(cuerpo.get("dias", 1))
+        dias = entero(cuerpo.get("dias", 1))
         if not 1 <= dias <= 90:
             errores.append("dias debe estar entre 1 y 90.")
     except (TypeError, ValueError):
@@ -793,7 +801,9 @@ def obtener_plan(plan_id):
 
 @app.post("/api/v1/planes/<plan_id>/suspender")
 def suspender_plan(plan_id):
-    motivo = (request.get_json(silent=True) or {}).get("motivo", "sin motivo indicado")
+    # El motivo solo se guarda en tomas.observacion (255), precedido de
+    # "Plan suspendido: ".
+    motivo = texto(cuerpo_json().get("motivo"), "motivo", 255 - len("Plan suspendido: "))         or "sin motivo indicado"
     bd = conexion()
     plan = consultar_uno("SELECT * FROM planes WHERE id = %s", (plan_id,))
     if plan is None:
@@ -844,13 +854,15 @@ def tomas_paciente(paciente_id):
 
 @app.post("/api/v1/tomas/<toma_id>/administrar")
 def administrar(toma_id):
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"observacion": 255})
     return _registrar(toma_id, "ADMINISTRADA", firmante(), cuerpo.get("observacion"))
 
 
 @app.post("/api/v1/tomas/<toma_id>/omitir")
 def omitir(toma_id):
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"motivo": 255})
     motivo = cuerpo.get("motivo")
     if not motivo:
         return jsonify({"error": "Toda omision necesita un motivo registrado."}), 400
@@ -984,6 +996,11 @@ def _lista_de_textos(cuerpo, clave):
 
 def _datos_administrativos(cuerpo, para_alta):
     """Valida el bloque administrativo. Devuelve (dict, lista de errores)."""
+    # Tipo y largo de cada campo, con los largos de la tabla internos
+    # (sql/03). Las fechas se convierten, asi que solo se revisa el tipo.
+    textos(cuerpo, {"nombre": 120, "documento": 32, "fechaNacimiento": None, "sexo": 12,
+                    "ingreso": None, "motivoIngreso": TEXTO, "pabellon": 60, "cama": 60,
+                    "responsable": 120, "correoResponsable": 160})
     errores = []
     datos = {}
 
@@ -1035,7 +1052,7 @@ def _datos_administrativos(cuerpo, para_alta):
 @app.post("/api/v1/internos")
 def alta_de_interno():
     """Da de alta a un interno. Solo ADMINISTRADOR (lo exige el guardia)."""
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
     datos, errores = _datos_administrativos(cuerpo, para_alta=True)
     if errores:
         return jsonify({"error": "Peticion invalida", "detalles": errores}), 400
@@ -1098,7 +1115,7 @@ def actualizar_interno(paciente_id):
     if fila is None:
         return jsonify({"error": "No existe el interno %s." % paciente_id}), 404
 
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
     datos, errores = _datos_administrativos(cuerpo, para_alta=False)
     if errores:
         return jsonify({"error": "Peticion invalida", "detalles": errores}), 400
@@ -1184,6 +1201,11 @@ def _medicacion_permanente(cuerpo):
             errores.append("medicacionPermanente[%d] tiene que ser un objeto con "
                            "principioActivo." % i)
             continue
+        for campo in ("principioActivo", "farmaco", "via", "nota"):
+            if entrada.get(campo) is not None and not isinstance(entrada[campo], str):
+                errores.append("medicacionPermanente[%d]: %s debe ser texto." % (i, campo))
+        if errores:
+            continue
         clave = (entrada.get("principioActivo") or "").strip().lower()
         if not clave:
             errores.append("medicacionPermanente[%d]: falta principioActivo." % i)
@@ -1199,7 +1221,7 @@ def _medicacion_permanente(cuerpo):
         vistos.add(clave)
 
         item = {"principioActivo": clave}
-        for campo, tipo in (("dosisMg", float), ("cadaHoras", float)):
+        for campo, tipo in (("dosisMg", finito), ("cadaHoras", finito)):
             if entrada.get(campo) is not None:
                 try:
                     item[campo] = tipo(entrada[campo])
@@ -1227,7 +1249,7 @@ def actualizar_clinica(paciente_id):
     if fila is None:
         return jsonify({"error": "No existe el interno %s." % paciente_id}), 404
 
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
     errores = []
     valores = {}
 
@@ -1311,7 +1333,8 @@ def egresar_interno(paciente_id):
             "egreso": ficha_json(fila, False)["egreso"],
         }), 409
 
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"fecha": None, "motivo": TEXTO})
     errores = []
     fecha, error = _fecha(cuerpo, "fecha")
     if error:
@@ -1338,7 +1361,10 @@ def egresar_interno(paciente_id):
         tomas = ejecutar(
             "UPDATE tomas SET estado='OMITIDA', observacion=%s, registrado_en=%s "
             "WHERE paciente_id=%s AND estado='PENDIENTE' AND programado_para > %s",
-            ("Interno egresado: " + motivo, ahora, paciente_id, ahora))
+            # El motivo completo queda en internos.egreso_motivo; en cada
+            # toma anulada va recortado al largo de tomas.observacion (255).
+            # Sin el recorte, un motivo largo hacia fallar el egreso entero.
+            (("Interno egresado: " + motivo)[:255], ahora, paciente_id, ahora))
         bd.commit()
     except Exception:
         bd.rollback()

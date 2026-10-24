@@ -13,6 +13,7 @@ from flask.json.provider import DefaultJSONProvider
 from pymysql.cursors import DictCursor
 
 import vademecum as vd
+from entradas import cuerpo_json, finito, instalar, textos
 
 APP_NOMBRE = "ms-vigia"
 APP_VERSION = "2.0.0"
@@ -76,6 +77,7 @@ class ProveedorJSON(DefaultJSONProvider):
 
 
 app = Flask(__name__)
+instalar(app, "ms-vigia")
 app.json = ProveedorJSON(app)
 app.json.ensure_ascii = False
 
@@ -331,6 +333,9 @@ def validar_peticion(cuerpo):
     if not isinstance(cuerpo, dict):
         return ["El cuerpo de la peticion debe ser un objeto JSON."]
 
+    # Tipo y largo, con los de la tabla validaciones (sql/02). La via no
+    # tiene columna propia: viaja dentro del dictamen JSON.
+    textos(cuerpo, {"pacienteId": 16})
     if not cuerpo.get("pacienteId"):
         errores.append("Falta pacienteId.")
 
@@ -338,20 +343,21 @@ def validar_peticion(cuerpo):
     if not isinstance(prop, dict):
         errores.append("Falta el objeto propuesta.")
         return errores
+    textos(prop, {"principioActivo": 64, "viaAdministracion": None})
 
     clave = (prop.get("principioActivo") or "").strip().lower()
     if clave not in vd.FARMACOS:
         errores.append("El principio activo '%s' no existe en el vademecum de la fundacion." % clave)
 
     try:
-        dosis = float(prop.get("dosisMg"))
+        dosis = finito(prop.get("dosisMg"))
         if dosis <= 0:
             errores.append("dosisMg debe ser mayor que cero.")
     except (TypeError, ValueError):
         errores.append("dosisMg debe ser numerico.")
 
     try:
-        cada = float(prop.get("cadaHoras"))
+        cada = finito(prop.get("cadaHoras"))
         if cada <= 0 or cada > 72:
             errores.append("cadaHoras debe estar entre 1 y 72.")
     except (TypeError, ValueError):
@@ -434,7 +440,7 @@ def listar_vademecum():
 
 @app.post("/api/v1/validaciones")
 def crear_validacion():
-    cuerpo = request.get_json(silent=True)
+    cuerpo = cuerpo_json()
     errores = validar_peticion(cuerpo)
     if errores:
         return jsonify({"error": "Peticion invalida", "detalles": errores}), 400

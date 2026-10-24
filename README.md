@@ -660,7 +660,7 @@ encadenarlos. Los dos necesitan el stack levantado.
 | | `pruebas.sh` | `verificar.sh` |
 |---|---|---|
 | **Qué es** | Prueba de humo **funcional** | Revisión de **seguridad, base de datos y repositorio** |
-| **Comprobaciones** | **278**, en 27 bloques | **117**, en 21 bloques |
+| **Comprobaciones** | **341**, en 28 bloques | **117**, en 21 bloques |
 | **Punto de vista** | Recorre el sistema como lo haría una persona, siempre a través del gateway | Mira el sistema desde afuera y desde el código fuente |
 | **Requisitos** | `curl` y `python3` **o** `node` (usa el que encuentre); el bloque 23 corre en el `node` de `ms-gateway` con `docker compose exec`, o en el del equipo si no hay `docker` | `curl` y `docker` (consulta MySQL con `docker compose exec`) |
 
@@ -683,7 +683,9 @@ simultáneas generen diez folios distintos, que un cliente que miente sobre las
 alergias no cambie el dictamen, el registro y la omisión de tomas, el circuito
 completo de caja, y los dos casos clínicos de siempre: ibuprofeno sobre
 warfarina → `BLOQUEADO`, y `ms-pastillero` negándose a programar ese folio con
-`409`.
+`409`. El bloque 11 cierra además el atajo que encontró el SQA: sin folio de
+validación el plan no se programa (`400`), el folio de otro medicamento no
+sirve (`409`) y un folio ya usado tampoco (`409`).
 
 Su bloque 16 recorre **la cadena clínica entera**, con un rol distinto en cada
 paso, que es justo lo que hace valer la separación: el médico remite, la
@@ -745,6 +747,10 @@ guion se pueda correr dos veces seguidas sin limpiar la base:
   en el informe 4 firmado por quien lo registró, y un pago mayor que el saldo,
   con más de dos decimales o sin referencia se rechaza con `400` sin mover el
   saldo; `medico` recibe `403`.
+- **28** — las entradas mal formadas: cada endpoint que escribe, en los cuatro
+  servicios de Python, recibe un número donde va texto, un texto de un
+  carácter más que su columna en `sql/` (65536 bytes en las columnas `TEXT`) y
+  `NaN` o `Infinity` donde va un número. Todos responden `400`, ninguno `500`.
 
 **Qué cubre `verificar.sh`** — lo que no se ve desde la interfaz: la matriz de
 acceso rol por rol y ruta por ruta; la defensa en profundidad, comprobando que

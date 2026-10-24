@@ -12,6 +12,8 @@ from flask import Flask, g, jsonify, request
 from flask.json.provider import DefaultJSONProvider
 from pymysql.cursors import DictCursor
 
+from entradas import cuerpo_json, finito, instalar, textos
+
 APP_NOMBRE = "ms-caja"
 
 # Solo para la generacion mensual de cuotas: hace falta el padron activo
@@ -84,6 +86,7 @@ class ProveedorJSON(DefaultJSONProvider):
 
 
 app = Flask(__name__)
+instalar(app, "ms-caja")
 app.json = ProveedorJSON(app)
 app.json.ensure_ascii = False
 
@@ -109,6 +112,10 @@ CATEGORIAS_CARGO = {"CONSULTA", "LABORATORIO", "FARMACIA", "CUOTA", "OTRO"}
 # el indice unico necesita para saber que dos cuotas son la misma y no dejar
 # que una familia pague dos veces.
 MES_VALIDO = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+# El monto mas grande que cabe en una columna DECIMAL(10,2) (sql/04). Uno
+# mayor no es un error de tecleo que MySQL deba descubrir con un 500.
+MONTO_MAXIMO = 99999999.99
 
 # Solo lo que la fundacion presta. La CUOTA queda fuera porque es plata que el
 # familiar le paga al asilo: contarla como deuda inflaria las salidas con un
@@ -336,7 +343,12 @@ def _cargo_json(fila):
 def crear_cargo():
     """Carga a la cuenta del familiar el costo de una consulta, examen, medicamento
     o cuota, ya con el descuento que la fundacion otorga a los miembros del asilo."""
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    # Largos de la tabla cargos (sql/04). categoria, mes y tarifa se comparan
+    # contra una lista o un patron: solo se revisa que sean texto.
+    textos(cuerpo, {"pacienteId": 16, "pacienteNombre": 120, "concepto": 160,
+                    "referencia": 48, "visitaId": 24, "categoria": None, "mes": None,
+                    "tarifa": None})
     errores = []
     if not cuerpo.get("pacienteId"):
         errores.append("Falta pacienteId.")
@@ -360,13 +372,15 @@ def crear_cargo():
     tarifa_clave = cuerpo.get("tarifa")
     tarifa = TARIFARIO.get(tarifa_clave)
     try:
-        monto_bruto = float(cuerpo["montoBruto"]) if cuerpo.get("montoBruto") is not None \
+        monto_bruto = finito(cuerpo["montoBruto"]) if cuerpo.get("montoBruto") is not None \
             else float(tarifa["precioFundacion"])
     except (TypeError, ValueError, KeyError):
         errores.append("Indique montoBruto, o una tarifa valida del catalogo.")
         monto_bruto = 0
+    if not 0 <= monto_bruto <= MONTO_MAXIMO:
+        errores.append("montoBruto debe estar entre 0 y %.2f." % MONTO_MAXIMO)
     try:
-        descuento_pct = float(cuerpo["descuentoPct"]) if cuerpo.get("descuentoPct") is not None \
+        descuento_pct = finito(cuerpo["descuentoPct"]) if cuerpo.get("descuentoPct") is not None \
             else float(tarifa["descuentoPct"]) if tarifa else 0.0
     except (TypeError, ValueError):
         errores.append("descuentoPct debe ser numerico.")
@@ -476,7 +490,8 @@ def cuenta_paciente(paciente_id):
 @app.post("/api/v1/cargos/<cargo_id>/pagar")
 def pagar_cargo(cargo_id):
     """Registra un abono o pago total de un cargo. Los familiares pueden abonar por partes."""
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"metodo": 24})
     bd = conexion()
     fila = consultar_uno("SELECT * FROM cargos WHERE id = %s", (cargo_id,))
     if fila is None:
@@ -489,7 +504,7 @@ def pagar_cargo(cargo_id):
     monto_pagado = float(fila["monto_pagado"])
     saldo = round(monto_neto - monto_pagado, 2)
     try:
-        monto = float(cuerpo.get("monto"))
+        monto = finito(cuerpo.get("monto"))
         if monto <= 0:
             raise ValueError
     except (TypeError, ValueError):
@@ -542,7 +557,8 @@ def listar_donaciones():
 
 @app.post("/api/v1/donaciones")
 def crear_donacion():
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"donante": 160, "tipo": None, "destino": 120})
     errores = []
     if not cuerpo.get("donante"):
         errores.append("Falta donante.")
@@ -550,9 +566,11 @@ def crear_donacion():
     if tipo not in CATEGORIAS_DONANTE:
         errores.append("tipo debe ser una de: %s." % ", ".join(sorted(CATEGORIAS_DONANTE)))
     try:
-        monto = float(cuerpo.get("monto"))
+        monto = finito(cuerpo.get("monto"))
         if monto <= 0:
             errores.append("monto debe ser mayor que cero.")
+        elif monto > MONTO_MAXIMO:
+            errores.append("monto no puede pasar de %.2f." % MONTO_MAXIMO)
     except (TypeError, ValueError):
         errores.append("monto debe ser numerico.")
         monto = 0
@@ -593,7 +611,8 @@ def listar_gastos():
 
 @app.post("/api/v1/gastos")
 def crear_gasto():
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"concepto": 160, "categoria": None})
     errores = []
     if not cuerpo.get("concepto"):
         errores.append("Falta concepto.")
@@ -601,9 +620,11 @@ def crear_gasto():
     if categoria not in CATEGORIAS_GASTO:
         errores.append("categoria debe ser una de: %s." % ", ".join(sorted(CATEGORIAS_GASTO)))
     try:
-        monto = float(cuerpo.get("monto"))
+        monto = finito(cuerpo.get("monto"))
         if monto <= 0:
             errores.append("monto debe ser mayor que cero.")
+        elif monto > MONTO_MAXIMO:
+            errores.append("monto no puede pasar de %.2f." % MONTO_MAXIMO)
     except (TypeError, ValueError):
         errores.append("monto debe ser numerico.")
         monto = 0
@@ -672,9 +693,13 @@ def _monto_en_quetzales(valor):
     """
     try:
         monto = Decimal(str(valor).strip())
+        if not monto.is_finite() or monto <= 0 or monto > Decimal(str(MONTO_MAXIMO)):
+            return None
+        # quantize lanza InvalidOperation con numeros enormes: tambien es
+        # "no es un monto", no un 500.
+        if monto != monto.quantize(Decimal("0.01")):
+            return None
     except (InvalidOperation, ValueError):
-        return None
-    if not monto.is_finite() or monto <= 0 or monto != monto.quantize(Decimal("0.01")):
         return None
     return monto
 
@@ -687,7 +712,8 @@ def pagar_fundacion():
     rechaza con 400: un saldo negativo con la fundacion seria plata regalada o
     un error de tecleo, y en los dos casos el libro de caja quedaria mintiendo.
     """
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"referencia": 160})
     monto = _monto_en_quetzales(cuerpo.get("monto"))
     if monto is None:
         return jsonify({"error": "monto debe ser un numero mayor que cero, con dos "
@@ -1232,7 +1258,8 @@ def generar_cuotas():
     la estadia a una lista incompleta de internos deja a unos cobrados y a
     otros no, y nadie se entera hasta que el familiar reclama.
     """
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"mes": None})
     mes = (cuerpo.get("mes") or "").strip()
     if not MES_VALIDO.match(mes):
         return jsonify({

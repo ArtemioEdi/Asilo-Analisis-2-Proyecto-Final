@@ -23,6 +23,8 @@ from flask import Flask, g, jsonify, request
 from flask.json.provider import DefaultJSONProvider
 from pymysql.cursors import DictCursor
 
+from entradas import TEXTO, cuerpo_json, entero, finito, instalar, textos
+
 APP_NOMBRE = "ms-consultas"
 APP_VERSION = "1.0.0"
 
@@ -134,6 +136,7 @@ class ProveedorJSON(DefaultJSONProvider):
 
 
 app = Flask(__name__)
+instalar(app, "ms-consultas")
 app.json = ProveedorJSON(app)
 app.json.ensure_ascii = False
 
@@ -671,7 +674,10 @@ def salud():
 
 @app.post("/api/v1/solicitudes")
 def crear_solicitud():
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    # Largos de la tabla solicitudes (sql/05).
+    textos(cuerpo, {"pacienteId": 16, "motivo": TEXTO, "especialidadSolicitada": 80,
+                    "enfermeroAcompanante": 120})
     errores = []
     if not cuerpo.get("pacienteId"):
         errores.append("Falta pacienteId.")
@@ -748,7 +754,8 @@ def obtener_solicitud(solicitud_id):
 @app.put("/api/v1/solicitudes/<solicitud_id>/agendar")
 def agendar_solicitud(solicitud_id):
     """La fundacion le asigna medico, especialidad y hora a la remision."""
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"medicoAsignado": 120, "especialidadAsignada": 80, "agendadaPara": None})
     errores = []
     if not (cuerpo.get("medicoAsignado") or "").strip():
         errores.append("Falta medicoAsignado.")
@@ -836,7 +843,8 @@ def listar_correos():
 @app.post("/api/v1/visitas")
 def crear_visita():
     """Convierte una solicitud AGENDADA en la visita del especialista."""
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"solicitudId": 24, "fechaVisita": None, "tarifa": None})
     solicitud_id = cuerpo.get("solicitudId")
     if not solicitud_id:
         return jsonify({"error": "Peticion invalida",
@@ -935,7 +943,8 @@ def obtener_visita(visita_id):
 @app.put("/api/v1/visitas/<visita_id>")
 def actualizar_visita(visita_id):
     """Diagnostico y observaciones: lo que el especialista escribe."""
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"diagnostico": TEXTO, "observaciones": TEXTO})
     fila = consultar_uno("SELECT * FROM visitas WHERE id = %s", (visita_id,))
     if fila is None:
         return jsonify({"error": "No existe la visita %s." % visita_id}), 404
@@ -982,7 +991,8 @@ def cerrar_visita(visita_id):
 
 @app.post("/api/v1/visitas/<visita_id>/examenes")
 def indicar_examen(visita_id):
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"nombre": 160, "tarifa": None})
     nombre = (cuerpo.get("nombre") or "").strip()
     if not nombre:
         return jsonify({"error": "Peticion invalida",
@@ -1027,7 +1037,8 @@ def indicar_examen(visita_id):
 
 @app.put("/api/v1/examenes/<examen_id>/resultado")
 def cargar_resultado(examen_id):
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"resultado": TEXTO})
     resultado = (cuerpo.get("resultado") or "").strip()
     if not resultado:
         return jsonify({"error": "Peticion invalida",
@@ -1094,27 +1105,28 @@ def recetar(visita_id):
     pasar por farmacovigilancia. Si el veredicto es BLOQUEADO, no se guarda
     nada y se devuelve el dictamen completo para que el medico vea por que.
     """
-    cuerpo = request.get_json(silent=True) or {}
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"principioActivo": 64, "nombre": 120, "comoTomarlo": TEXTO, "via": None})
     errores = []
     principio = (cuerpo.get("principioActivo") or "").strip().lower()
     if not principio:
         errores.append("Falta principioActivo.")
     try:
-        dosis = float(cuerpo.get("dosisMg"))
+        dosis = finito(cuerpo.get("dosisMg"))
         if dosis <= 0:
             errores.append("dosisMg debe ser mayor que cero.")
     except (TypeError, ValueError):
         errores.append("dosisMg debe ser numerico.")
         dosis = 0
     try:
-        cada = float(cuerpo.get("cadaHoras"))
+        cada = finito(cuerpo.get("cadaHoras"))
         if not 1 <= cada <= 72:
             errores.append("cadaHoras debe estar entre 1 y 72.")
     except (TypeError, ValueError):
         errores.append("cadaHoras debe ser numerico.")
         cada = 0
     try:
-        dias = int(cuerpo.get("duracionDias", 1))
+        dias = entero(cuerpo.get("duracionDias", 1))
         if not 1 <= dias <= 90:
             errores.append("duracionDias debe estar entre 1 y 90.")
     except (TypeError, ValueError):
@@ -1174,6 +1186,9 @@ def recetar(visita_id):
 @app.put("/api/v1/indicaciones/<indicacion_id>/entregar")
 def entregar_indicacion(indicacion_id):
     """Farmacia entrega el medicamento y se le carga a la cuenta del interno."""
+    cuerpo = cuerpo_json()
+    textos(cuerpo, {"tarifa": None})
+    tarifa = cuerpo.get("tarifa") or "farmacia-generico"
     fila = consultar_uno(
         """SELECT i.*, v.paciente_id, s.paciente_nombre FROM indicaciones i
            JOIN visitas v ON v.id = i.visita_id
@@ -1191,8 +1206,7 @@ def entregar_indicacion(indicacion_id):
     cargo_id, advertencia = crear_cargo(
         fila["paciente_id"], "FARMACIA",
         "%s %s mg (indicacion %s)" % (fila["nombre"], fila["dosis_mg"], indicacion_id),
-        request.get_json(silent=True).get("tarifa", "farmacia-generico")
-        if request.get_json(silent=True) else "farmacia-generico",
+        tarifa,
         fila["visita_id"], fila["paciente_nombre"])
 
     bd = conexion()
