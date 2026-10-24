@@ -1460,7 +1460,8 @@ Asilo-Analisis-2-Proyecto-Final/
 │                               8080/8090 solo en 127.0.0.1 (sección 12)
 ├── despliegue/
 │   ├── Caddyfile                 HTTPS con Let's Encrypt y cabeceras de seguridad
-│   └── desplegar.sh              instala, actualiza y levanta el servidor
+│   ├── desplegar.sh              instala, actualiza y levanta el servidor
+│   └── respaldar.sh              respaldo diario de las cinco bases (cron)
 ├── sql/                        el modelo de datos, como entrega legible
 │   ├── 01-bases-y-usuarios.sh    cinco bases, cinco usuarios y sus permisos
 │   │                             (toma las claves del entorno · SE VERSIONA)
@@ -1599,10 +1600,14 @@ peligroso que uno que sí.
 - **Los usuarios de MySQL se crean una sola vez**, cuando el volumen de datos
   está vacío. Cambiar una clave en el `.env` después no surte efecto: hay que
   recrear el volumen con `docker compose down -v`, lo que borra los datos.
-- **Sin copias de seguridad ni réplica.** El volumen `bd-datos` es el único
-  lugar donde viven los datos. La instancia de `sql/instancia/` no es una copia
-  de seguridad: es una foto del escenario sembrado, para la entrega, y no trae
-  nada de lo que se registre después.
+- **Un respaldo diario, en el mismo servidor, y sin réplica.** En la instancia
+  pública, `despliegue/respaldar.sh` vuelca las cinco bases todos los días a
+  las 03:00 y guarda los últimos siete en `~/respaldos/` (sección 12). Protege
+  de un borrado o de un error en los datos, no de perder la máquina: los
+  respaldos viven en el mismo disco que la base. En local no hay respaldo; el
+  volumen `bd-datos` es el único lugar donde viven los datos. La instancia de
+  `sql/instancia/` no es una copia de seguridad: es una foto del escenario
+  sembrado, para la entrega, y no trae nada de lo que se registre después.
 - **Los datos de ejemplo se siembran solos** (`SEMBRAR=1`) la primera vez. Los
   tres internos, sus tratamientos y los movimientos de caja son inventados para
   la demostración.
@@ -1649,13 +1654,14 @@ peligroso que uno que sí.
   pública, que es el mismo compose más la capa de producción. El despliegue
   es un guion que se corre a mano por `ssh` después de cada `push`; no hay
   integración continua ni un entorno de pruebas aparte.
-- **La instancia pública es un solo nodo, sin copias de seguridad.** Una
-  máquina virtual de Azure con los ocho contenedores y el volumen de MySQL en
-  su propio disco. Si la máquina se cae, el sistema se cae; si se pierde el
-  disco, se pierden los datos. Para la demostración no importa, porque se
-  restablece al escenario sembrado con `down -v`; para un asilo de verdad
-  harían falta copias diarias de la base fuera del servidor y un segundo
-  nodo.
+- **La instancia pública es un solo nodo, con respaldos en el mismo disco.**
+  Una máquina virtual de Azure con los ocho contenedores y el volumen de MySQL
+  en su propio disco, y un respaldo diario de la base que se conserva siete
+  días en ese mismo disco. Si la máquina se cae, el sistema se cae; si se
+  pierde el disco, se pierden la base y los respaldos juntos. Para la
+  demostración alcanza, porque se restablece al escenario sembrado con
+  `down -v`; para un asilo de verdad los respaldos tendrían que salir del
+  servidor (a un almacenamiento aparte) y haría falta un segundo nodo.
 - **Sin límites de recursos ni política de reinicio afinada** en los
   contenedores más allá de `restart: unless-stopped`.
 - **Los relojes son la hora local del contenedor** (`TZ=America/Guatemala`). Un
@@ -1736,6 +1742,38 @@ Para comprobar todo dentro del servidor, con el mismo guion de la sección 5:
 ```bash
 cd ~/saaca && bash verificar.sh      # y después, restablecer
 ```
+
+### Respaldos y cómo restaurar uno
+
+`despliegue/desplegar.sh` deja en el cron de `azureuser` el respaldo diario:
+todos los días a las 03:00 de Guatemala, `despliegue/respaldar.sh` vuelca las
+cinco bases con `mysqldump` —los mismos parámetros que la instancia de la
+sección 9: sin usuarios de MySQL ni sus claves—, lo comprime y lo deja en
+`~/respaldos/asilo-AAAA-MM-DD_HHMM.sql.gz`. Conserva los últimos siete. Un
+volcado que sale incompleto no reemplaza a ninguno: se descarta y queda la
+falla en `~/respaldos/respaldar.log`.
+
+```bash
+bash ~/saaca/despliegue/respaldar.sh   # un respaldo ahora, a mano
+ls -l ~/respaldos/                      # los que hay
+crontab -l                              # la línea programada
+```
+
+Para restaurar uno, con el stack arriba. Reemplaza las tablas de las cinco
+bases por las del respaldo; las cuentas de MySQL de los servicios no se
+tocan, porque el respaldo no las trae:
+
+```bash
+cd ~/saaca
+C="docker compose -f docker-compose.yml -f docker-compose.produccion.yml"
+gunzip -c ~/respaldos/asilo-2026-10-24_0300.sql.gz \
+  | $C exec -T bd-asilo sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4'
+$C restart ms-gateway ms-vigia ms-pastillero ms-caja ms-consultas
+```
+
+Se comprobó restaurando un respaldo en un MySQL 8.4 aparte: las dieciséis
+tablas quedaron con las mismas filas que el original y los nombres con tilde
+llegaron intactos.
 
 ### Ver los logs
 

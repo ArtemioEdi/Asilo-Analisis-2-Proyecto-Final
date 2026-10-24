@@ -24,6 +24,8 @@
 #       este servidor.
 #    5. Levanta el stack con la capa de produccion, espera con un tope a que
 #       todo este sano y comprueba que https://$DOMINIO responda 200.
+#    6. Deja respaldar.sh en el cron de azureuser, todos los dias a las 03:00
+#       de Guatemala. Si la linea ya estaba, la reemplaza: nunca la duplica.
 #
 #  Todo el trabajo esta dentro de main(), que se llama en la ultima linea.
 #  Bash lee los guiones a medida que los ejecuta, y el paso 3 puede
@@ -201,6 +203,22 @@ levantar() {
   listo "https://$DOMINIO responde 200 con certificado valido"
 }
 
+programar_respaldo() {
+  paso "6. Respaldo diario"
+  local marca="# saaca: respaldo diario de la base"
+  # Las 03:00 de Guatemala, en la hora del servidor (que vive en UTC). Lo
+  # calcula date y no una cuenta a mano: si el servidor cambiara de zona, la
+  # linea seguiria cayendo a las 03:00 de alla.
+  local hora
+  hora=$(date -d 'TZ="America/Guatemala" 03:00' +%H)
+  local linea="0 $((10#$hora)) * * * bash $DESTINO/despliegue/respaldar.sh >> $HOME/respaldos/respaldar.log 2>&1 $marca"
+  mkdir -p "$HOME/respaldos"
+  # Todo lo que ya habia en el cron, menos la linea de este respaldo, y la
+  # linea nueva al final. Correrlo dos veces deja una sola.
+  { crontab -l 2>/dev/null | grep -vF "$marca" || true; echo "$linea"; } | crontab -
+  listo "cron: $(crontab -l | grep -cF "$marca") linea, a las $((10#$hora)):00 del servidor (03:00 en Guatemala)"
+}
+
 main() {
   local ref=${1:-main}
   instalar_docker
@@ -208,6 +226,7 @@ main() {
   traer_codigo "$ref"
   preparar_env
   levantar
+  programar_respaldo
   printf '\n\033[1;32mDesplegado %s en https://%s\033[0m\n' "$ref" "$DOMINIO"
 }
 
