@@ -1,18 +1,21 @@
 # Capturas del manual de usuario
 
-Treinta y tres pantallas del sistema. Las 32 primeras las tomó Edge en modo
-headless, con `docs/manual/capturar.js`, sobre un stack recién levantado y
-**sin haber corrido ninguna prueba antes**: muestran el escenario sembrado,
+Treinta y cinco pantallas del sistema. Todas menos la 33 las tomó Edge en
+modo headless, con `docs/manual/capturar.js`, sobre un stack recién levantado
+y **sin haber corrido ninguna prueba antes**: muestran el escenario sembrado,
 más lo que el propio recorrido escribe en el camino (una remisión, una
 consulta atendida, una cuenta nueva). La 33 es la instancia pública en
 Internet.
 
 - **Formato:** PNG, ventana de 1366 × 768 con escala 2 (2732 × 1536 píxeles).
-  La 29 es la excepción: 375 × 812, la pantalla de un teléfono.
+  Las tres de teléfono son la excepción: la 29 a 375 × 812, y la 34 y la 35 a
+  390 × 844, siempre con escala 2.
 - **De dónde salieron:** de la interfaz del commit `a1c55b5` (*Bloque 12:
   abonos parciales desde la caja*), más el ajuste de `estacion-web/estilos.css`
   que va en el mismo commit que estas capturas (*Bloque 10B*): la tarjeta de
-  «Elija su clave» ya no se corta por arriba en una pantalla de 768 px.
+  «Elija su clave» ya no se corta por arriba en una pantalla de 768 px. La 29,
+  la 34 y la 35 son de la interfaz adaptada al teléfono (*Bloque 14*): la 29
+  se volvió a tomar entonces, y las otras dos se agregaron.
 - **Solo la ventana del navegador.** Antes de cada foto se retiran los avisos
   flotantes de la acción anterior, para que no tapen la pantalla, y se emula
   `prefers-reduced-motion` para que ningún desplazamiento quede a medio camino.
@@ -49,11 +52,13 @@ Internet.
 | 26 | `admin` | «Dar de alta una cuenta» lleno: `jlopez`, «Lic. Julio López», Administración |
 | 27 | `admin` | El cuadro de la clave temporal de `jlopez` |
 | 28 | `administracion` | La caja con `ms-caja` detenido: el error del servicio con «Reintentar» |
-| 29 | `enfermeria` | La jornada a 375 × 812, con la línea de tiempo vertical |
+| 29 | `enfermeria` | La jornada a 375 × 812, con la línea de tiempo vertical y la barra superior en dos renglones |
 | 30 | `medico` | «Editar información clínica» de ASL-014, con la lista del vademécum abierta en una fila de medicación permanente, sin guardar |
 | 31 | `administracion` | «Registrar un pago a la fundación» lleno, con el saldo con la fundación en la nota del formulario, sin guardar |
 | 32 | `administracion` | El diálogo de «Pagar» de un cargo de ASL-022, con el monto bajado a un abono parcial, sin confirmar |
 | 33 | — | La pantalla de acceso de la instancia pública, <https://saaca-asilo.northcentralus.cloudapp.azure.com>, con la dirección anotada arriba |
+| 34 | `administracion` | «Caja y donaciones» a 390 × 844: la tira de internos, las pestañas y el resumen en dos columnas |
+| 35 | `administracion` | «Cobros por paciente» de ASL-022 a 390 × 844: la tabla hecha tarjetas, cada dato con su rótulo |
 
 **Tres licencias, dichas para que nadie se lleve una sorpresa:**
 
@@ -92,4 +97,28 @@ el `.env`. La captura 28 detiene `ms-caja` un momento y lo vuelve a levantar.
 
 Para repetir capturas sueltas que solo miran, `SOLO=19,20 node
 docs/manual/capturar.js`. Las que guardan algo (09, 11, 12, 13 y 27) cambian
-los datos: para repetirlas, el stack desde cero y el recorrido entero.
+los datos: para repetirlas, el stack desde cero y el recorrido entero. Las tres
+de teléfono entran solas con la cuenta que necesitan, así que
+`SOLO=29,34,35` las repite sin depender de las demás.
+
+## La auditoría del teléfono
+
+`docs/manual/auditar-telefono.js` recorre todas las vistas de los siete roles,
+los cajones, los diálogos, el cuadro de la clave temporal, «Elija su clave» y
+los ocho informes, a 360 × 800 y a 390 × 844, con escala 3 y emulación táctil.
+En cada pantalla mide si la página se desplaza a lo ancho, qué elementos se
+salen o quedan recortados, la letra de menos de 12 px, los botones de menos de
+40 × 40, los campos que iOS amplía al enfocarlos y lo que queda debajo de una
+barra al traerlo a la vista:
+
+```bash
+docker compose down -v && docker compose up -d     # esperar a que todo esté sano
+node docs/manual/auditar-telefono.js               # sale con 1 si encuentra algo
+docker compose down -v && docker compose up -d     # deja datos: atiende una consulta
+```
+
+No es parte de `pruebas-interfaz/`: el DOM mínimo de ese recorrido no tiene
+motor de diseño, y `scrollWidth` o `getBoundingClientRect` darían cero. Por eso
+maneja un Edge de verdad, como `capturar.js`. Tiene tres excepciones
+declaradas, que solo valen mientras el elemento se desplace dentro de su propia
+franja: la tira de internos, la barra de servicios y las pestañas.

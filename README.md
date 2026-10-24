@@ -1221,6 +1221,30 @@ ser una línea de tiempo vertical con la hora en monoespaciada a la izquierda, l
 marca de estado sobre el eje y el fármaco a la derecha — la misma información
 con el eje girado 90°, que es lo que funciona en pantalla angosta.
 
+El resto de la interfaz sigue la misma idea, en un solo bloque de
+`estilos.css` limitado a `screen and (max-width: 720px)`: el escritorio y la
+hoja impresa no cambian.
+
+- **Ninguna página se desplaza a lo ancho.** Las tablas (padrón, cuentas,
+  bitácora y los ocho informes) se vuelven tarjetas apiladas, cada dato con su
+  rótulo delante, sin duplicar el HTML: `tablaInforme` pone el rótulo de la
+  columna en `data-rotulo` y el CSS lo escribe con `::before`. Los botones de
+  la fila van al pie de la tarjeta y la fila de totales es una tarjeta más,
+  marcada «Totales».
+- **Las pestañas, la tira de internos y la barra de servicios** se desplazan
+  dentro de su propia franja, sin empujar la página.
+- **La caja** pone su resumen en dos columnas y los formularios en una.
+- **Los cajones** dejan la cabecera pegada arriba, con la × siempre a mano; los
+  **diálogos** salen desde abajo, a todo el ancho, con los botones siempre
+  visibles.
+- **Al tacto:** botones de 44 px de alto (40 los de la barra superior), campos
+  con letra de 16 px para que iOS no amplíe la página al enfocarlos, ninguna
+  letra de menos de 12 px y nada que quede debajo de una barra al enfocarlo.
+
+Lo comprueba `docs/manual/auditar-telefono.js`, que recorre todas las vistas
+de los siete roles a 360 y 390 px de ancho; el
+[LEEME de las capturas](docs/manual/capturas/LEEME.md) explica cómo correrlo.
+
 ---
 
 ## 9. La base de datos
@@ -1453,8 +1477,9 @@ Asilo-Analisis-2-Proyecto-Final/
 │   └── cambio-de-sesion.js     recorrido de la estación en un DOM mínimo (bloque 23)
 ├── verificar.sh                revisión de seguridad, permisos y repositorio
 ├── docs/manual/
-│   ├── capturar.js             toma las capturas 01 a 32 del manual con Edge headless
-│   └── capturas/               captura-01.png a captura-33.png y su LEEME.md
+│   ├── capturar.js             toma las capturas del manual con Edge headless
+│   ├── auditar-telefono.js     mide todas las vistas a 360 y 390 px de ancho
+│   └── capturas/               captura-01.png a captura-35.png y su LEEME.md
 ├── README.md
 ├── ms-vigia/
 │   ├── app.py                  API, motor de reglas y verificación del token

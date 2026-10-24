@@ -1696,6 +1696,10 @@ button { font-family: inherit; }
      La barra es fija abajo. Al enfocar un campo o tabular, el navegador
      traia el control hasta el borde de la ventana, justo debajo de ella. */
   html { scroll-padding-bottom: calc(var(--barra-alto) + 16px); }
+  /* Y arriba, la barra superior pegada: con el interno y los botones de
+     40 px mide unos 130 px, y los 100 de antes dejaban el titulo de lo que
+     se traia a la vista (la hoja de un informe) debajo de ella. */
+  html { scroll-padding-top: 144px; }
 
   /* --- La caja ---------------------------------------------------------- */
   #caja-resumen { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }

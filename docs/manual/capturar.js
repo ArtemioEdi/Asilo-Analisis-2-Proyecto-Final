@@ -19,6 +19,8 @@
 // Variables opcionales: NAVEGADOR (ruta del ejecutable de Edge o Chrome),
 // WEB (por defecto http://localhost:8090), GATEWAY (http://localhost:8080) y
 // SOLO, para repetir capturas sueltas: SOLO=06,07 node docs/manual/capturar.js.
+// Las tres de telefono (29, 34 y 35) entran solas con la cuenta que necesitan:
+// SOLO=29,34,35 las repite sin tocar las demas.
 // Ojo: cada paso que solo mira se puede repetir, pero los que guardan algo
 // (09, 11, 12, 13, 27) cambian los datos; para repetirlos, stack desde cero.
 // ---------------------------------------------------------------------------
@@ -124,11 +126,21 @@ async function cargar() {
   await dormir(1200);
 }
 
+// Quien tiene la sesion abierta, para que una captura suelta (SOLO) entre por
+// su cuenta en vez de depender de los pasos anteriores.
+let enSesion = null;
+async function asegurar(usuario) {
+  if (enSesion === usuario) return;
+  if (enSesion) await salir();
+  await entrar(usuario);
+}
+
 async function entrar(usuario, clave, aDondeLlega) {
   await ev(`(() => { const u = document.getElementById("acceso-usuario"); u.value = ${JSON.stringify(usuario)};
     document.getElementById("acceso-clave").value = ${JSON.stringify(clave || CLAVES[usuario])};
     document.getElementById("formulario-acceso").requestSubmit(); return true; })()`);
   await esperarA(aDondeLlega || `!document.getElementById("armazon").hidden`, "entrar como " + usuario);
+  enSesion = usuario;
   await dormir(1500);
 }
 
@@ -136,6 +148,7 @@ async function salir() {
   await ev(`document.getElementById("cambio-clave").hidden ? document.getElementById("cerrar-sesion").click()
             : document.getElementById("cambio-salir").click(); true`);
   await esperarA(`!document.getElementById("acceso").hidden`, "volver al acceso");
+  enSesion = null;
   await dormir(500);
 }
 
@@ -268,6 +281,8 @@ async function principal() {
     await ev(`document.getElementById("confirmar-no").click(); true`);
   });
   await paso("29", async () => {
+    await asegurar("enfermeria");
+    await ir("#/jornada/ASL-014", `document.querySelectorAll("#registro .toma").length > 0`, "la jornada de ASL-014");
     await ventana(375, 812, true);
     await ev(`window.scrollTo(0, 0); true`);
     await dormir(800);
@@ -451,6 +466,38 @@ async function principal() {
     await ev(`(() => { const c = document.getElementById("confirmar-campo"); c.value = "100.00"; c.focus(); return true; })()`);
     await foto("32", "pago con abono parcial");
     await ev(`document.getElementById("confirmar-no").click(); true`);
+  });
+  // 34-35 · la caja y un informe en la pantalla de un telefono
+  await paso("34", async () => {
+    await asegurar("administracion");
+    await ventana(390, 844, true);
+    try {
+      await ir("#/caja/ASL-022", `document.getElementById("caja-resumen").textContent.includes("Saldo con la fundación") && document.getElementById("caja-cargos").children.length > 0`, "la caja");
+      await ev(`window.scrollTo(0, 0); true`);
+      await foto("34", "caja a 390 x 844");
+    } finally {
+      await ventana(ANCHO, ALTO);
+    }
+  });
+  await paso("35", async () => {
+    await asegurar("administracion");
+    await ventana(390, 844, true);
+    try {
+      await ir("#/reportes", `document.getElementById("reporte-cual").options.length > 0`, "reportes");
+      await ev(`(() => { const s = document.getElementById("reporte-cual"); s.value = "cobros-paciente"; s.dispatchEvent(new Event("change")); return true; })()`);
+      await dormir(500);
+      const desde = new Date(hoy.getTime() - 30 * 24 * 3600 * 1000);
+      await llenar({ "reporte-interno": "ASL-022", "reporte-desde": fechaLocal(desde), "reporte-hasta": fechaLocal(hoy) });
+      await ev(`document.getElementById("formulario-reporte").requestSubmit(); true`);
+      // Se espera a que se vaya el esqueleto de carga, que vive arriba de la
+      // hoja: si se desplaza antes, la hoja sube despues y queda bajo la barra.
+      await esperarA(`!document.getElementById("reporte-hoja").hidden && document.getElementById("reporte-titulo").textContent === "Cobros por paciente" && !document.querySelector("#vista-reportes .esqueleto")`, "el informe de cobros");
+      await dormir(500);
+      await ev(`document.getElementById("reporte-hoja").scrollIntoView({ block: "start" }); true`);
+      await foto("35", "cobros por paciente a 390 x 844");
+    } finally {
+      await ventana(ANCHO, ALTO);
+    }
   });
   await paso("19", async () => {
     await ir("#/reportes", `document.getElementById("reporte-cual").options.length > 0`, "reportes");
